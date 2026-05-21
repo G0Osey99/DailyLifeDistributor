@@ -91,3 +91,43 @@ def test_idle_timeout_tears_down(tmp_path):
     m.poll_timeout()
     assert m.status().active is False
     assert m.status().phase == "idle"
+
+
+def test_save_success_flow(mgr, tmp_path, temp_db):
+    cfg = _cfg(tmp_path)
+    mgr.start("simplecast", cfg)
+    browser = mgr._created[0]
+    mgr.save()
+    st = mgr.status()
+    assert st.phase == "done"
+    assert st.active is False
+    assert browser.closed is True
+    assert browser.saved_to == cfg.session_file
+
+
+def test_save_failure_sets_error_and_tears_down(tmp_path, temp_db):
+    class BoomBrowser(FakeBrowser):
+        def storage_state(self, path):
+            raise RuntimeError("boom")
+
+    created = []
+
+    def launcher(config):
+        b = BoomBrowser()
+        created.append(b)
+        return b
+
+    m = remote_login.RemoteLoginManager(browser_launcher=launcher)
+    m.start("simplecast", _cfg(tmp_path))
+    with pytest.raises(RuntimeError):
+        m.save()
+    st = m.status()
+    assert st.phase == "error"
+    assert "boom" in st.message
+    assert created[0].closed is True
+    assert st.active is False
+
+
+def test_save_without_session_raises(mgr):
+    with pytest.raises(remote_login.RemoteLoginError):
+        mgr.save()

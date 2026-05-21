@@ -67,6 +67,9 @@ class RemoteLoginManager:
                 )
             browser = self._launch(config)
             try:
+                # goto() completes before we release the lock and enter
+                # awaiting_login; the UI's repeated status() polls during the login
+                # wait are therefore lock-free.
                 browser.goto(config.login_url or config.target_url)
             except Exception:
                 browser.close()
@@ -82,17 +85,23 @@ class RemoteLoginManager:
         with self._lock:
             if self._browser is None or self._config is None:
                 raise RemoteLoginError("No remote login in progress.")
+            browser = self._browser
+            config = self._config
             self._phase = "saving"
-            try:
-                self._browser.storage_state(self._config.session_file)
-                _persist_session_blob(self._config.session_file)
-            except Exception as exc:  # noqa: BLE001
+        # Blocking browser I/O runs outside the lock so status() polls during
+        # the save don't block on storage_state()/encryption.
+        try:
+            browser.storage_state(config.session_file)
+            _persist_session_blob(config.session_file)
+        except Exception as exc:  # noqa: BLE001
+            with self._lock:
                 self._phase = "error"
                 self._message = f"Could not save session: {exc}"
-                raise
-            finally:
                 self._teardown()
+            raise
+        with self._lock:
             self._phase = "done"
+            self._teardown()
 
     def cancel(self) -> None:
         with self._lock:
@@ -108,7 +117,8 @@ class RemoteLoginManager:
 
     def touch(self) -> None:
         with self._lock:
-            self._last_activity = self._clock()
+            if self._browser is not None:
+                self._last_activity = self._clock()
 
     def _teardown(self) -> None:
         if self._browser is not None:
@@ -121,4 +131,4 @@ class RemoteLoginManager:
         self._config = None
         if self._phase not in ("done", "error"):
             self._phase = "idle"
-        self._message = ""
+            self._message = ""

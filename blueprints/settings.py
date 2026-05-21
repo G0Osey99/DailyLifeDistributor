@@ -216,7 +216,14 @@ def settings():
     config = load_config()
 
     secrets_path = os.path.join(PROJECT_ROOT, "client_secrets.json")
-    client_secrets_found = os.path.isfile(secrets_path)
+    # Check the encrypted store too, not just disk: the upload persists the blob
+    # to the store (which survives redeploys), but the on-disk copy lives on the
+    # ephemeral container fs. Disk-only made it look "lost" after every redeploy
+    # even though the secret was safe — match how sessions report presence.
+    from core import secrets_store as _ss_cs
+    client_secrets_found = (
+        os.path.isfile(secrets_path) or _ss_cs.has_secret("youtube.client_secrets")
+    )
     from core.playwright_session import has_session
     simplecast_session_found = has_session(
         os.path.join(PROJECT_ROOT, "simplecast_session.json")

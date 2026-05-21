@@ -444,6 +444,39 @@
 </div>
 </div>
 
+<!-- 🖥️ Connect a browser platform (hosted login) -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="connect">
+        <span class="sec-icon">🖥️</span>
+        <span class="sec-title">Connect a browser platform (hosted login)</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="connect">
+        <p class="hint">Opens a browser <em>on the server</em> and streams it here. Log in
+            (including 2FA), then click <strong>Save session</strong>. No local install — the
+            session is captured server-side and encrypted into the secret store.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+            {% for svc, label in [("simplecast","SimpleCast"),("vista_social","Vista Social"),("rock","Rock")] %}
+            <button class="btn btn-sm btn-primary rl-connect" data-service="{{ svc }}">Connect {{ label }}</button>
+            {% endfor %}
+        </div>
+        <div id="rl-panel" hidden>
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                <strong id="rl-service-label"></strong>
+                <span id="rl-phase" class="badge badge-ok"></span>
+                <span id="rl-message" class="text-dim text-sm" style="flex:1;"></span>
+                <button id="rl-save" class="btn btn-sm btn-primary">Save session</button>
+                <button id="rl-cancel" class="btn btn-sm btn-warn">Cancel</button>
+            </div>
+            <iframe id="rl-screen" title="Remote login browser"
+                    style="width:100%; height:600px; border:1px solid var(--color-border); border-radius:var(--radius-lg); background:#000;"></iframe>
+        </div>
+    </div>
+</div>
+</div>
+
 <!-- 🔑 Change Password -->
 <div class="settings-section">
 <div class="section-card">
@@ -634,6 +667,86 @@ document.addEventListener('DOMContentLoaded',()=>{
     checkLlamafileStatus();loadYouTubeQuotaStatus();
     const xl=document.getElementById('sharepoint_docx').value;if(xl)onExcelPathChange();
     ['dir_base','dir_youtube_video','dir_youtube_shorts','dir_podcast','dir_thumbnails','dir_email_thumbnails'].forEach(f=>{const i=document.getElementById(f);if(i&&i.value.trim())validateSettingsPath(f);});
+    initRemoteLogin();
 });
+
+// ── Remote-login (hosted browser) control ───────────────────────────────
+// The browser's display is streamed via the vendored noVNC client, pointed at
+// the reverse-proxy VNC websocket path (Caddy's /vnc-ws route → websockify).
+const RL_VNC_PATH = 'vnc-ws';   // matches deploy/Caddyfile @vnc matcher
+let rlPoll = null;
+
+function rlSetScreen(connect){
+    const f = document.getElementById('rl-screen');
+    if(connect){
+        f.src = `/static/novnc/vnc_lite.html?path=${encodeURIComponent(RL_VNC_PATH)}&autoconnect=true&resize=scale`;
+    } else {
+        f.removeAttribute('src');
+        f.src = 'about:blank';
+    }
+}
+
+function rlRender(st){
+    document.getElementById('rl-phase').textContent = st.phase || 'idle';
+    document.getElementById('rl-message').textContent = st.message || '';
+    document.getElementById('rl-service-label').textContent = st.service ? st.service : '';
+    const panel = document.getElementById('rl-panel');
+    if(st.active){
+        panel.hidden = false;
+    } else {
+        // Done / cancelled / errored — stop streaming and hide after a beat.
+        rlSetScreen(false);
+        if(st.phase === 'done'){
+            document.getElementById('rl-message').textContent = 'Session saved.';
+        }
+        if(st.phase === 'idle'){ panel.hidden = true; }
+        if(rlPoll){ clearInterval(rlPoll); rlPoll = null; }
+    }
+}
+
+async function rlStatus(){
+    try{
+        const r = await fetch('/remote-login/status', {headers:{'Accept':'application/json'}});
+        if(r.ok){ rlRender(await r.json()); }
+    }catch(e){ /* transient — keep polling */ }
+}
+
+function rlStartPolling(){
+    if(rlPoll) clearInterval(rlPoll);
+    rlPoll = setInterval(rlStatus, 2000);
+}
+
+function initRemoteLogin(){
+    document.querySelectorAll('.rl-connect').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+            const service = btn.dataset.service;
+            const body = new URLSearchParams({service});
+            const r = await fetch('/remote-login/start', {method:'POST', body});
+            const d = await r.json().catch(()=>({}));
+            if(!r.ok || !d.ok){
+                alert((d && d.error) ? d.error : 'Could not start remote login.');
+                return;
+            }
+            rlRender(d.status);
+            rlSetScreen(true);
+            rlStartPolling();
+        });
+    });
+    const save = document.getElementById('rl-save');
+    if(save) save.addEventListener('click', async ()=>{
+        const r = await fetch('/remote-login/save', {method:'POST'});
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok || !d.ok){ alert((d && d.error) ? d.error : 'Save failed.'); return; }
+        rlRender(d.status);
+    });
+    const cancel = document.getElementById('rl-cancel');
+    if(cancel) cancel.addEventListener('click', async ()=>{
+        const r = await fetch('/remote-login/cancel', {method:'POST'});
+        const d = await r.json().catch(()=>({}));
+        rlRender(d.status || {active:false, phase:'idle'});
+    });
+    // Resume display if a login is already in progress (e.g. page reload).
+    rlStatus();
+}
 </script>
 {% endblock %}

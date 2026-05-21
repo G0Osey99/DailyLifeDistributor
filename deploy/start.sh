@@ -24,4 +24,10 @@ x11vnc -display "$DISPLAY" -localhost -nopw -forever -shared -rfbport 5900 &
 # WebSocket bridge on 6080 (loopback; reached only via the proxy).
 websockify --web=/usr/share/novnc 6080 localhost:5900 &
 
-exec python app.py
+# Launch via `flask --app app run`, not `python app.py`: running app.py as
+# __main__ makes blueprints.settings' `from app import _cached_yt_authenticated`
+# re-import app.py as a *second* module, re-entering create_app() and crashing
+# on a circular import. Importing `app` as a module (the path the tests use)
+# loads it exactly once. --no-reload keeps it single-process for the in-memory
+# SSE job store; threaded is on by default for the SSE streams.
+exec python -m flask --app app run --host 0.0.0.0 --port 8080 --no-reload

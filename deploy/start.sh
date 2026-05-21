@@ -17,9 +17,21 @@ for _ in $(seq 1 50); do
     sleep 0.1
 done
 
-# VNC server bound to loopback only — never expose 5900/6080 publicly; the
-# reverse proxy (deploy/Caddyfile) gates /vnc-ws with forward_auth.
-x11vnc -display "$DISPLAY" -localhost -nopw -forever -shared -rfbport 5900 &
+# The WebSocket gate lives on the VNC layer, not the proxy: Caddy's
+# forward_auth breaks the WS upgrade, so instead x11vnc requires a VNC password
+# and the (auth-gated) app hands it to noVNC. An unauthenticated hit on /vnc-ws
+# reaches websockify but can't pass VNC auth. The password is generated once and
+# persisted on the data volume; we export it so the Flask process inherits it.
+VNC_PASS_FILE="${VNC_PASS_FILE:-/data/vnc_password}"
+if [ ! -s "$VNC_PASS_FILE" ]; then
+    mkdir -p "$(dirname "$VNC_PASS_FILE")"
+    head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20 > "$VNC_PASS_FILE"
+    chmod 600 "$VNC_PASS_FILE"
+fi
+export VNC_PASSWORD="$(cat "$VNC_PASS_FILE")"
+
+# VNC server bound to loopback only — never expose 5900/6080 publicly.
+x11vnc -display "$DISPLAY" -localhost -passwd "$VNC_PASSWORD" -forever -shared -rfbport 5900 &
 
 # WebSocket bridge on 6080 (loopback; reached only via the proxy).
 websockify --web=/usr/share/novnc 6080 localhost:5900 &

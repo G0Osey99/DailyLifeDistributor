@@ -21,6 +21,19 @@ from flask import (
 
 import core.config as core_config
 from core.hosted import is_hosted
+
+# Canonical secret slots surfaced on the Settings → Secrets panel. Values are
+# never shown; "text" secrets get an overwrite-only input, "managed" secrets are
+# set through their own flow (status + where-to-set only).
+KNOWN_SECRETS = [
+    {"name": "PEXELS_API_KEY", "label": "Pexels API key", "required": False, "kind": "text"},
+    {"name": "UNSPLASH_ACCESS_KEY", "label": "Unsplash access key", "required": False, "kind": "text"},
+    {"name": "youtube.client_secrets", "label": "YouTube client_secrets.json", "required": True, "kind": "managed", "where": "API Credentials → upload client_secrets"},
+    {"name": "youtube.token", "label": "YouTube OAuth token", "required": True, "kind": "managed", "where": "API Credentials → Re-authenticate"},
+    {"name": "playwright.simplecast_session", "label": "SimpleCast session", "required": False, "kind": "managed", "where": "API Credentials → Connect"},
+    {"name": "playwright.vista_social_session", "label": "Vista Social session", "required": False, "kind": "managed", "where": "API Credentials → Connect"},
+    {"name": "playwright.rock_session", "label": "Rock session", "required": False, "kind": "managed", "where": "API Credentials → Connect"},
+]
 from core.config import (
     CONFIG_PATH,
     ENV_PATH,
@@ -222,8 +235,15 @@ def settings():
     # and from `config` above.
     from core import secrets_store
     from core.auth import _HASH_SECRET
-    secret_names = [n for n in secrets_store.list_secret_names()
-                    if n != _HASH_SECRET]
+    known_secrets = [
+        {**spec, "is_set": secrets_store.has_secret(spec["name"])}
+        for spec in KNOWN_SECRETS
+    ]
+    known_names = {spec["name"] for spec in KNOWN_SECRETS}
+    # Anything stored that isn't a known slot (e.g. a manually-added key) —
+    # surface it too so nothing is hidden, with overwrite + clear.
+    extra_secrets = [n for n in secrets_store.list_secret_names()
+                     if n != _HASH_SECRET and n not in known_names]
     return render_template(
         "settings.html",
         config=config,
@@ -232,7 +252,8 @@ def settings():
         vista_social_session_found=vista_social_session_found,
         rock_session_found=rock_session_found,
         youtube_authenticated=_cached_yt_authenticated(),
-        secret_names=secret_names,
+        known_secrets=known_secrets,
+        extra_secrets=extra_secrets,
         hosted=is_hosted(),
     )
 

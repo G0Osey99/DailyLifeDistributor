@@ -80,5 +80,15 @@ def status():
 
 
 def _status_dict() -> dict:
+    import os
     st = manager.status()
-    return {"active": st.active, "service": st.service, "phase": st.phase, "message": st.message}
+    # The VNC password gates the noVNC stream (Caddy can't forward_auth a WS
+    # upgrade). These routes are all behind the app auth gate, so only an
+    # authenticated operator ever receives it. Empty locally (no hosted stack).
+    return {
+        "active": st.active,
+        "service": st.service,
+        "phase": st.phase,
+        "message": st.message,
+        "vnc_password": os.environ.get("VNC_PASSWORD", ""),
+    }

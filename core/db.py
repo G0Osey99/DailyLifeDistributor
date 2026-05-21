@@ -5,7 +5,12 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "state.db")
+# DLD_STATE_DB lets a hosted deploy point the SQLite file at a mounted volume
+# so the encrypted secret store / sessions survive container restarts. Unset
+# (local/USB) keeps the repo-root state.db.
+_DB_PATH = os.environ.get("DLD_STATE_DB") or os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "state.db"
+)
 
 
 @contextmanager

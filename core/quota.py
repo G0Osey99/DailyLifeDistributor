@@ -25,7 +25,11 @@ try:
 except ImportError:  # pragma: no cover
     from backports.zoneinfo import ZoneInfo  # type: ignore
 
-_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "state.db")
+# Shares the same SQLite file as core.db; honor the same DLD_STATE_DB override
+# so the hosted deploy's mounted volume covers quota state too.
+_DB_PATH = os.environ.get("DLD_STATE_DB") or os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "state.db"
+)
 _RESET_TZ = ZoneInfo("America/Los_Angeles")
 
 QUOTA_COSTS = {

@@ -131,3 +131,24 @@ def test_save_failure_sets_error_and_tears_down(tmp_path, temp_db):
 def test_save_without_session_raises(mgr):
     with pytest.raises(remote_login.RemoteLoginError):
         mgr.save()
+
+
+def test_save_encrypts_session_into_store(tmp_path, temp_db):
+    created = []
+
+    def launcher(config):
+        b = FakeBrowser()
+        created.append(b)
+        return b
+
+    m = remote_login.RemoteLoginManager(browser_launcher=launcher)
+    cfg = _cfg(tmp_path)
+    m.start("simplecast", cfg)
+    m.save()
+
+    from core import secrets_store
+    from core.playwright_session import _session_secret_name
+    blob = secrets_store.get_blob(_session_secret_name(cfg.session_file))
+    assert blob == b'{"cookies": []}'
+    assert created[0].closed is True            # browser torn down after save
+    assert m.status().phase == "done"

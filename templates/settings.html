@@ -111,10 +111,12 @@
             {% endif %}
             <div class="hint">SimpleCast uses Playwright browser automation; sign in once and the session persists in <code>simplecast_session.json</code>.</div>
             <div class="inline-actions" style="margin-top:6px;">
-                {% if not simplecast_session_found %}
-                <button type="submit" form="form-sc-login" class="btn btn-sm btn-primary">Log in</button>
-                {% else %}
+                {% if simplecast_session_found %}
                 <button type="submit" form="form-sc-clear" class="btn btn-sm btn-warn">Clear saved session</button>
+                {% elif hosted %}
+                <span class="text-dim text-sm">↓ Use “Connect a browser platform” below to sign in.</span>
+                {% else %}
+                <button type="submit" form="form-sc-login" class="btn btn-sm btn-primary">Log in</button>
                 {% endif %}
             </div>
         </div>
@@ -127,10 +129,12 @@
             {% endif %}
             <div class="hint">Vista Social uses Playwright browser automation; sign in once and the session persists in <code>vista_social_session.json</code>.</div>
             <div class="inline-actions" style="margin-top:6px;">
-                {% if not vista_social_session_found %}
-                <button type="submit" form="form-vs-login" class="btn btn-sm btn-primary">Log in</button>
-                {% else %}
+                {% if vista_social_session_found %}
                 <button type="submit" form="form-vs-clear" class="btn btn-sm btn-warn">Clear saved session</button>
+                {% elif hosted %}
+                <span class="text-dim text-sm">↓ Use “Connect a browser platform” below to sign in.</span>
+                {% else %}
+                <button type="submit" form="form-vs-login" class="btn btn-sm btn-primary">Log in</button>
                 {% endif %}
             </div>
         </div>
@@ -143,10 +147,12 @@
             {% endif %}
             <div class="hint">Rock RMS uses Playwright browser automation; sign in once and the session persists in <code>rock_session.json</code>.</div>
             <div class="inline-actions" style="margin-top:6px;">
-                {% if not rock_session_found %}
-                <button type="submit" form="form-rk-login" class="btn btn-sm btn-primary">Log in</button>
-                {% else %}
+                {% if rock_session_found %}
                 <button type="submit" form="form-rk-clear" class="btn btn-sm btn-warn">Clear saved session</button>
+                {% elif hosted %}
+                <span class="text-dim text-sm">↓ Use “Connect a browser platform” below to sign in.</span>
+                {% else %}
+                <button type="submit" form="form-rk-login" class="btn btn-sm btn-primary">Log in</button>
                 {% endif %}
             </div>
         </div>
@@ -444,7 +450,8 @@
 </div>
 </div>
 
-<!-- 🖥️ Connect a browser platform (hosted login) -->
+<!-- 🖥️ Connect a browser platform (hosted login) — hosted instances only -->
+{% if hosted %}
 <div class="settings-section">
 <div class="section-card">
     <div class="section-card-header" data-section="connect">
@@ -476,6 +483,7 @@
     </div>
 </div>
 </div>
+{% endif %}
 
 <!-- 🔑 Change Password -->
 <div class="settings-section">
@@ -717,6 +725,8 @@ function rlStartPolling(){
 }
 
 function initRemoteLogin(){
+    // Panel only renders on the hosted instance; bail out cleanly otherwise.
+    if(!document.getElementById('rl-panel')) return;
     document.querySelectorAll('.rl-connect').forEach(btn=>{
         btn.addEventListener('click', async ()=>{
             const service = btn.dataset.service;

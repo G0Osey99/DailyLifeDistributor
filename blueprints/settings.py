@@ -20,6 +20,7 @@ from flask import (
 )
 
 import core.config as core_config
+from core.hosted import is_hosted
 from core.config import (
     CONFIG_PATH,
     ENV_PATH,
@@ -232,6 +233,7 @@ def settings():
         rock_session_found=rock_session_found,
         youtube_authenticated=_cached_yt_authenticated(),
         secret_names=secret_names,
+        hosted=is_hosted(),
     )
 
 
@@ -270,7 +272,7 @@ def clear_vista_social_session():
 def _run_browser_login(name: str, build_config) -> None:
     """Open a Playwright session for *name*, triggering manual login if needed.
 
-    Used by the per-service Login buttons in Settings: opening the
+    Used by the per-service Login buttons in Settings (local only): opening the
     PlaywrightSession context manager runs `_handle_login` automatically when
     no session file is present (or when the saved session redirects to a
     login page), and the storage_state is persisted on context exit.
@@ -281,9 +283,22 @@ def _run_browser_login(name: str, build_config) -> None:
         pass
 
 
+def _hosted_login_redirect():
+    """On the headless hosted instance, the local-Chrome login can't work —
+    point the user at the streamed Connect panel instead of erroring."""
+    flash(
+        "This is the hosted instance — use the “Connect a browser platform” "
+        "panel in Settings to sign in through the server-hosted browser.",
+        "info",
+    )
+    return redirect(url_for("settings.settings"))
+
+
 @bp.route("/settings/login-simplecast", methods=["POST"])
 def login_simplecast():
     """Open Chrome and walk the user through SimpleCast login."""
+    if is_hosted():
+        return _hosted_login_redirect()
     def _build():
         from dataclasses import replace
         from uploaders.simplecast_uploader import (
@@ -301,6 +316,8 @@ def login_simplecast():
 @bp.route("/settings/login-vista-social", methods=["POST"])
 def login_vista_social():
     """Open Chrome and walk the user through Vista Social login."""
+    if is_hosted():
+        return _hosted_login_redirect()
     def _build():
         from uploaders.vista_social_uploader import _VS_SESSION_CONFIG
         return _VS_SESSION_CONFIG
@@ -315,6 +332,8 @@ def login_vista_social():
 @bp.route("/settings/login-rock", methods=["POST"])
 def login_rock():
     """Open Chrome and walk the user through Rock RMS login."""
+    if is_hosted():
+        return _hosted_login_redirect()
     def _build():
         from uploaders.rock.client import _ROCK_SESSION_CONFIG
         return _ROCK_SESSION_CONFIG

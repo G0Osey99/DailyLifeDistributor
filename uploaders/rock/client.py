@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover
     PlaywrightTimeout = Exception
     Page = object  # type: ignore[assignment,misc]
 
+from core.hosted import is_hosted
 from core.playwright_session import PlaywrightSession, SessionConfig
 
 from .constants import (
@@ -83,6 +84,7 @@ _ROCK_SESSION_CONFIG = SessionConfig(
     login_timeout_env="ROCK_LOGIN_TIMEOUT",
     chrome_path_env="ROCK_CHROME_PATH",
     default_timeout_ms=_NAV_TIMEOUT_MS,
+    no_login_recovery=is_hosted(),
 )
 
 

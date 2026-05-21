@@ -19,6 +19,7 @@ from flask import current_app
 
 from core import db as _db
 from core.config import load_config
+from core.playwright_session import SessionExpiredError
 from core.session_state import session
 from uploaders.youtube_uploader import upload_video as yt_upload_video
 from uploaders.simplecast_uploader import upload_episode as sc_upload_episode
@@ -356,6 +357,14 @@ def run_upload_job(
             effective_row = idx + row_offset
             try:
                 _, _, result = future.result()
+            except SessionExpiredError:
+                emit({"type": "error", "row": effective_row, "date": item["date"],
+                      "platform": item["platform"],
+                      "message": (
+                          f"Session expired for {item['platform']}. Open Settings "
+                          "and click 'Connect' to re-authenticate, then retry."
+                      )})
+                continue
             except Exception as exc:
                 emit({"type": "error", "row": effective_row, "date": item["date"],
                       "platform": item["platform"], "message": str(exc)})

@@ -43,9 +43,11 @@ try:
 except ImportError:
     PlaywrightTimeout = Exception
 
+from core.hosted import is_hosted
 from core.playwright_session import (
     PlaywrightSession,
     SessionConfig,
+    SessionExpiredError,
     emit_phase as _emit,
     url_marker_login_check,
 )
@@ -89,6 +91,7 @@ _VS_SESSION_CONFIG = SessionConfig(
     chrome_path_env="VISTA_SOCIAL_CHROME_PATH",
     viewport={"width": 1440, "height": 900},
     default_timeout_ms=_DEFAULT_TIMEOUT,
+    no_login_recovery=is_hosted(),
 )
 
 
@@ -518,6 +521,10 @@ def upload_post(entry, elements=None, progress_callback=None) -> dict:
             # the URL after Schedule (it's a calendar tile, not a route).
             return {"success": True, "url": page.url or _CALENDAR_URL}
 
+    except SessionExpiredError:
+        # Hosted mode: propagate so the orchestrator surfaces the re-Connect
+        # message rather than the generic RuntimeError branch below.
+        raise
     except PlaywrightTimeout as exc:
         return {"success": False, "error": f"Vista Social timed out: {exc}"}
     except RuntimeError as exc:

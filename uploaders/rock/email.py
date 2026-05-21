@@ -19,6 +19,8 @@ from datetime import datetime as _dt
 from pathlib import Path as _Path
 from typing import Optional
 
+from core.playwright_session import SessionExpiredError
+
 from .client import RockBrowserClient
 from .fields import EmailFields
 from .text import email_title
@@ -125,6 +127,9 @@ def schedule_email(
                 "scheduled_time": f"{entry.date} 00:00",
                 "error": "",
             }
+    except SessionExpiredError:
+        # Hosted mode: propagate so upload_jobs surfaces the re-Connect message.
+        raise
     except Exception as e:  # noqa: BLE001 — surface any failure as a row error
         log.exception("Rock email build failed for %s", entry.date)
         return {

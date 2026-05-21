@@ -169,6 +169,11 @@ def create_app() -> Flask:
             if host_no_port not in _ALLOWED_HOSTS:
                 abort(403)
 
+        # Unmatched route: let Flask's 404 handler respond rather than
+        # redirecting an unauthenticated probe to /login (info leak).
+        if request.endpoint is None:
+            return
+
         if request.endpoint in _PUBLIC_ENDPOINTS:
             return
         if is_authenticated():

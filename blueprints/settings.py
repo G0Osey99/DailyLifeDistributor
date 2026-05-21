@@ -192,6 +192,8 @@ def settings():
             except OSError as e:
                 flash(f"Could not save client_secrets.json ({e}).", "danger")
                 return redirect(url_for("settings.settings"))
+            from core import secrets_store
+            secrets_store.set_blob("youtube.client_secrets", blob)
 
         flash("Settings saved successfully!", "success")
         return redirect(url_for("settings.settings"))

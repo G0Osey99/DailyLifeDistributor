@@ -57,3 +57,10 @@ def test_login_allows_safe_relative_next(client):
                        query_string={"next": "/settings"})
     assert resp.status_code in (301, 302)
     assert resp.headers["Location"].endswith("/settings")
+
+
+def test_login_next_strips_whitespace(client):
+    resp = client.post("/login", data={"password": "correct-horse"},
+                       query_string={"next": " //evil.com"})
+    assert resp.status_code in (301, 302)
+    assert "evil.com" not in resp.headers["Location"]

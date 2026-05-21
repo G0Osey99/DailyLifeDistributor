@@ -21,6 +21,7 @@ def _safe_next(nxt: str) -> str:
     Rejects absolute URLs, protocol-relative `//host`, and backslash variants
     that browsers may normalize to `//host`.
     """
+    nxt = (nxt or "").strip()
     if not nxt or nxt.startswith("//") or nxt.startswith("/\\") or "\\" in nxt:
         return url_for("scan.index")
     parsed = urllib.parse.urlparse(nxt)

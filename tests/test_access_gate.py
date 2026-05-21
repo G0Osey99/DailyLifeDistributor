@@ -36,6 +36,11 @@ def test_unauthenticated_xhr_gets_401(client):
     assert resp.status_code == 401
 
 
+def test_unknown_route_unauthenticated_is_404(client):
+    resp = client.get("/this-route-does-not-exist-xyz")
+    assert resp.status_code == 404
+
+
 def test_allowed_hosts_rejects_foreign_host(temp_db, monkeypatch):
     monkeypatch.setenv("ALLOWED_HOSTS", "uploader.example.com")
     auth.set_password("pw")

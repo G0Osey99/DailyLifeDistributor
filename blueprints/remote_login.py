@@ -17,11 +17,16 @@ bp = Blueprint("remote_login", __name__)
 # Per-service login configs. Reuse each uploader's SessionConfig so login URLs
 # / markers stay in one place.
 def _service_configs() -> dict[str, SessionConfig]:
-    from uploaders.simplecast_uploader import _SC_SESSION_CONFIG_BASE
+    from dataclasses import replace
+    from uploaders.simplecast_uploader import _SC_SESSION_CONFIG_BASE, _resolve_upload_url
     from uploaders.vista_social_uploader import _VS_SESSION_CONFIG
     from uploaders.rock.client import _ROCK_SESSION_CONFIG
+    # SimpleCast's base config leaves target_url/login_url empty (resolved
+    # per-upload-call), so fill it here or the login browser navigates to "".
+    # Navigating to the show's new-episode URL bounces an anonymous session to
+    # the SimpleCast sign-in page — exactly the login we want to capture.
     return {
-        "simplecast": _SC_SESSION_CONFIG_BASE,
+        "simplecast": replace(_SC_SESSION_CONFIG_BASE, target_url=_resolve_upload_url()),
         "vista_social": _VS_SESSION_CONFIG,
         "rock": _ROCK_SESSION_CONFIG,
     }

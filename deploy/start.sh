@@ -25,13 +25,20 @@ done
 VNC_PASS_FILE="${VNC_PASS_FILE:-/data/vnc_password}"
 if [ ! -s "$VNC_PASS_FILE" ]; then
     mkdir -p "$(dirname "$VNC_PASS_FILE")"
-    head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20 > "$VNC_PASS_FILE"
+    # VNC auth (DES) only uses the first 8 chars, so an 8-char password is the
+    # full effective strength; both x11vnc and noVNC truncate identically.
+    head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 8 > "$VNC_PASS_FILE"
     chmod 600 "$VNC_PASS_FILE"
 fi
 export VNC_PASSWORD="$(cat "$VNC_PASS_FILE")"
 
+# x11vnc 0.9.x doesn't take an inline plaintext password (-passwd is forwarded
+# to libvncserver and ignored), so store it as an rfbauth file and use that.
+VNC_AUTH_FILE=/data/vnc_passwd.rfb
+x11vnc -storepasswd "$VNC_PASSWORD" "$VNC_AUTH_FILE" >/dev/null 2>&1 || true
+
 # VNC server bound to loopback only — never expose 5900/6080 publicly.
-x11vnc -display "$DISPLAY" -localhost -passwd "$VNC_PASSWORD" -forever -shared -rfbport 5900 &
+x11vnc -display "$DISPLAY" -localhost -rfbauth "$VNC_AUTH_FILE" -forever -shared -rfbport 5900 &
 
 # WebSocket bridge on 6080 (loopback; reached only via the proxy).
 websockify --web=/usr/share/novnc 6080 localhost:5900 &

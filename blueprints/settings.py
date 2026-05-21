@@ -361,9 +361,13 @@ def oauth_youtube_settings():
 @bp.route("/settings/clear-youtube-token", methods=["POST"])
 def clear_youtube_token():
     """Clear the stored YouTube OAuth token and redirect back to settings."""
-    from uploaders.youtube_uploader import _clear_token
-    _clear_token()
-    flash("YouTube token cleared.", "success")
+    from uploaders.youtube_uploader import _clear_token, _YT_TOKEN_NAME
+    from core import secrets_store
+    if secrets_store.has_secret(_YT_TOKEN_NAME):
+        _clear_token()
+        flash("YouTube token cleared.", "success")
+    else:
+        flash("No YouTube token was set.", "warning")
     return redirect(url_for("settings.settings"))
 
 

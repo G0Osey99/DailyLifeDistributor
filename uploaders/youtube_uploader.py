@@ -40,7 +40,6 @@ API_SERVICE_NAME = "youtube"
 API_VERSION = "v3"
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_TOKEN_PATH   = os.path.join(_PROJECT_ROOT, "token.json")
 
 _YT_CLIENT_SECRETS_NAME = "youtube.client_secrets"
 _YT_TOKEN_NAME = "youtube.token"
@@ -140,30 +139,6 @@ def _next_chunk_with_retry(request):
 def _load_config() -> dict:
     from core.config import load_config
     return load_config()
-
-
-def _get_token_path() -> str:
-    """Return path to token.json, resolved relative to the project root."""
-    return _TOKEN_PATH
-
-
-def _atomic_write_text(path: str, data: str) -> None:
-    """Write `data` to `path` atomically.
-
-    Why: token.json is on a USB drive. A non-atomic write that gets
-    interrupted (USB unplug, power loss, concurrent refresh) leaves a
-    truncated/empty file and the next run treats the user as unauthenticated.
-    write-then-replace makes the swap atomic on the same filesystem.
-    """
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(data)
-        f.flush()
-        try:
-            os.fsync(f.fileno())
-        except OSError:
-            pass
-    os.replace(tmp, path)
 
 
 def get_authenticated_service():

@@ -37,3 +37,14 @@ def test_client_secrets_materializes_to_file():
     ) as path:
         with open(path) as f:
             assert json.load(f) == {"installed": {}}
+
+
+def test_corrupt_stored_token_raises_actionable_error():
+    """Building credentials from corrupt stored JSON must fail loudly."""
+    yt._save_token_json("this is not valid json")
+    with pytest.raises(RuntimeError) as exc_info:
+        # Corrupt stored token JSON must raise with an actionable message,
+        # the same way a corrupt token.json used to.
+        yt.get_authenticated_service()
+    assert "corrupt" in str(exc_info.value).lower()
+    assert "Clear YouTube Token" in str(exc_info.value)

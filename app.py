@@ -62,7 +62,7 @@ from uploaders.youtube_uploader import is_authenticated as yt_is_authenticated
 # the underlying call hits the encrypted store each time. The token now lives
 # in the DB (no file mtime to watch), so we re-check on a simple TTL instead.
 _YT_AUTH_CACHE: dict = {"value": None, "checked_at": 0.0}
-_YT_AUTH_TTL_SEC = 30.0
+_YT_AUTH_TTL_SEC = 30.0  # Navbar hint only: a cleared/added token can take up to this long to reflect.
 
 
 def _cached_yt_authenticated() -> bool:

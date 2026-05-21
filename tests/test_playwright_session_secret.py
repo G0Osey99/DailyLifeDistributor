@@ -57,3 +57,24 @@ def test_has_and_clear_session(tmp_path):
     ps.clear_session(session_file)
     assert ps.has_session(session_file) is False
     assert not os.path.exists(session_file)
+
+
+def test_store_only_session_is_detected(tmp_path):
+    # Simulate the post-migration state: session in the store, no disk file.
+    session_file = str(tmp_path / "simplecast_session.json")
+    with open(session_file, "w") as f:
+        f.write('{"cookies": []}')
+    ps._persist_session_blob(session_file)
+    os.remove(session_file)  # store-only now
+    assert not os.path.exists(session_file)
+    assert ps.has_session(session_file) is True  # _open relies on this
+
+
+def test_clear_session_removes_disk_first(tmp_path):
+    session_file = str(tmp_path / "rock_session.json")
+    with open(session_file, "w") as f:
+        f.write("{}")
+    ps._persist_session_blob(session_file)
+    ps.clear_session(session_file)
+    assert not os.path.exists(session_file)
+    assert ps.has_session(session_file) is False

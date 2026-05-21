@@ -98,14 +98,16 @@ def has_session(session_file: str) -> bool:
 
 
 def clear_session(session_file: str) -> None:
-    """Remove a saved session from both the encrypted store and on disk."""
+    """Clear a saved session (disk first, then store).
+
+    Removes the on-disk file first so a locked file (e.g. Chrome still open)
+    raises before we delete the store copy — avoiding a split state where the
+    store is cleared but a stale file remains that _open would still use.
+    """
+    if os.path.exists(session_file):
+        os.remove(session_file)  # may raise OSError if locked — let it propagate
     from core import secrets_store
     secrets_store.delete_secret(_session_secret_name(session_file))
-    try:
-        if os.path.exists(session_file):
-            os.remove(session_file)
-    except OSError:
-        pass
 
 
 @dataclass
@@ -250,6 +252,12 @@ class PlaywrightSession:
                 try:
                     _atomic_save_storage_state(self.context, self.config.session_file)
                     _persist_session_blob(self.config.session_file)
+                    # Store now holds the latest session; don't leave plaintext on disk.
+                    try:
+                        if os.path.exists(self.config.session_file):
+                            os.remove(self.config.session_file)
+                    except OSError:
+                        pass
                 except Exception as e:  # noqa: BLE001
                     log.warning(
                         "%s: storage_state save on exit failed: %s",
@@ -366,7 +374,7 @@ class PlaywrightSession:
         """Land on a logged-in page, prompting the user if needed."""
         self._emit(PHASE_LAUNCHING)
 
-        have_session = os.path.isfile(self.config.session_file)
+        have_session = has_session(self.config.session_file)
         # Non-interactive callers can't recover from a missing session —
         # bail out cleanly so the orchestrator surfaces a re-login prompt
         # instead of the user staring at a never-completing browser launch.

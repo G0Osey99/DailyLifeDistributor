@@ -21,6 +21,11 @@ def _isolate_state_db(tmp_path, monkeypatch):
     # Reset the one-shot PRAGMA flag so init_db() re-applies WAL on the
     # new file rather than skipping it.
     monkeypatch.setattr(_db, "_PRAGMAS_APPLIED", False, raising=False)
+    # Create the schema on the temp DB. Code paths that reach the encrypted
+    # secret store (uploaders reading creds, etc.) query the `secrets` table,
+    # so every isolated test needs the tables present — not just those that
+    # explicitly request the `temp_db` fixture.
+    _db.init_db()
     yield
 
 

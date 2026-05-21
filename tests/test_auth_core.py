@@ -56,3 +56,19 @@ def test_success_clears_failures():
     auth.record_failure(ip)
     auth.clear_failures(ip)
     assert auth.is_locked(ip) is False
+
+
+def test_lockout_window_expiry_keeps_one_attempt(monkeypatch):
+    auth.set_password("pw")
+    ip = "10.0.0.7"
+    base = 1000.0
+    monkeypatch.setattr(auth.time, "monotonic", lambda: base)
+    for _ in range(auth.MAX_ATTEMPTS):
+        auth.record_failure(ip)
+    assert auth.is_locked(ip) is True
+    # Jump past the lockout window: it unlocks...
+    monkeypatch.setattr(auth.time, "monotonic", lambda: base + auth.LOCKOUT_SECONDS + 1)
+    assert auth.is_locked(ip) is False
+    # ...but the count was kept at MAX-1, so one more failure re-locks immediately.
+    auth.record_failure(ip)
+    assert auth.is_locked(ip) is True

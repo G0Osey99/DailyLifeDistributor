@@ -36,6 +36,11 @@ def set_password(password: str) -> None:
 
 
 def verify_password(password: str) -> bool:
+    """Return True if `password` matches the stored credential.
+
+    Returns False when no credential is configured yet (use is_configured()
+    to distinguish a fresh, unconfigured deploy from a wrong password).
+    """
     stored = secrets_store.get_secret(_HASH_SECRET)
     if not stored:
         return False
@@ -53,6 +58,11 @@ def bootstrap_from_env() -> None:
             "restart to create the initial login.", _INITIAL_ENV, _INITIAL_ENV,
         )
         return
+    if len(seed) < 8:
+        log.warning(
+            "%s is shorter than 8 characters; use a stronger initial password.",
+            _INITIAL_ENV,
+        )
     set_password(seed)
     log.info("Seeded initial login credential from %s.", _INITIAL_ENV)
 
@@ -72,7 +82,10 @@ def is_locked(ip: str) -> bool:
         return False
     count, first = entry
     if time.monotonic() - first > LOCKOUT_SECONDS:
-        _failures.pop(ip, None)  # window elapsed; reset
+        # Window elapsed: don't fully reset, or an attacker could get
+        # MAX_ATTEMPTS-1 free guesses every window forever. Keep the count
+        # one below the threshold so the next failure immediately re-locks.
+        _failures[ip] = (MAX_ATTEMPTS - 1, time.monotonic())
         return False
     return count >= MAX_ATTEMPTS
 

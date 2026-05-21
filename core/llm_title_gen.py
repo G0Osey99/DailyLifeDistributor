@@ -43,7 +43,15 @@ def _cache_put(key: str, value: list[str]) -> None:
         while len(_cache) > _CACHE_MAX_ENTRIES:
             _cache.popitem(last=False)
 
-LLAMAFILE_BASE_URL = "http://localhost:8081"
+# OpenAI-compatible LLM endpoint for title suggestions. Defaults match the
+# bundled llamafile (port 8081, model name "local", which llamafile ignores).
+# Override for any other OpenAI-compatible backend — e.g. Ollama on a VPS:
+#   LLM_BASE_URL=http://localhost:11434   LLM_MODEL=llama3.2
+LLM_BASE_URL = (os.environ.get("LLM_BASE_URL") or "http://localhost:8081").rstrip("/")
+LLM_MODEL = os.environ.get("LLM_MODEL") or "local"
+
+# Back-compat alias: the /health probe and older imports reference this name.
+LLAMAFILE_BASE_URL = LLM_BASE_URL
 
 def _get_transcript_hash(transcript: str) -> str:
     return hashlib.sha256(transcript.encode("utf-8")).hexdigest()
@@ -60,7 +68,7 @@ def is_llamafile_running() -> bool:
     the manual path rather than wedge on a doomed POST.
     """
     try:
-        r = requests.get(f"{LLAMAFILE_BASE_URL}/v1/models", timeout=5)
+        r = requests.get(f"{LLM_BASE_URL}/v1/models", timeout=5)
         return r.status_code < 500
     except Exception as e:
         logger.debug("llamafile health check failed: %s", e)
@@ -120,9 +128,9 @@ def generate_title_suggestions(
     try:
         logger.info("Calling llamafile transcript_length=%d", len(transcript))
         response = requests.post(
-            f"{LLAMAFILE_BASE_URL}/v1/chat/completions",
+            f"{LLM_BASE_URL}/v1/chat/completions",
             json={
-                "model": "local",
+                "model": LLM_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.8,
                 "max_tokens": 300,

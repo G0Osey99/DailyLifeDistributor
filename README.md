@@ -203,14 +203,72 @@ and tidy the metadata → **Confirm** → **Upload** and watch progress → chec
 | `INITIAL_ADMIN_PASSWORD` | (first boot) | Seeds the shared login password on first start; change it later in Settings. |
 | `ALLOWED_HOSTS` | (unset) | Comma-separated hostnames the app accepts (your VPS domain). Unset = no host restriction (local dev). |
 | `SESSION_COOKIE_SECURE` | `true` | Whether the session cookie requires HTTPS. **Set `false` for local `python app.py` over plain http**, or login will appear to succeed but every next request bounces back to the login page. |
+| `LLM_BASE_URL` | `http://localhost:8081` | OpenAI-compatible endpoint for Shorts title suggestions. Default is the bundled llamafile. For Ollama: `http://localhost:11434`. |
+| `LLM_MODEL` | `local` | Model name sent to that endpoint. llamafile ignores it (`local`); Ollama needs a real name, e.g. `llama3.2`. |
+
+---
+
+## Hosting on a VPS (Linux)
+
+The bundled `bin/` runtimes and `launch_mac.command` are **Mac-only and not
+needed on a VPS** — you don't ship `bin/python_arm|intel`, `bin/node_arm|intel`,
+`bin/ffmpeg`, or `bin/llamafile`. Install the equivalents from the OS instead.
+
+**1. App + dependencies**
+```bash
+sudo apt install -y python3 python3-venv ffmpeg   # ffmpeg only needed for AI titles
+git clone <this repo> && cd DailyLifeDistributor
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**2. Required environment** (e.g. in `.env`)
+```bash
+SECRET_ENC_KEY=...            # generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+FLASK_SECRET_KEY=...          # set a STABLE value (any long random string) so sessions survive restarts
+INITIAL_ADMIN_PASSWORD=...    # seeds the login on first boot; change it in Settings afterward
+ALLOWED_HOSTS=uploader.example.com   # your VPS hostname(s)
+SESSION_COOKIE_SECURE=true    # you are behind HTTPS (see step 4)
+```
+
+**3. LLM for Shorts title suggestions (optional, via Ollama)**
+```bash
+ollama serve &           # or run as a service
+ollama pull llama3.2
+# then set:
+LLM_BASE_URL=http://localhost:11434
+LLM_MODEL=llama3.2
+```
+If you skip this, the app runs fine — Shorts titles just won't be auto-suggested
+(and you won't need `ffmpeg`/Whisper either). The faster-whisper model
+auto-downloads on first transcription when titles *are* enabled.
+
+**4. TLS + reverse proxy**
+Put the app behind nginx or Caddy terminating HTTPS, proxying to the Flask port.
+Keep `SESSION_COOKIE_SECURE=true` and set `ALLOWED_HOSTS` to your domain. (The
+app uses Flask's built-in server; that's adequate for a single operator behind a
+proxy — moving to a production WSGI server is a later hardening step.)
+
+**5. Secrets**
+On first boot the app auto-imports any plaintext secrets present, but on a fresh
+VPS you'll typically have none — so enter your API keys (and authorize YouTube)
+from the **Settings** page; everything is encrypted at rest with `SECRET_ENC_KEY`.
+
+> ⚠️ **Browser-uploader auth on a headless VPS is an open item.** YouTube uses
+> the API and works fully headless. The API-less platforms (SimpleCast, Vista
+> Social, Rock) authenticate through an **interactive** browser login, which a
+> headless server can't perform on its own. The planned approach is to log in
+> **locally** with a helper and upload the resulting encrypted session through
+> Settings (reusing the secret store) — this is being designed separately and is
+> not wired up yet. Until then, treat the Playwright platforms as not-yet-hosted.
 
 ---
 
 ## Health & on-call
 
-- **`/health`** — JSON probe for `state.db` writability, llamafile (port 8081),
-  and the Chrome path. Returns HTTP 503 if anything is down. Curl this first
-  when something is wrong.
+- **`/health`** — JSON probe for `state.db` writability, the LLM endpoint
+  (`LLM_BASE_URL`, default llamafile on 8081), and the Chrome path. Returns HTTP
+  503 if anything is down. Curl this first when something is wrong.
 - **`logs/daily_life.log`** — rotating log file (5 MB × 5 backups).
 
 ### Recovery runbook
@@ -220,7 +278,7 @@ and tidy the metadata → **Confirm** → **Upload** and watch progress → chec
 | App fails to launch, port-conflict message on stderr | Stale Flask or another local server holding 8080/8081 | Kill the process or set `FLASK_PORT` |
 | App refuses to start: "SECRET_ENC_KEY not set" | Missing encryption key | Generate via `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and set in `.env` |
 | Login page loops forever, or you're logged out after every request | `SESSION_COOKIE_SECURE` is `true` but you're on plain http | Set `SESSION_COOKIE_SECURE=false` in `.env` for local development |
-| Title suggestions never appear | llamafile crashed or never started | Check `/health`, re-run the launch script, or start `bin/llamafile` manually |
+| Title suggestions never appear | LLM endpoint unreachable (llamafile not started, or Ollama not running / wrong `LLM_BASE_URL`/`LLM_MODEL`) | Check `/health`; confirm the LLM server is up at `LLM_BASE_URL` and the model name matches `LLM_MODEL` |
 | `Failed to initialize state.db ...` on startup | `state.db` corrupt (USB unplug mid-write, `kill -9` mid-commit) | Back up the file, delete it, restart — a fresh schema is created |
 | SimpleCast/Vista/Rock: "still on a login page after login" | Saved session is broken | Delete the matching `*_session.json` and retry — first-run login fires again |
 | Headless run hangs and eventually errors | Saved Playwright session expired; uploader relaunched headed but no human typed | Re-run interactively and complete the login prompt |

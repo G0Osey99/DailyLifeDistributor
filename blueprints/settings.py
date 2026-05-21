@@ -360,17 +360,10 @@ def oauth_youtube_settings():
 
 @bp.route("/settings/clear-youtube-token", methods=["POST"])
 def clear_youtube_token():
-    """Delete token.json and redirect back to settings."""
-    from uploaders.youtube_uploader import _get_token_path
-    token_path = _get_token_path()
-    if os.path.exists(token_path):
-        try:
-            os.remove(token_path)
-            flash("YouTube token cleared.", "success")
-        except OSError as e:
-            flash(f"Could not clear YouTube token ({e}). Check that the file is not read-only.", "danger")
-    else:
-        flash("No token file found.", "warning")
+    """Clear the stored YouTube OAuth token and redirect back to settings."""
+    from uploaders.youtube_uploader import _clear_token
+    _clear_token()
+    flash("YouTube token cleared.", "success")
     return redirect(url_for("settings.settings"))
 
 

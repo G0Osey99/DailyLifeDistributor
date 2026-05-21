@@ -59,31 +59,31 @@ from uploaders.youtube_uploader import is_authenticated as yt_is_authenticated
 
 
 # Cache yt_is_authenticated() — context processor runs on every render and
-# the underlying call hits disk + parses JSON each time. Keyed off token.json
-# mtime so a cleared/refreshed token invalidates immediately.
-_YT_AUTH_CACHE: dict = {"mtime": None, "value": False, "checked_at": 0.0}
+# the underlying call hits the encrypted store each time. The token now lives
+# in the DB (no file mtime to watch), so we re-check on a simple TTL instead.
+_YT_AUTH_CACHE: dict = {"value": None, "checked_at": 0.0}
 _YT_AUTH_TTL_SEC = 30.0
 
 
 def _cached_yt_authenticated() -> bool:
-    from uploaders.youtube_uploader import _get_token_path
+    """Cache the YouTube-authenticated state for the navbar.
+
+    The token now lives in the encrypted store (no file mtime to watch), so
+    we re-check at most every _YT_AUTH_TTL_SEC seconds rather than per request.
+    """
+    now = time.monotonic()
+    if (now - _YT_AUTH_CACHE["checked_at"]) < _YT_AUTH_TTL_SEC and _YT_AUTH_CACHE["value"] is not None:
+        return _YT_AUTH_CACHE["value"]
     try:
-        token_path = _get_token_path()
-        mtime = os.path.getmtime(token_path) if os.path.exists(token_path) else None
-        now = time.time()
-        if (
-            _YT_AUTH_CACHE["mtime"] == mtime
-            and now - _YT_AUTH_CACHE["checked_at"] < _YT_AUTH_TTL_SEC
-        ):
-            return _YT_AUTH_CACHE["value"]
-        value = bool(yt_is_authenticated())
-        _YT_AUTH_CACHE.update(mtime=mtime, value=value, checked_at=now)
-        return value
+        val = bool(yt_is_authenticated())
     except Exception:
         logging.getLogger(__name__).debug(
             "_cached_yt_authenticated failed; treating as unauthenticated", exc_info=True
         )
-        return False
+        val = False
+    _YT_AUTH_CACHE["value"] = val
+    _YT_AUTH_CACHE["checked_at"] = now
+    return val
 
 
 def create_app() -> Flask:

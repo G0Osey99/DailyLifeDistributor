@@ -54,7 +54,7 @@
    <form> tags are invalid HTML and cause the parser to close the outer form
    prematurely. Buttons below reference these by id via the HTML5 `form` attribute. #}
 <form id="form-yt-reauth" method="POST" action="{{ url_for('settings.oauth_youtube_settings') }}"></form>
-<form id="form-yt-clear" method="POST" action="{{ url_for('settings.clear_youtube_token') }}" onsubmit="return confirm('Delete token.json?');"></form>
+<form id="form-yt-clear" method="POST" action="{{ url_for('settings.clear_youtube_token') }}" onsubmit="return confirm('Clear YouTube token?');"></form>
 <form id="form-sc-clear" method="POST" action="{{ url_for('settings.clear_simplecast_session') }}" onsubmit="return confirm('Clear SimpleCast saved session?');"></form>
 <form id="form-vs-clear" method="POST" action="{{ url_for('settings.clear_vista_social_session') }}" onsubmit="return confirm('Clear Vista Social saved session?');"></form>
 <form id="form-rk-clear" method="POST" action="{{ url_for('settings.clear_rock_session') }}" onsubmit="return confirm('Clear Rock saved session?');"></form>

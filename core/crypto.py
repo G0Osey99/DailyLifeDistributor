@@ -45,10 +45,19 @@ def validate_master_key() -> None:
 
 
 def encrypt(data: bytes) -> bytes:
+    """Encrypt bytes with the master key.
+
+    Raises MasterKeyError if SECRET_ENC_KEY is missing or invalid.
+    """
     return _load_fernet().encrypt(data)
 
 
 def decrypt(token: bytes) -> bytes:
+    """Decrypt a token produced by encrypt().
+
+    Raises MasterKeyError if SECRET_ENC_KEY is missing or invalid, and
+    DecryptError if the token can't be decrypted (wrong key or tampered).
+    """
     try:
         return _load_fernet().decrypt(token)
     except InvalidToken as exc:

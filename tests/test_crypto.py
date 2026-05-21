@@ -35,3 +35,15 @@ def test_invalid_key_is_fatal(monkeypatch):
     monkeypatch.setenv("SECRET_ENC_KEY", "not-a-valid-fernet-key")
     with pytest.raises(crypto.MasterKeyError):
         crypto.validate_master_key()
+
+
+def test_encrypt_without_key_is_fatal(monkeypatch):
+    monkeypatch.delenv("SECRET_ENC_KEY", raising=False)
+    with pytest.raises(crypto.MasterKeyError):
+        crypto.encrypt(b"x")
+
+
+def test_decrypt_without_key_is_fatal(monkeypatch):
+    monkeypatch.delenv("SECRET_ENC_KEY", raising=False)
+    with pytest.raises(crypto.MasterKeyError):
+        crypto.decrypt(b"sometoken")

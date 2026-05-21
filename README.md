@@ -147,13 +147,14 @@ equivalent) to the binary.
 
 | Page | Route | What you do there |
 |---|---|---|
+| **Login** | `/login` | Enter the shared password to begin a session. |
 | **Index** | `/` | Scans the media folders, lists available dates; pick dates + platforms to publish. |
 | **Calendar** | `/calendar` | Calendar view of what's already scheduled/published across sources; refresh from YouTube/Rock. |
 | **Review** | `/review` | Per-date editing: titles, descriptions, tags, schedules. Generate AI Shorts-title suggestions here. Toggle individual elements (thumbnail, description, schedule…) per platform. |
 | **Confirm** | `/confirm` | Final summary of exactly what will be uploaded where. |
 | **Upload** | `/upload` | Kicks off parallel uploads; a live progress view streams over SSE. |
 | **History** | `/history` | Past sessions and per-platform outcomes (success/URL/error); resume an interrupted session. |
-| **Settings** | `/settings` | Override directory paths at runtime, run/clear each service login, authorize YouTube, configure the Excel column mapping, download the Whisper model, check llamafile status. |
+| **Settings** | `/settings` | Override directory paths at runtime, run/clear each service login, authorize YouTube, configure the Excel column mapping, download the Whisper model, check llamafile status, manage encrypted secrets. |
 
 **Typical run:** open `/` → select dates and platforms → **Review** each date
 and tidy the metadata → **Confirm** → **Upload** and watch progress → check
@@ -167,9 +168,9 @@ and tidy the metadata → **Confirm** → **Upload** and watch progress → chec
 |------|---------|---------|
 | `config.yaml` | Directory paths, per-platform schedules + on/off toggles, default element toggles, Excel column mapping, LLM/Whisper settings, `upload.max_workers` | yes |
 | `.env` | Secrets and Playwright/runtime knobs (see below) | no (gitignored) |
-| `client_secrets.json` | Google OAuth client you provide | no |
-| `token.json` | YouTube refresh token (auto-generated) | no |
-| `*_session.json` | Saved Playwright browser sessions (auto-generated) | no |
+| `client_secrets.json` | Google OAuth client you provide | no (migrated to encrypted store on first boot) |
+| `token.json` | YouTube refresh token (auto-generated) | no (migrated to encrypted store) |
+| `*_session.json` | Saved Playwright browser sessions (auto-generated) | no (migrated to encrypted store) |
 | `state.db` | SQLite — `sessions`, `upload_history`, `image_history`, `external_calendar_items` | no |
 
 ### `config.yaml` highlights
@@ -199,6 +200,10 @@ and tidy the metadata → **Confirm** → **Upload** and watch progress → chec
 | `SIMPLECAST_LOGIN_TIMEOUT` | `300` | Seconds to wait for first-run manual login. |
 | `SIMPLECAST_CHROME_PATH` | (auto) | Full path to Chrome if `channel='chrome'` can't find it. |
 | `VISTA_SOCIAL_*` / `ROCK_*` | parallel | Same headless / login-timeout / chrome-path knobs for the other Playwright uploaders. |
+| `SECRET_ENC_KEY` | (required) | Fernet master key for the encrypted secret store. The app refuses to start without it. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. |
+| `INITIAL_ADMIN_PASSWORD` | (first boot) | Seeds the shared login password on first start; change it later in Settings. |
+| `ALLOWED_HOSTS` | (unset) | Comma-separated hostnames the app accepts (your VPS domain). Unset = no host restriction (local dev). |
+| `SESSION_COOKIE_SECURE` | `true` | Whether the session cookie requires HTTPS. **Set `false` for local `python app.py` over plain http**, or login will appear to succeed but every next request bounces back to the login page. |
 
 ---
 
@@ -214,6 +219,8 @@ and tidy the metadata → **Confirm** → **Upload** and watch progress → chec
 | Symptom | What's wrong | Fix |
 |---|---|---|
 | App fails to launch, port-conflict message on stderr | Stale Flask or another local server holding 8080/8081 | Kill the process or set `FLASK_PORT` |
+| App refuses to start: "SECRET_ENC_KEY not set" | Missing encryption key | Generate via `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and set in `.env` |
+| Login page loops forever, or you're logged out after every request | `SESSION_COOKIE_SECURE` is `true` but you're on plain http | Set `SESSION_COOKIE_SECURE=false` in `.env` for local development |
 | Title suggestions never appear | llamafile crashed or never started | Check `/health`, re-run the launch script, or start `bin/llamafile` manually |
 | `Failed to initialize state.db ...` on startup | `state.db` corrupt (USB unplug mid-write, `kill -9` mid-commit) | Back up the file, delete it, restart — a fresh schema is created |
 | SimpleCast/Vista/Rock: "still on a login page after login" | Saved session is broken | Delete the matching `*_session.json` and retry — first-run login fires again |
@@ -279,7 +286,7 @@ skipped by default; opt in with the env vars documented in their docstrings.
 ## Architecture (pointer)
 
 Single Flask app (`app.py`) backed by `core/` (scanning, Excel parsing,
-session state, transcription, LLM, SQLite), `blueprints/` (the routes/pages
+session state, transcription, LLM, SQLite, encryption), `blueprints/` (the routes/pages
 above), and `uploaders/` (YouTube, SimpleCast, Vista Social, Rock). **`CLAUDE.md`
 is the full engineering reference**; this README is the operator/first-timer
 guide.

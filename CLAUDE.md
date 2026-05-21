@@ -15,7 +15,7 @@ This script auto-detects architecture, selects the bundled Python from `bin/pyth
 pip install -r requirements.txt
 python app.py
 ```
-The app opens at `http://localhost:8080`. Flask is bound on `--host=0.0.0.0` by `launch_mac.command` for LAN convenience, but `app.py` rejects any non-loopback request in `before_request` (HTTP 403), so the bind is effectively local only.
+The app opens at `http://localhost:8080` with a login gate (session cookie, HttpOnly/SameSite=Lax). Access is controlled by a shared password set via `INITIAL_ADMIN_PASSWORD` on first boot.
 
 **Dependencies:**
 - `bin/ffmpeg` — bundled binary used by Whisper for audio extraction; falls back to system ffmpeg
@@ -167,5 +167,11 @@ Element toggles: `rock_email_enabled`, `rock_email_thumbnail`.
 | `uploaders/simplecast_uploader.py` | Playwright-based SimpleCast automation (no REST API) |
 | `uploaders/rock/email.py` | `schedule_email` — Daily Life email content-channel item (the "Rock Email" platform) |
 | `scripts/rock_email_recon.py` | Read-only recon of the email channel's Add form (dumps field ids/selectors) |
-| `rock_session.json` | Saved Rock browser session (shared by both Rock channels) |
+| `scripts/migrate_secrets.py` | Idempotent plaintext-to-encrypted migration: auto-runs on first boot, imports env API keys, `client_secrets.json`, `token.json`, `*_session.json` into `secrets` table |
+| `blueprints/auth.py` | Login/logout routes, `_require_auth` gate decorator used by all protected routes in `app.py` |
+| `core/crypto.py` | Fernet master-key wrapper; fail-closed on missing/invalid key |
+| `core/secrets_store.py` | Encrypted KV store backed by `secrets` SQLite table; temp-file materialization for browser sessions |
+| `core/auth.py` | Shared-password gate, per-IP lockout, `INITIAL_ADMIN_PASSWORD` bootstrap, password verification |
+| `rock_session.json` | Saved Rock browser session (shared by both Rock channels; migrated to encrypted store) |
+| `templates/login.html` | Shared password login form |
 | `templates/history.html` | History page rendered from `upload_history` |

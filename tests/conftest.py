@@ -34,3 +34,15 @@ def temp_db(_isolate_state_db):
     from core import db as _db
     _db.init_db()
     yield _db
+
+
+@pytest.fixture(autouse=True)
+def _master_key(monkeypatch):
+    """Provide a valid Fernet master key for every test.
+
+    Crypto/secret-store code fails closed without SECRET_ENC_KEY; set a
+    fixed test key so unit tests can encrypt/decrypt deterministically.
+    """
+    from cryptography.fernet import Fernet
+    monkeypatch.setenv("SECRET_ENC_KEY", Fernet.generate_key().decode())
+    yield

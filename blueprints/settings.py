@@ -19,6 +19,7 @@ from flask import (
     url_for,
 )
 
+import core.config as core_config
 from core.config import (
     CONFIG_PATH,
     ENV_PATH,
@@ -151,7 +152,7 @@ def settings():
         # M12: a full or read-only USB used to 500 the Settings POST. Catch
         # write failures and surface them as flash messages instead.
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            with open(core_config.CONFIG_PATH, "w", encoding="utf-8") as f:
                 yaml.safe_dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         except OSError as e:
             flash(f"Could not save config.yaml ({e}). Check that the drive is writable.", "danger")
@@ -549,7 +550,7 @@ def save_excel_mapping():
 
     # M12: surface a JSON error rather than 500 on disk-full / read-only USB.
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(core_config.CONFIG_PATH, "w", encoding="utf-8") as f:
             yaml.safe_dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     except OSError as e:
         return jsonify({"success": False, "error": f"Could not save config.yaml: {e}"}), 500

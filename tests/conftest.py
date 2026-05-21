@@ -37,6 +37,32 @@ def temp_db(_isolate_state_db):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_config(tmp_path, monkeypatch):
+    """Redirect config.yaml reads/writes to a per-test temp copy.
+
+    Both write sites in blueprints/settings.py reference ``core_config.CONFIG_PATH``
+    (the module attribute looked up at call time), so patching ``core.config.CONFIG_PATH``
+    alone is sufficient to redirect every read and write to the temp copy.
+    """
+    import shutil
+    from core import config as _config
+
+    real = _config.CONFIG_PATH
+    tmp_cfg = str(tmp_path / "config.yaml")
+    try:
+        shutil.copyfile(real, tmp_cfg)
+    except OSError:
+        open(tmp_cfg, "w").close()
+
+    monkeypatch.setattr(_config, "CONFIG_PATH", tmp_cfg)
+    # Invalidate the mtime-keyed in-process cache so load_config() re-reads
+    # from the temp copy rather than returning a stale cached dict.
+    _config.invalidate_config_cache()
+    yield
+    _config.invalidate_config_cache()
+
+
+@pytest.fixture(autouse=True)
 def _master_key(monkeypatch):
     """Provide a valid Fernet master key for every test.
 

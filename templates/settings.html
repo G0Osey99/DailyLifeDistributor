@@ -714,13 +714,13 @@ function rlRender(st){
     if(st.active){
         panel.hidden = false;
     } else {
-        // Done / cancelled / errored — stop streaming and hide after a beat.
+        // Not active: stop streaming and hide the panel. Idempotent — the
+        // save handler owns the "just saved" toast/reload so a stale 'done'
+        // status on page load can't trigger a reload loop. 'error' stays
+        // visible so the message remains readable.
         rlSetScreen(false);
-        if(st.phase === 'done'){
-            document.getElementById('rl-message').textContent = 'Session saved.';
-        }
-        if(st.phase === 'idle'){ panel.hidden = true; }
         if(rlPoll){ clearInterval(rlPoll); rlPoll = null; }
+        if(st.phase !== 'error'){ panel.hidden = true; }
     }
 }
 
@@ -763,10 +763,18 @@ function initRemoteLogin(){
     });
     const save = document.getElementById('rl-save');
     if(save) save.addEventListener('click', async ()=>{
+        save.disabled = true;
         const r = await fetch('/remote-login/save', {method:'POST'});
         const d = await r.json().catch(()=>({}));
-        if(!r.ok || !d.ok){ alert((d && d.error) ? d.error : 'Save failed.'); return; }
-        rlRender(d.status);
+        if(!r.ok || !d.ok){
+            save.disabled = false;
+            alert((d && d.error) ? d.error : 'Save failed.');
+            return;
+        }
+        rlRender(d.status);              // stops streaming + hides the panel
+        if(typeof showToast === 'function'){ showToast('Session saved.', 'success'); }
+        // Reload so the platform row reflects the newly-cached session.
+        setTimeout(()=>location.reload(), 1000);
     });
     const cancel = document.getElementById('rl-cancel');
     if(cancel) cancel.addEventListener('click', async ()=>{

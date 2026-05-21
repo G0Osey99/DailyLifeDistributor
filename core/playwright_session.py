@@ -58,6 +58,56 @@ _DEFAULT_TIMEOUT_MS = 30_000
 _DEFAULT_LOGIN_TIMEOUT_S = 300
 
 
+# ---------------------------------------------------------------------------
+# Encrypted-store helpers for Playwright session blobs
+# ---------------------------------------------------------------------------
+
+
+def _session_secret_name(session_file: str) -> str:
+    """Return the secrets-store key for a given session file path."""
+    base = os.path.splitext(os.path.basename(session_file))[0]
+    return f"playwright.{base}"
+
+
+def _load_session_blob_to(session_file: str) -> bool:
+    """Write the stored encrypted session to session_file. Returns True if found."""
+    from core import secrets_store
+    data = secrets_store.get_blob(_session_secret_name(session_file))
+    if data is None:
+        return False
+    with open(session_file, "wb") as f:
+        f.write(data)
+    if os.name != "nt":
+        os.chmod(session_file, 0o600)
+    return True
+
+
+def _persist_session_blob(session_file: str) -> None:
+    """Read session_file back into the encrypted store after a save."""
+    if not os.path.exists(session_file):
+        return
+    from core import secrets_store
+    with open(session_file, "rb") as f:
+        secrets_store.set_blob(_session_secret_name(session_file), f.read())
+
+
+def has_session(session_file: str) -> bool:
+    """True if a saved session exists in the store or on disk."""
+    from core import secrets_store
+    return secrets_store.has_secret(_session_secret_name(session_file)) or os.path.exists(session_file)
+
+
+def clear_session(session_file: str) -> None:
+    """Remove a saved session from both the encrypted store and on disk."""
+    from core import secrets_store
+    secrets_store.delete_secret(_session_secret_name(session_file))
+    try:
+        if os.path.exists(session_file):
+            os.remove(session_file)
+    except OSError:
+        pass
+
+
 @dataclass
 class SessionConfig:
     """Per-service launch parameters.
@@ -199,6 +249,7 @@ class PlaywrightSession:
             if self.context is not None:
                 try:
                     _atomic_save_storage_state(self.context, self.config.session_file)
+                    _persist_session_blob(self.config.session_file)
                 except Exception as e:  # noqa: BLE001
                     log.warning(
                         "%s: storage_state save on exit failed: %s",
@@ -270,6 +321,8 @@ class PlaywrightSession:
     def _new_context(self, *, with_session: bool) -> "BrowserContext":
         assert self.browser is not None
         ctx_kwargs: dict = {}
+        if with_session:
+            _load_session_blob_to(self.config.session_file)
         if with_session and os.path.isfile(self.config.session_file):
             ctx_kwargs["storage_state"] = self.config.session_file
         if self.config.viewport is not None:
@@ -402,6 +455,7 @@ class PlaywrightSession:
         if self.context is not None:
             try:
                 _atomic_save_storage_state(self.context, self.config.session_file)
+                _persist_session_blob(self.config.session_file)
                 log.info(
                     "%s: session saved to %s",
                     self.config.name, self.config.session_file,

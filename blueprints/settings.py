@@ -200,13 +200,14 @@ def settings():
 
     secrets_path = os.path.join(PROJECT_ROOT, "client_secrets.json")
     client_secrets_found = os.path.isfile(secrets_path)
-    simplecast_session_found = os.path.isfile(
+    from core.playwright_session import has_session
+    simplecast_session_found = has_session(
         os.path.join(PROJECT_ROOT, "simplecast_session.json")
     )
-    vista_social_session_found = os.path.isfile(
+    vista_social_session_found = has_session(
         os.path.join(PROJECT_ROOT, "vista_social_session.json")
     )
-    rock_session_found = os.path.isfile(
+    rock_session_found = has_session(
         os.path.join(PROJECT_ROOT, "rock_session.json")
     )
 
@@ -228,16 +229,12 @@ def settings():
 
 @bp.route("/settings/clear-simplecast-session", methods=["POST"])
 def clear_simplecast_session():
-    """Delete simplecast_session.json so the next upload prompts for login."""
+    """Clear the saved SimpleCast session (store + disk) so the next upload prompts for login."""
+    from core.playwright_session import has_session, clear_session
     sess_path = os.path.join(PROJECT_ROOT, "simplecast_session.json")
-    if os.path.isfile(sess_path):
-        try:
-            os.remove(sess_path)
-            flash("SimpleCast session cleared.", "success")
-        except OSError as e:
-            # M13: locked file (e.g. Chrome still holding it) → 500. Show
-            # the user a clear remediation instead.
-            flash(f"Could not clear SimpleCast session ({e}). Close any open Chrome windows and try again.", "danger")
+    if has_session(sess_path):
+        clear_session(sess_path)
+        flash("SimpleCast session cleared.", "success")
     else:
         flash("No SimpleCast session file found.", "warning")
     return redirect(url_for("settings.settings"))
@@ -245,14 +242,12 @@ def clear_simplecast_session():
 
 @bp.route("/settings/clear-vista-social-session", methods=["POST"])
 def clear_vista_social_session():
-    """Delete vista_social_session.json so the next upload prompts for login."""
+    """Clear the saved Vista Social session (store + disk) so the next upload prompts for login."""
+    from core.playwright_session import has_session, clear_session
     sess_path = os.path.join(PROJECT_ROOT, "vista_social_session.json")
-    if os.path.isfile(sess_path):
-        try:
-            os.remove(sess_path)
-            flash("Vista Social session cleared.", "success")
-        except OSError as e:
-            flash(f"Could not clear Vista Social session ({e}). Close any open Chrome windows and try again.", "danger")
+    if has_session(sess_path):
+        clear_session(sess_path)
+        flash("Vista Social session cleared.", "success")
     else:
         flash("No Vista Social session file found.", "warning")
     return redirect(url_for("settings.settings"))
@@ -319,14 +314,12 @@ def login_rock():
 
 @bp.route("/settings/clear-rock-session", methods=["POST"])
 def clear_rock_session():
-    """Delete rock_session.json so the next run prompts for login."""
+    """Clear the saved Rock session (store + disk) so the next run prompts for login."""
+    from core.playwright_session import has_session, clear_session
     sess_path = os.path.join(PROJECT_ROOT, "rock_session.json")
-    if os.path.isfile(sess_path):
-        try:
-            os.remove(sess_path)
-            flash("Rock session cleared.", "success")
-        except OSError as e:
-            flash(f"Could not clear Rock session ({e}). Close any open Chrome windows and try again.", "danger")
+    if has_session(sess_path):
+        clear_session(sess_path)
+        flash("Rock session cleared.", "success")
     else:
         flash("No Rock session file found.", "warning")
     return redirect(url_for("settings.settings"))

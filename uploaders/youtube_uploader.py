@@ -40,7 +40,25 @@ API_SERVICE_NAME = "youtube"
 API_VERSION = "v3"
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_TOKEN_PATH   = os.path.join(_PROJECT_ROOT, "token.json")
+
+_YT_CLIENT_SECRETS_NAME = "youtube.client_secrets"
+_YT_TOKEN_NAME = "youtube.token"
+
+
+def _load_token_json() -> str | None:
+    """Return the stored token JSON, or None if not yet authorized."""
+    from core import secrets_store
+    return secrets_store.get_secret(_YT_TOKEN_NAME)
+
+
+def _save_token_json(data: str) -> None:
+    from core import secrets_store
+    secrets_store.set_secret(_YT_TOKEN_NAME, data)
+
+
+def _clear_token() -> None:
+    from core import secrets_store
+    secrets_store.delete_secret(_YT_TOKEN_NAME)
 
 
 def _resolve_secrets_path() -> str:
@@ -123,30 +141,6 @@ def _load_config() -> dict:
     return load_config()
 
 
-def _get_token_path() -> str:
-    """Return path to token.json, resolved relative to the project root."""
-    return _TOKEN_PATH
-
-
-def _atomic_write_text(path: str, data: str) -> None:
-    """Write `data` to `path` atomically.
-
-    Why: token.json is on a USB drive. A non-atomic write that gets
-    interrupted (USB unplug, power loss, concurrent refresh) leaves a
-    truncated/empty file and the next run treats the user as unauthenticated.
-    write-then-replace makes the swap atomic on the same filesystem.
-    """
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(data)
-        f.flush()
-        try:
-            os.fsync(f.fileno())
-        except OSError:
-            pass
-    os.replace(tmp, path)
-
-
 def get_authenticated_service():
     """Build and return an authenticated YouTube API service.
 
@@ -156,32 +150,24 @@ def get_authenticated_service():
     if build is None:
         raise ImportError("google-api-python-client is required but not installed")
 
-    secrets_path = _resolve_secrets_path()
-    token_path = _get_token_path()
     creds = None
 
-    if os.path.exists(token_path):
+    token_json = _load_token_json()
+    if token_json:
         try:
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+            from google.oauth2.credentials import Credentials as _Creds
+            creds = _Creds.from_authorized_user_info(json.loads(token_json), SCOPES)
         except (json.JSONDecodeError, ValueError) as e:
-            # M26: corrupt token.json — surface a clear, actionable message.
+            # M26: corrupt token — surface a clear, actionable message.
             raise RuntimeError(
-                f"token.json is corrupt ({e}). Click 'Clear YouTube Token' in "
+                f"Stored YouTube token is corrupt ({e}). Click 'Clear YouTube Token' in "
                 "Settings, then re-authenticate."
             ) from e
         required_scope = "https://www.googleapis.com/auth/youtube"
         granted = getattr(creds, "scopes", None) or []
         if required_scope not in granted:
-            logger.warning("token.json missing required scope — deleting and re-authenticating")
-            try:
-                os.remove(token_path)
-            except OSError as e:
-                # M20: read-only USB or locked file — fail with a clear message
-                # instead of an opaque trace.
-                raise RuntimeError(
-                    f"Could not delete stale token.json at {token_path}: {e}. "
-                    "Check that the file is not read-only and try again."
-                ) from e
+            logger.warning("Stored token missing required scope — clearing and re-authenticating")
+            _clear_token()
             creds = None
 
     if not creds or not creds.valid:
@@ -197,22 +183,14 @@ def get_authenticated_service():
                 except ImportError:
                     is_refresh_err = "invalid_grant" in str(e).lower() or "refresh" in str(e).lower()
                 if is_refresh_err:
-                    logger.warning("YouTube refresh failed — deleting token.json: %s", e)
-                    try:
-                        os.remove(token_path)
-                    except OSError:
-                        pass
+                    logger.warning("YouTube refresh failed — clearing stored token: %s", e)
+                    _clear_token()
                     raise RuntimeError(
                         "YouTube token has been revoked or expired. "
                         "Re-authenticate in Settings."
                     ) from e
                 raise
         else:
-            if not os.path.exists(secrets_path):
-                raise FileNotFoundError(
-                    f"Client secrets file not found: {secrets_path}. "
-                    "Download it from Google Cloud Console."
-                )
             # First-run OAuth opens a browser and blocks on a local HTTP
             # callback. If that runs inside the upload thread pool, the
             # worker freezes and SSE goes silent until the user happens to
@@ -226,10 +204,20 @@ def get_authenticated_service():
                     "background upload thread. Open Settings and click "
                     "'Connect YouTube' to authenticate, then retry the upload."
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(secrets_path, SCOPES)
-            creds = flow.run_local_server(port=0)
+            from core import secrets_store as _ss
+            with _ss.materialize_blob_to_tempfile(
+                _YT_CLIENT_SECRETS_NAME, suffix=".json"
+            ) as stored_path:
+                secrets_path = stored_path or _resolve_secrets_path()
+                if not os.path.exists(secrets_path):
+                    raise FileNotFoundError(
+                        f"Client secrets file not found: {secrets_path}. "
+                        "Download it from Google Cloud Console."
+                    )
+                flow = InstalledAppFlow.from_client_secrets_file(secrets_path, SCOPES)
+                creds = flow.run_local_server(port=0)
 
-        _atomic_write_text(token_path, creds.to_json())
+        _save_token_json(creds.to_json())
 
     # Wrap creds in an authorized httplib2.Http with a socket timeout so
     # a stalled chunk read can't pin a worker thread forever. Without this
@@ -259,12 +247,14 @@ def is_authenticated() -> bool:
     if Credentials is None:
         return False
 
-    token_path = _get_token_path()
-    if not os.path.exists(token_path):
+    token_json = _load_token_json()
+    if not token_json:
         return False
 
     try:
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        from google.oauth2.credentials import Credentials as _Creds
+        import json as _json
+        creds = _Creds.from_authorized_user_info(_json.loads(token_json), SCOPES)
         if creds is None:
             return False
         if creds.valid:

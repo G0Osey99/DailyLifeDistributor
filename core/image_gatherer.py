@@ -46,6 +46,12 @@ from core.llm_title_gen import LLAMAFILE_BASE_URL, is_llamafile_running
 log = logging.getLogger(__name__)
 
 
+def _resolve_key(name: str) -> str:
+    """Prefer the encrypted store; fall back to env during migration."""
+    from core import secrets_store
+    return (secrets_store.get_secret(name) or os.environ.get(name, "") or "").strip()
+
+
 _UNSPLASH_SEARCH = "https://api.unsplash.com/search/photos"
 _PEXELS_SEARCH = "https://api.pexels.com/v1/search"
 
@@ -215,7 +221,7 @@ def _strip_llm_wrappers(text: str) -> str:
 
 
 def _try_unsplash(term: str, photo_cutoff_iso: str) -> Optional[GatheredImage]:
-    key = os.environ.get("UNSPLASH_ACCESS_KEY", "").strip()
+    key = _resolve_key("UNSPLASH_ACCESS_KEY")
     if not key:
         log.debug("Image gatherer: UNSPLASH_ACCESS_KEY not set; skipping Unsplash for %r", term)
         return None
@@ -275,7 +281,7 @@ def _try_unsplash(term: str, photo_cutoff_iso: str) -> Optional[GatheredImage]:
 
 
 def _try_pexels(term: str, photo_cutoff_iso: str) -> Optional[GatheredImage]:
-    key = os.environ.get("PEXELS_API_KEY", "").strip()
+    key = _resolve_key("PEXELS_API_KEY")
     if not key:
         log.debug("Image gatherer: PEXELS_API_KEY not set; skipping Pexels for %r", term)
         return None

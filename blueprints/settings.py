@@ -19,6 +19,7 @@ from flask import (
     url_for,
 )
 
+import core.config as core_config
 from core.config import (
     CONFIG_PATH,
     ENV_PATH,
@@ -151,7 +152,7 @@ def settings():
         # M12: a full or read-only USB used to 500 the Settings POST. Catch
         # write failures and surface them as flash messages instead.
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            with open(core_config.CONFIG_PATH, "w", encoding="utf-8") as f:
                 yaml.safe_dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         except OSError as e:
             flash(f"Could not save config.yaml ({e}). Check that the drive is writable.", "danger")
@@ -192,6 +193,8 @@ def settings():
             except OSError as e:
                 flash(f"Could not save client_secrets.json ({e}).", "danger")
                 return redirect(url_for("settings.settings"))
+            from core import secrets_store
+            secrets_store.set_blob("youtube.client_secrets", blob)
 
         flash("Settings saved successfully!", "success")
         return redirect(url_for("settings.settings"))
@@ -200,13 +203,14 @@ def settings():
 
     secrets_path = os.path.join(PROJECT_ROOT, "client_secrets.json")
     client_secrets_found = os.path.isfile(secrets_path)
-    simplecast_session_found = os.path.isfile(
+    from core.playwright_session import has_session
+    simplecast_session_found = has_session(
         os.path.join(PROJECT_ROOT, "simplecast_session.json")
     )
-    vista_social_session_found = os.path.isfile(
+    vista_social_session_found = has_session(
         os.path.join(PROJECT_ROOT, "vista_social_session.json")
     )
-    rock_session_found = os.path.isfile(
+    rock_session_found = has_session(
         os.path.join(PROJECT_ROOT, "rock_session.json")
     )
 
@@ -215,6 +219,10 @@ def settings():
     # browser tab that can reach this page. The template only needs
     # presence/absence indicators, which it derives from the *_found flags
     # and from `config` above.
+    from core import secrets_store
+    from core.auth import _HASH_SECRET
+    secret_names = [n for n in secrets_store.list_secret_names()
+                    if n != _HASH_SECRET]
     return render_template(
         "settings.html",
         config=config,
@@ -223,38 +231,39 @@ def settings():
         vista_social_session_found=vista_social_session_found,
         rock_session_found=rock_session_found,
         youtube_authenticated=_cached_yt_authenticated(),
+        secret_names=secret_names,
     )
 
 
 @bp.route("/settings/clear-simplecast-session", methods=["POST"])
 def clear_simplecast_session():
-    """Delete simplecast_session.json so the next upload prompts for login."""
+    """Clear the saved SimpleCast session (store + disk)."""
+    from core.playwright_session import has_session, clear_session
     sess_path = os.path.join(PROJECT_ROOT, "simplecast_session.json")
-    if os.path.isfile(sess_path):
-        try:
-            os.remove(sess_path)
-            flash("SimpleCast session cleared.", "success")
-        except OSError as e:
-            # M13: locked file (e.g. Chrome still holding it) → 500. Show
-            # the user a clear remediation instead.
-            flash(f"Could not clear SimpleCast session ({e}). Close any open Chrome windows and try again.", "danger")
-    else:
-        flash("No SimpleCast session file found.", "warning")
+    if not has_session(sess_path):
+        flash("No SimpleCast session found.", "warning")
+        return redirect(url_for("settings.settings"))
+    try:
+        clear_session(sess_path)
+        flash("SimpleCast session cleared.", "success")
+    except OSError as e:
+        flash(f"Could not clear SimpleCast session ({e}). Close any open Chrome windows and try again.", "danger")
     return redirect(url_for("settings.settings"))
 
 
 @bp.route("/settings/clear-vista-social-session", methods=["POST"])
 def clear_vista_social_session():
-    """Delete vista_social_session.json so the next upload prompts for login."""
+    """Clear the saved Vista Social session (store + disk)."""
+    from core.playwright_session import has_session, clear_session
     sess_path = os.path.join(PROJECT_ROOT, "vista_social_session.json")
-    if os.path.isfile(sess_path):
-        try:
-            os.remove(sess_path)
-            flash("Vista Social session cleared.", "success")
-        except OSError as e:
-            flash(f"Could not clear Vista Social session ({e}). Close any open Chrome windows and try again.", "danger")
-    else:
-        flash("No Vista Social session file found.", "warning")
+    if not has_session(sess_path):
+        flash("No Vista Social session found.", "warning")
+        return redirect(url_for("settings.settings"))
+    try:
+        clear_session(sess_path)
+        flash("Vista Social session cleared.", "success")
+    except OSError as e:
+        flash(f"Could not clear Vista Social session ({e}). Close any open Chrome windows and try again.", "danger")
     return redirect(url_for("settings.settings"))
 
 
@@ -319,16 +328,17 @@ def login_rock():
 
 @bp.route("/settings/clear-rock-session", methods=["POST"])
 def clear_rock_session():
-    """Delete rock_session.json so the next run prompts for login."""
+    """Clear the saved Rock session (store + disk)."""
+    from core.playwright_session import has_session, clear_session
     sess_path = os.path.join(PROJECT_ROOT, "rock_session.json")
-    if os.path.isfile(sess_path):
-        try:
-            os.remove(sess_path)
-            flash("Rock session cleared.", "success")
-        except OSError as e:
-            flash(f"Could not clear Rock session ({e}). Close any open Chrome windows and try again.", "danger")
-    else:
-        flash("No Rock session file found.", "warning")
+    if not has_session(sess_path):
+        flash("No Rock session found.", "warning")
+        return redirect(url_for("settings.settings"))
+    try:
+        clear_session(sess_path)
+        flash("Rock session cleared.", "success")
+    except OSError as e:
+        flash(f"Could not clear Rock session ({e}). Close any open Chrome windows and try again.", "danger")
     return redirect(url_for("settings.settings"))
 
 
@@ -360,17 +370,14 @@ def oauth_youtube_settings():
 
 @bp.route("/settings/clear-youtube-token", methods=["POST"])
 def clear_youtube_token():
-    """Delete token.json and redirect back to settings."""
-    from uploaders.youtube_uploader import _get_token_path
-    token_path = _get_token_path()
-    if os.path.exists(token_path):
-        try:
-            os.remove(token_path)
-            flash("YouTube token cleared.", "success")
-        except OSError as e:
-            flash(f"Could not clear YouTube token ({e}). Check that the file is not read-only.", "danger")
+    """Clear the stored YouTube OAuth token and redirect back to settings."""
+    from uploaders.youtube_uploader import _clear_token, _YT_TOKEN_NAME
+    from core import secrets_store
+    if secrets_store.has_secret(_YT_TOKEN_NAME):
+        _clear_token()
+        flash("YouTube token cleared.", "success")
     else:
-        flash("No token file found.", "warning")
+        flash("No YouTube token was set.", "warning")
     return redirect(url_for("settings.settings"))
 
 
@@ -543,7 +550,7 @@ def save_excel_mapping():
 
     # M12: surface a JSON error rather than 500 on disk-full / read-only USB.
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(core_config.CONFIG_PATH, "w", encoding="utf-8") as f:
             yaml.safe_dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     except OSError as e:
         return jsonify({"success": False, "error": f"Could not save config.yaml: {e}"}), 500
@@ -552,3 +559,53 @@ def save_excel_mapping():
     session.reload_config()
 
     return jsonify({"success": True})
+
+
+@bp.route("/settings/set-secret", methods=["POST"])
+def set_secret_route():
+    name = (request.form.get("name") or "").strip()
+    value = request.form.get("value") or ""
+    if not (name and value):
+        flash("Secret name and value are both required.", "warning")
+        return redirect(url_for("settings.settings"))
+    try:
+        from core import secrets_store
+        secrets_store.set_secret(name, value)
+        flash(f"Secret '{name}' saved.", "success")
+    except Exception as e:
+        flash(f"Could not save secret: {e}", "danger")
+    return redirect(url_for("settings.settings"))
+
+
+@bp.route("/settings/clear-secret", methods=["POST"])
+def clear_secret_route():
+    name = (request.form.get("name") or "").strip()
+    if not name:
+        flash("No secret specified.", "warning")
+        return redirect(url_for("settings.settings"))
+    try:
+        from core import secrets_store
+        secrets_store.delete_secret(name)
+        flash(f"Secret '{name}' cleared.", "success")
+    except Exception as e:
+        flash(f"Could not clear secret: {e}", "danger")
+    return redirect(url_for("settings.settings"))
+
+
+@bp.route("/settings/change-password", methods=["POST"])
+def change_password_route():
+    current = request.form.get("current") or ""
+    new = request.form.get("new") or ""
+    if not new or not current:
+        flash("Both current and new password are required.", "warning")
+        return redirect(url_for("settings.settings"))
+    try:
+        from core import auth
+        if not auth.verify_password(current):
+            flash("Could not change password (current password is incorrect).", "danger")
+            return redirect(url_for("settings.settings"))
+        auth.set_password(new)
+        flash("Password changed.", "success")
+    except Exception as e:
+        flash(f"Could not change password: {e}", "danger")
+    return redirect(url_for("settings.settings"))

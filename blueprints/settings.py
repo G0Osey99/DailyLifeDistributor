@@ -560,36 +560,49 @@ def save_excel_mapping():
 
 @bp.route("/settings/set-secret", methods=["POST"])
 def set_secret_route():
-    from flask import redirect, request, url_for
-    from core import secrets_store
     name = (request.form.get("name") or "").strip()
     value = request.form.get("value") or ""
-    if name and value:
+    if not (name and value):
+        flash("Secret name and value are both required.", "warning")
+        return redirect(url_for("settings.settings"))
+    try:
+        from core import secrets_store
         secrets_store.set_secret(name, value)
+        flash(f"Secret '{name}' saved.", "success")
+    except Exception as e:
+        flash(f"Could not save secret: {e}", "danger")
     return redirect(url_for("settings.settings"))
 
 
 @bp.route("/settings/clear-secret", methods=["POST"])
 def clear_secret_route():
-    from flask import redirect, request, url_for
-    from core import secrets_store
     name = (request.form.get("name") or "").strip()
-    if name:
+    if not name:
+        flash("No secret specified.", "warning")
+        return redirect(url_for("settings.settings"))
+    try:
+        from core import secrets_store
         secrets_store.delete_secret(name)
+        flash(f"Secret '{name}' cleared.", "success")
+    except Exception as e:
+        flash(f"Could not clear secret: {e}", "danger")
     return redirect(url_for("settings.settings"))
 
 
 @bp.route("/settings/change-password", methods=["POST"])
 def change_password_route():
-    from flask import flash, redirect, request, url_for
-    from core import auth
     current = request.form.get("current") or ""
     new = request.form.get("new") or ""
-    if new and auth.verify_password(current):
+    if not new or not current:
+        flash("Both current and new password are required.", "warning")
+        return redirect(url_for("settings.settings"))
+    try:
+        from core import auth
+        if not auth.verify_password(current):
+            flash("Could not change password (current password is incorrect).", "danger")
+            return redirect(url_for("settings.settings"))
         auth.set_password(new)
         flash("Password changed.", "success")
-    else:
-        flash("Could not change password (check your current password).", "danger")
+    except Exception as e:
+        flash(f"Could not change password: {e}", "danger")
     return redirect(url_for("settings.settings"))
-
-    return jsonify({"success": True})

@@ -1,10 +1,15 @@
 import pytest
 
+from core import auth
+
 
 @pytest.fixture
 def client(temp_db, monkeypatch):
     """Spin up the Flask test client with an isolated DB and stubbed sources."""
     import app as appmod
+
+    auth.reset_lockouts()
+    auth.set_password("test-pw")
 
     class StubYT:
         NAME = "youtube_video"
@@ -19,7 +24,9 @@ def client(temp_db, monkeypatch):
         lambda: [StubYT],
     )
     appmod.app.config["TESTING"] = True
-    return appmod.app.test_client()
+    client = appmod.app.test_client()
+    client.post("/login", data={"password": "test-pw"})
+    return client
 
 
 def test_refresh_endpoint_returns_results(client):

@@ -15,7 +15,7 @@ from core.config import ENV_PATH, PROJECT_ROOT
 
 load_dotenv(ENV_PATH)
 
-from flask import Flask, abort, request
+from flask import Flask, abort, redirect, request, url_for
 
 
 def _configure_file_logging() -> None:
@@ -103,6 +103,20 @@ def create_app() -> Flask:
         secret = os.urandom(32).hex()
     app.secret_key = secret
 
+    # Secrets at rest require a valid master key — fail closed at startup with
+    # a clear message rather than erroring deep inside an upload later.
+    from core import crypto
+    crypto.validate_master_key()
+
+    app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=(
+            os.environ.get("SESSION_COOKIE_SECURE", "true").lower()
+            in ("1", "true", "yes")
+        ),
+    )
+
     # M25: a corrupt state.db (USB unplug mid-write, stray SIGKILL) used to
     # crash app boot with an opaque sqlite3 traceback. Surface a clear,
     # actionable message instead — the user can move/delete state.db and
@@ -121,26 +135,43 @@ def create_app() -> Flask:
         )
         raise
 
-    @app.before_request
-    def _restrict_to_loopback():
-        # The app has no auth and exposes /browse, /validate-path, /scan,
-        # which can read arbitrary directories. Reject anything not coming
-        # from loopback so a stray bind to 0.0.0.0 (or a misconfigured proxy)
-        # can't accidentally expose the filesystem.
-        remote = (request.remote_addr or "").strip()
-        if remote and remote not in ("127.0.0.1", "::1"):
-            abort(403)
+    from core import auth as _auth
+    _auth.bootstrap_from_env()
 
-        # Defeat DNS rebinding: a malicious website can rebind its hostname
-        # to 127.0.0.1 so the browser sends same-origin requests to us. The
-        # remote_addr check above passes (it really is 127.0.0.1), but the
-        # Host header still carries the attacker's domain. Only accept Host
-        # headers that name loopback explicitly.
-        host = (request.host or "").lower()
-        host_no_port = host.split(":", 1)[0]
-        allowed_hosts = {"localhost", "127.0.0.1", "[::1]", "::1"}
-        if host_no_port not in allowed_hosts:
-            abort(403)
+    from blueprints.auth import bp as auth_bp, is_authenticated
+    app.register_blueprint(auth_bp)
+
+    # Endpoints reachable without a session: the login routes, the health
+    # probe, and static assets. Everything else requires authentication.
+    _PUBLIC_ENDPOINTS = {"auth.login", "auth.login_submit", "_health", "static"}
+
+    _ALLOWED_HOSTS = {
+        h.strip().lower()
+        for h in os.environ.get("ALLOWED_HOSTS", "").split(",")
+        if h.strip()
+    }
+
+    @app.before_request
+    def _require_auth():
+        # DNS-rebind / host-spoofing defense for the hosted context: when
+        # ALLOWED_HOSTS is configured, the Host header must match one of them.
+        # Unset (local dev) = no host restriction.
+        if _ALLOWED_HOSTS:
+            host_no_port = (request.host or "").lower().split(":", 1)[0]
+            if host_no_port not in _ALLOWED_HOSTS:
+                abort(403)
+
+        if request.endpoint in _PUBLIC_ENDPOINTS:
+            return
+        if is_authenticated():
+            return
+        wants_json = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or "application/json" in request.headers.get("Accept", "")
+        )
+        if wants_json:
+            abort(401)
+        return redirect(url_for("auth.login", next=request.path))
 
     @app.before_request
     def _csrf_same_origin():

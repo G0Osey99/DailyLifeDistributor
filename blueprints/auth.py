@@ -1,6 +1,7 @@
 """Login/logout routes and the login_required decorator."""
 from __future__ import annotations
 
+import urllib.parse
 from functools import wraps
 
 from flask import (
@@ -12,6 +13,20 @@ from core import auth
 bp = Blueprint("auth", __name__)
 
 _SESSION_KEY = "authenticated"
+
+
+def _safe_next(nxt: str) -> str:
+    """Return nxt only if it's a same-origin relative path, else the index.
+
+    Rejects absolute URLs, protocol-relative `//host`, and backslash variants
+    that browsers may normalize to `//host`.
+    """
+    if not nxt or nxt.startswith("//") or nxt.startswith("/\\") or "\\" in nxt:
+        return url_for("scan.index")
+    parsed = urllib.parse.urlparse(nxt)
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+        return url_for("scan.index")
+    return nxt
 
 
 def is_authenticated() -> bool:
@@ -47,10 +62,7 @@ def login_submit():
         auth.clear_failures(ip)
         session[_SESSION_KEY] = True
         session.permanent = True
-        nxt = request.args.get("next") or url_for("scan.index")
-        if not nxt.startswith("/"):  # only relative redirects (no open redirect)
-            nxt = url_for("scan.index")
-        return redirect(nxt)
+        return redirect(_safe_next(request.args.get("next", "")))
     auth.record_failure(ip)
     return render_template("login.html", error="Incorrect password."), 401
 

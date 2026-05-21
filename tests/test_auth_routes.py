@@ -39,3 +39,21 @@ def test_logout_clears_session(client):
     client.post("/logout")
     with client.session_transaction() as sess:
         assert sess.get("authenticated") is None
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("bad", ["//evil.com", "/\\evil.com", "https://evil.com", "evil.com"])
+def test_login_rejects_open_redirect(client, bad):
+    resp = client.post("/login", data={"password": "correct-horse"},
+                       query_string={"next": bad})
+    assert resp.status_code in (301, 302)
+    assert "evil.com" not in resp.headers["Location"]
+
+
+def test_login_allows_safe_relative_next(client):
+    resp = client.post("/login", data={"password": "correct-horse"},
+                       query_string={"next": "/settings"})
+    assert resp.status_code in (301, 302)
+    assert resp.headers["Location"].endswith("/settings")

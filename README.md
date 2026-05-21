@@ -88,8 +88,7 @@ Then open **http://localhost:8080**.
 
 `launch_mac.command` auto-detects CPU architecture, selects the bundled Python,
 starts `bin/llamafile` for title suggestions on port 8081, and starts Flask on
-port 8080. (It binds Flask to `0.0.0.0` for LAN convenience, but the app
-rejects every non-loopback request — see [Security model](#security-model).)
+port 8080. (Access is gated by a shared-password login — see [Security model](#security-model). The old loopback-only restriction has been removed so the app can run on a VPS.)
 
 ---
 
@@ -270,11 +269,8 @@ skipped by default; opt in with the env vars documented in their docstrings.
 
 ## Security model
 
-- Flask binds to `0.0.0.0` from the launch script for LAN convenience, but
-  `app.py` rejects every non-loopback request in `before_request` (HTTP 403).
-  Functionally local-only.
-- **DNS-rebinding defense:** the `Host` header must name `localhost` or
-  `127.0.0.1`.
+- **Access control: shared-password login.** Every route except `/login`, `/health`, and static assets requires an authenticated session (signed cookie, `HttpOnly` / `SameSite=Lax` / `Secure`). The first password is seeded from `INITIAL_ADMIN_PASSWORD` and changeable in Settings; failed logins are rate-limited per IP. (The old loopback-only `before_request` guard has been removed so the app can be hosted on a VPS.)
+- **Host validation:** when `ALLOWED_HOSTS` is set, the `Host` header must match one of the configured hostnames (DNS-rebind defense). Unset means no host restriction (local dev).
 - **CSRF:** state-changing requests must be same-origin (`Sec-Fetch-Site`) or
   carry an `Origin`/`Referer` matching the host.
 - The `*_session.json` files are gitignored but contain dashboard cookies. If

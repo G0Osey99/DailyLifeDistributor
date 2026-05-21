@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% block title %}Upload History — Daily Life Distributor{% endblock %}
+{% block topbar_title %}History{% endblock %}
+{% block topbar_sub %}<div class="topbar-sub">{{ sessions|length }} session{{ '' if sessions|length == 1 else 's' }}</div>{% endblock %}
+{% block nav_breadcrumb %}{% endblock %}
+
+{% block topbar_actions %}
+<a href="{{ url_for('scan.index') }}" class="btn btn-secondary btn-sm">Back to Setup</a>
+{% endblock %}
+
+{% block extra_css %}
+    .container { max-width: none; padding: 24px; }
+
+    /* Platform palette — used for pills */
+    :root {
+        --p-yt-video:   oklch(0.62 0.20 25);
+        --p-yt-shorts:  oklch(0.65 0.21 0);
+        --p-podcast:    oklch(0.72 0.16 70);
+        --p-rock:       oklch(0.62 0.13 195);
+        --p-instagram:  oklch(0.66 0.20 350);
+        --p-facebook:   oklch(0.55 0.18 265);
+    }
+
+    .history-layout {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 18px;
+        align-items: start;
+    }
+    @media (max-width: 900px) {
+        .history-layout { grid-template-columns: 1fr; }
+    }
+
+    /* ── Session list (left rail) ── */
+    .hist-session-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        position: sticky;
+        top: 16px;
+        max-height: calc(100vh - 120px);
+        overflow-y: auto;
+        padding-right: 4px;
+    }
+    .hist-session-card {
+        text-align: left;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: var(--shell-panel);
+        border: 1px solid var(--shell-border);
+        cursor: pointer;
+        transition: background var(--transition-normal), border-color var(--transition-normal);
+        display: block;
+        width: 100%;
+    }
+    .hist-session-card:hover {
+        border-color: var(--shell-border-strong);
+    }
+    .hist-session-card.active {
+        background: var(--accent-soft);
+        border-color: color-mix(in oklch, var(--accent) 35%, transparent);
+    }
+    .hist-session-card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+    }
+    .hist-session-label { font-size: 13px; font-weight: 600; color: var(--shell-text); }
+    .hist-session-date { font-size: 11.5px; color: var(--shell-text-muted); }
+    .hist-session-stats {
+        display: flex;
+        gap: 12px;
+        margin-top: 8px;
+        font-size: 11.5px;
+    }
+    .hist-stat-num {
+        font-family: var(--font-mono);
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+    }
+    .hist-stat-num.ok { color: var(--shell-text); }
+    .hist-stat-num.fail { color: var(--err); }
+    .hist-stat-num.dim { color: var(--shell-text-dim); }
+    .hist-stat-label { color: var(--shell-text-muted); }
+
+    /* ── Detail pane ── */
+    .hist-detail {
+        background: var(--shell-panel);
+        border: 1px solid var(--shell-border);
+        border-radius: 14px;
+        overflow: hidden;
+    }
+    .hist-detail-head {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--shell-border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    .hist-detail-title { font-size: 14px; font-weight: 600; }
+    .hist-detail-sub { font-size: 12px; color: var(--shell-text-muted); margin-top: 2px; }
+    .hist-detail-empty {
+        padding: 64px 24px;
+        text-align: center;
+        color: var(--shell-text-muted);
+    }
+
+    /* ── Result table ── */
+    .hist-table { width: 100%; border-collapse: collapse; }
+    .hist-table th {
+        text-align: left;
+        padding: 10px 14px;
+        font-size: 10.5px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        color: var(--shell-text-dim);
+        border-bottom: 1px solid var(--shell-border);
+        background: var(--shell-panel);
+    }
+    .hist-table td {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--shell-border);
+        font-size: 12.5px;
+        vertical-align: middle;
+    }
+    .hist-table tr:last-child td { border-bottom: none; }
+
+    .platform-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 8px;
+        border-radius: 5px;
+        font-size: 11.5px;
+        font-weight: 500;
+    }
+    .platform-pill .p-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+    .pp-yt-video,  .pp-youtube_video    { background: color-mix(in oklch, var(--p-yt-video) 22%, transparent);   color: var(--p-yt-video); }
+    .pp-yt-video  .p-dot, .pp-youtube_video  .p-dot   { background: var(--p-yt-video); }
+    .pp-yt-shorts, .pp-youtube_shorts   { background: color-mix(in oklch, var(--p-yt-shorts) 22%, transparent);  color: var(--p-yt-shorts); }
+    .pp-yt-shorts .p-dot, .pp-youtube_shorts .p-dot   { background: var(--p-yt-shorts); }
+    .pp-podcast,   .pp-simplecast       { background: color-mix(in oklch, var(--p-podcast) 22%, transparent);    color: var(--p-podcast); }
+    .pp-podcast   .p-dot, .pp-simplecast    .p-dot   { background: var(--p-podcast); }
+    .pp-rock                            { background: color-mix(in oklch, var(--p-rock) 22%, transparent);       color: var(--p-rock); }
+    .pp-rock      .p-dot                { background: var(--p-rock); }
+    .pp-instagram                       { background: color-mix(in oklch, var(--p-instagram) 22%, transparent);  color: var(--p-instagram); }
+    .pp-instagram .p-dot                { background: var(--p-instagram); }
+    .pp-facebook                        { background: color-mix(in oklch, var(--p-facebook) 22%, transparent);   color: var(--p-facebook); }
+    .pp-facebook  .p-dot                { background: var(--p-facebook); }
+
+    .result-ok  { display: inline-flex; align-items: center; gap: 5px; color: var(--ok);  font-size: 12px; }
+    .result-err { display: inline-flex; align-items: center; gap: 5px; color: var(--err); font-size: 12px; }
+    .result-url-mono { font-family: var(--font-mono); font-size: 11px; color: var(--shell-text-muted); }
+
+    .empty-history {
+        text-align: center;
+        padding: 64px 24px;
+        color: var(--shell-text-muted);
+    }
+    .empty-history .empty-icon { font-size: 3rem; margin-bottom: 12px; opacity: 0.4; }
+{% endblock %}
+
+{% block content %}
+{% if not sessions %}
+<div class="empty-history">
+    <div class="empty-icon">🗂️</div>
+    <p>No upload history yet. Sessions will appear here after you run your first upload.</p>
+</div>
+{% else %}
+<div class="history-layout">
+    <!-- Left rail: session list -->
+    <div class="hist-session-list" id="hist-session-list">
+        {% for s in sessions %}
+        {% set failed = s.total_uploads - s.total_success %}
+        {% set tone = 'info' if s.status == 'in_progress' else ('warn' if s.status == 'abandoned' else 'ok') %}
+        <button type="button"
+                class="hist-session-card {% if loop.first %}active{% endif %}"
+                data-session-target="session-detail-{{ loop.index }}">
+            <div class="hist-session-card-head">
+                <span class="hist-session-label">{{ s.label or '(no label)' }}</span>
+                <span class="badge badge-{{ tone if tone != 'info' else 'info' }}">
+                    {{ s.status.replace('_', ' ').title() }}
+                </span>
+            </div>
+            <div class="hist-session-date">{{ s.updated_at[:16].replace('T', ' ') if s.updated_at else '' }}</div>
+            <div class="hist-session-stats">
+                <span><span class="hist-stat-num ok">{{ s.total_success }}</span> <span class="hist-stat-label">ok</span></span>
+                {% if failed > 0 %}
+                <span><span class="hist-stat-num fail">{{ failed }}</span> <span class="hist-stat-label">failed</span></span>
+                {% endif %}
+                <span><span class="hist-stat-num dim">{{ s.total_uploads }}</span> <span class="hist-stat-label">total</span></span>
+            </div>
+        </button>
+        {% endfor %}
+    </div>
+
+    <!-- Right pane: detail -->
+    <div>
+        {% for s in sessions %}
+        {% set failed = s.total_uploads - s.total_success %}
+        <div class="hist-detail" id="session-detail-{{ loop.index }}" {% if not loop.first %}style="display:none;"{% endif %}>
+            <div class="hist-detail-head">
+                <div>
+                    <div class="hist-detail-title">{{ s.label or '(no label)' }}</div>
+                    <div class="hist-detail-sub">
+                        {{ s.total_uploads }} platform upload{{ '' if s.total_uploads == 1 else 's' }}
+                        {% if s.id %} · job_{{ s.id[:8] if s.id|length > 8 else s.id }}{% endif %}
+                    </div>
+                </div>
+                {% if s.status == 'in_progress' %}
+                <form method="post" action="{{ url_for('history.resume_session') }}" style="margin:0;">
+                    <button type="submit" class="btn btn-secondary btn-sm">Resume</button>
+                </form>
+                {% endif %}
+            </div>
+
+            {% if s.records %}
+            <div style="overflow-x:auto;">
+            <table class="hist-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Date</th>
+                        <th>Platform</th>
+                        <th>Title</th>
+                        <th>Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in s.records %}
+                    {% set platform_class = (r.platform or '').lower().replace(' ', '_') %}
+                    <tr>
+                        <td class="mono tabular" style="color:var(--shell-text-muted); font-size:11.5px;">
+                            {{ r.uploaded_at[11:16] if r.uploaded_at else '—' }}
+                        </td>
+                        <td>{{ r.iso_date }}</td>
+                        <td>
+                            <span class="platform-pill pp-{{ platform_class }}">
+                                <span class="p-dot"></span>{{ r.platform }}
+                            </span>
+                        </td>
+                        <td style="max-width:280px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ r.title }}</td>
+                        <td>
+                            {% if r.success %}
+                            <span class="result-ok">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>
+                                {% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener" class="result-url-mono">{{ r.url|truncate(36, true, '…') }}</a>
+                                {% else %}<span class="result-url-mono">Done</span>{% endif %}
+                            </span>
+                            {% else %}
+                            <span class="result-err">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                                <span title="{{ r.error or '' }}">{{ (r.error or 'Failed')|truncate(50, true, '…') }}</span>
+                            </span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}
+            <p class="text-muted text-sm" style="padding:24px;">No upload records for this session.</p>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+    const cards = document.querySelectorAll('.hist-session-card');
+    const details = document.querySelectorAll('.hist-detail');
+    cards.forEach(card => {
+        card.addEventListener('click', function() {
+            const target = card.dataset.sessionTarget;
+            cards.forEach(c => c.classList.remove('active'));
+            card.classList.add('active');
+            details.forEach(d => { d.style.display = (d.id === target) ? '' : 'none'; });
+        });
+    });
+})();
+</script>
+{% endblock %}

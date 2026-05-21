@@ -1,0 +1,564 @@
+{% extends "base.html" %}
+{% block title %}Settings — DLD{% endblock %}
+
+{% block nav_breadcrumb %}{% endblock %}
+
+{% block extra_css %}
+    .settings-section { margin-bottom:16px; }
+    .section-card { background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-xl); overflow:hidden; }
+    .section-card-header { display:flex; align-items:center; gap:10px; padding:16px 20px; cursor:pointer; transition:background var(--transition-fast); }
+    .section-card-header:hover { background:rgba(255,255,255,0.02); }
+    .section-card-header .sec-icon { font-size:1.2rem; }
+    .section-card-header .sec-title { font-family:var(--font-display); font-size:1rem; flex:1; }
+    .section-card-header .sec-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+    .section-card-header .sec-dot.ok { background:var(--color-success); }
+    .section-card-header .sec-dot.warn { background:var(--color-warning); }
+    .section-card-header .sec-chevron { color:var(--color-text-dim); transition:transform .2s; font-size:.8rem; }
+    .section-card-header .sec-chevron.open { transform:rotate(180deg); }
+    .section-card-body { display:none; padding:0 20px 20px; border-top:1px solid var(--color-border-subtle); }
+    .section-card-body.open { display:block; }
+    .form-group { margin-bottom:14px; }
+    .form-group label { font-weight:600; font-size:.82rem; margin-bottom:4px; }
+    .form-group .hint { font-size:.75rem; color:var(--color-text-dim); margin-top:3px; }
+    .form-row { display:flex; gap:16px; flex-wrap:wrap; }
+    .form-row .form-group { flex:1; min-width:180px; }
+    .inline-actions { display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+    .browse-row { display:flex; gap:8px; }
+    .browse-row input { flex:1; }
+    .mapping-table { width:100%; border-collapse:collapse; margin:12px 0; }
+    .mapping-table th, .mapping-table td { padding:8px 10px; border-bottom:1px solid var(--color-border-subtle); font-size:.85rem; }
+    .mapping-table th { font-weight:600; font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; color:var(--color-text-muted); }
+    .preview-table { width:100%; border-collapse:collapse; margin-top:12px; font-size:.8rem; }
+    .preview-table th, .preview-table td { padding:6px 8px; border-bottom:1px solid var(--color-border-subtle); }
+    .preview-table th { font-weight:600; font-size:.72rem; text-transform:uppercase; color:var(--color-text-muted); }
+    .preview-table td { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .preview-table tr:nth-child(even) td { background:rgba(255,255,255,0.02); }
+    .llamafile-box { padding:12px 16px; border-radius:var(--radius-md); margin-bottom:12px; font-size:.88rem; }
+    .llamafile-box.running { background:var(--color-success-bg); border:1px solid rgba(74,222,128,0.2); color:var(--color-success); }
+    .llamafile-box.stopped { background:var(--color-error-bg); border:1px solid rgba(248,113,113,0.2); color:var(--color-error); }
+    .settings-browse-panel { background:var(--color-elevated); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:10px; max-height:250px; overflow-y:auto; display:none; margin-top:4px; }
+    .settings-browse-panel .browse-path { font-family:var(--font-mono); font-size:.78rem; color:var(--color-text-muted); margin-bottom:6px; word-break:break-all; }
+    .settings-browse-panel .browse-item { cursor:pointer; padding:3px 6px; border-radius:var(--radius-sm); font-size:.85rem; }
+    .settings-browse-panel .browse-item:hover { background:rgba(255,255,255,0.06); }
+    .settings-browse-panel .browse-dir { color:var(--color-text); font-weight:500; }
+    .settings-browse-panel .browse-file { color:var(--color-text-dim); }
+    .settings-browse-panel .browse-clickable-file { color:var(--color-accent); font-weight:500; }
+    .char-count { font-size:.72rem; color:var(--color-text-dim); margin-top:2px; }
+{% endblock %}
+
+{% block content %}
+<h1>Settings</h1>
+<p class="subtitle">Configure all app settings. Changes are saved to <span class="mono">config.yaml</span> and <span class="mono">.env</span>.</p>
+
+{# Standalone action forms — kept OUTSIDE the main settings form because nested
+   <form> tags are invalid HTML and cause the parser to close the outer form
+   prematurely. Buttons below reference these by id via the HTML5 `form` attribute. #}
+<form id="form-yt-reauth" method="POST" action="{{ url_for('settings.oauth_youtube_settings') }}"></form>
+<form id="form-yt-clear" method="POST" action="{{ url_for('settings.clear_youtube_token') }}" onsubmit="return confirm('Delete token.json?');"></form>
+<form id="form-sc-clear" method="POST" action="{{ url_for('settings.clear_simplecast_session') }}" onsubmit="return confirm('Clear SimpleCast saved session?');"></form>
+<form id="form-vs-clear" method="POST" action="{{ url_for('settings.clear_vista_social_session') }}" onsubmit="return confirm('Clear Vista Social saved session?');"></form>
+<form id="form-rk-clear" method="POST" action="{{ url_for('settings.clear_rock_session') }}" onsubmit="return confirm('Clear Rock saved session?');"></form>
+<form id="form-sc-login" method="POST" action="{{ url_for('settings.login_simplecast') }}" onsubmit="return confirm('Open Chrome to log in to SimpleCast? (may take a moment to launch)');"></form>
+<form id="form-vs-login" method="POST" action="{{ url_for('settings.login_vista_social') }}" onsubmit="return confirm('Open Chrome to log in to Vista Social? (may take a moment to launch)');"></form>
+<form id="form-rk-login" method="POST" action="{{ url_for('settings.login_rock') }}" onsubmit="return confirm('Open Chrome to log in to Rock? (may take a moment to launch)');"></form>
+
+<form method="POST" action="{{ url_for('settings.settings') }}" enctype="multipart/form-data">
+
+<!-- 🔑 API Credentials -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="api">
+        <span class="sec-icon">🔑</span>
+        <span class="sec-title">API Credentials</span>
+        <span class="sec-dot {% if youtube_authenticated and client_secrets_found %}ok{% else %}warn{% endif %}"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body {% if not youtube_authenticated or not client_secrets_found %}open{% endif %}" data-body="api">
+        <div class="form-group">
+            <label>YouTube Token</label>
+            {% if youtube_authenticated %}
+            <span class="badge badge-ok">✓ Authenticated</span>
+            {% else %}
+            <span class="badge badge-error">✗ Not authenticated</span>
+            {% endif %}
+            <div class="inline-actions">
+                <button type="submit" form="form-yt-reauth" class="btn btn-sm btn-primary">Re-authenticate</button>
+                <button type="submit" form="form-yt-clear" class="btn btn-sm btn-destructive">Clear Token</button>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>YouTube Client Secrets</label>
+            {% if client_secrets_found %}
+            <span class="badge badge-ok">✓ client_secrets.json found</span>
+            {% else %}
+            <span class="badge badge-error">✗ Not found</span>
+            {% endif %}
+            <div style="margin-top:6px;">
+                <input type="file" name="client_secrets_file" accept=".json">
+                <div class="hint">Upload a new client_secrets.json</div>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>YouTube API Quota</label>
+            <div id="yt-quota-display"><span class="text-dim text-sm">Loading…</span></div>
+        </div>
+        <div class="form-group">
+            <label>SimpleCast Session</label>
+            {% if simplecast_session_found %}
+            <span class="badge badge-ok">✓ Logged in (session cached)</span>
+            {% else %}
+            <span class="badge badge-warn">No saved session</span>
+            {% endif %}
+            <div class="hint">SimpleCast uses Playwright browser automation; sign in once and the session persists in <code>simplecast_session.json</code>.</div>
+            <div class="inline-actions" style="margin-top:6px;">
+                {% if not simplecast_session_found %}
+                <button type="submit" form="form-sc-login" class="btn btn-sm btn-primary">Log in</button>
+                {% else %}
+                <button type="submit" form="form-sc-clear" class="btn btn-sm btn-warn">Clear saved session</button>
+                {% endif %}
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Vista Social Session</label>
+            {% if vista_social_session_found %}
+            <span class="badge badge-ok">✓ Logged in (session cached)</span>
+            {% else %}
+            <span class="badge badge-warn">No saved session</span>
+            {% endif %}
+            <div class="hint">Vista Social uses Playwright browser automation; sign in once and the session persists in <code>vista_social_session.json</code>.</div>
+            <div class="inline-actions" style="margin-top:6px;">
+                {% if not vista_social_session_found %}
+                <button type="submit" form="form-vs-login" class="btn btn-sm btn-primary">Log in</button>
+                {% else %}
+                <button type="submit" form="form-vs-clear" class="btn btn-sm btn-warn">Clear saved session</button>
+                {% endif %}
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Rock Session</label>
+            {% if rock_session_found %}
+            <span class="badge badge-ok">✓ Logged in (session cached)</span>
+            {% else %}
+            <span class="badge badge-warn">No saved session</span>
+            {% endif %}
+            <div class="hint">Rock RMS uses Playwright browser automation; sign in once and the session persists in <code>rock_session.json</code>.</div>
+            <div class="inline-actions" style="margin-top:6px;">
+                {% if not rock_session_found %}
+                <button type="submit" form="form-rk-login" class="btn btn-sm btn-primary">Log in</button>
+                {% else %}
+                <button type="submit" form="form-rk-clear" class="btn btn-sm btn-warn">Clear saved session</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- 📁 Media Directories -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="dirs">
+        <span class="sec-icon">📁</span>
+        <span class="sec-title">Media Directories</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="dirs">
+        {% set dirs = config.get('directories', {}) %}
+        {% set dir_fields = [
+            ('dir_base', 'Base path', 'base'),
+            ('dir_youtube_video', 'Horizontal Video subfolder', 'youtube_video'),
+            ('dir_youtube_shorts', 'Vertical Video subfolder', 'youtube_shorts'),
+            ('dir_podcast', 'Podcast subfolder', 'podcast'),
+            ('dir_thumbnails', 'Thumbnails subfolder', 'thumbnails'),
+            ('dir_email_thumbnails', 'Email thumbnails subfolder (Daily Life email)', 'email_thumbnails'),
+        ] %}
+        {% for field_name, label, key in dir_fields %}
+        <div class="form-group">
+            <label for="{{ field_name }}">{{ label }}</label>
+            <div class="browse-row">
+                <input type="text" id="{{ field_name }}" name="{{ field_name }}" value="{{ dirs.get(key, '') }}" class="input-mono" oninput="debouncedValidateSettings('{{ field_name }}')">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="browseFor('{{ field_name }}')">Browse</button>
+            </div>
+            <span id="status-{{ field_name }}" class="text-sm"></span>
+            <div class="settings-browse-panel" id="browse-panel-{{ field_name }}"></div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+</div>
+
+<!-- 📊 Metadata Spreadsheet -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="excel">
+        <span class="sec-icon">📊</span>
+        <span class="sec-title">Metadata Spreadsheet</span>
+        <span class="sec-dot {% if config.get('sharepoint_docx') %}ok{% else %}warn{% endif %}"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="excel">
+        <div class="form-group">
+            <label for="sharepoint_docx">Excel File (.xlsx)</label>
+            <div class="browse-row">
+                <input type="text" id="sharepoint_docx" name="sharepoint_docx" value="{{ config.get('sharepoint_docx', '') }}" class="input-mono" onchange="onExcelPathChange()">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="browseFor('sharepoint_docx')">Browse</button>
+            </div>
+            <div id="excel-file-status" class="text-sm mt-sm"></div>
+            <div class="settings-browse-panel" id="browse-panel-sharepoint_docx"></div>
+        </div>
+        <div class="form-group">
+            <label for="excel-sheet-select">Sheet</label>
+            <select id="excel-sheet-select" onchange="onSheetChange()"><option value="">— Select a sheet —</option></select>
+        </div>
+        <div id="column-mapping-section" style="display:none;">
+            <h3 class="section-header" style="font-size:.95rem;">Column Mapping</h3>
+            <table class="mapping-table">
+                <thead><tr><th>Field</th><th>Excel Column</th><th>Required</th></tr></thead>
+                <tbody>
+                    <tr><td>Date</td><td><select id="map-date_column" class="col-map-select"></select></td><td>✓</td></tr>
+                    <tr><td>Shorts Title</td><td><select id="map-shorts_title_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td>Description</td><td><select id="map-description_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td>Instagram / Facebook Caption</td><td><select id="map-vista_caption_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td>Tags</td><td><select id="map-tags_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td>YouTube Title</td><td><select id="map-youtube_title_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td>Podcast Title</td><td><select id="map-podcast_title_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td colspan="3" style="padding-top:10px; font-size:.78rem; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:.04em;">Rock RMS — Daily Experience</td></tr>
+                    <tr><td>Episode Title (Spotlight)</td><td><select id="map-episode_title_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td>Passage (Vista title)</td><td><select id="map-passage_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td>Scripture (Vista content)</td><td><select id="map-scripture_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td>Prayer (Reflection)</td><td><select id="map-prayer_column" class="col-map-select"></select></td><td>—</td></tr>
+                    <tr><td>Topic (image hint)</td><td><select id="map-topic_column" class="col-map-select"></select></td><td>—</td></tr>
+                </tbody>
+            </table>
+            <div id="sheet-preview-section"></div>
+            <div class="inline-actions">
+                <button type="button" class="btn btn-sm btn-primary" onclick="saveExcelMapping()">💾 Save Mapping</button>
+                <span id="mapping-save-status" class="text-sm"></span>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- 📅 Default Schedule -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="schedule">
+        <span class="sec-icon">📅</span>
+        <span class="sec-title">Default Schedule</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="schedule">
+        <div class="form-row">
+            <div class="form-group"><label for="sched_youtube_video">📹 YouTube Video</label><input type="time" id="sched_youtube_video" name="sched_youtube_video" value="{{ config.get('scheduling', {}).get('youtube_video', '10:00') }}"></div>
+            <div class="form-group"><label for="sched_youtube_shorts">📱 YouTube Shorts</label><input type="time" id="sched_youtube_shorts" name="sched_youtube_shorts" value="{{ config.get('scheduling', {}).get('youtube_shorts', '12:00') }}"></div>
+            <div class="form-group"><label for="sched_simplecast">🎙️ SimpleCast</label><input type="time" id="sched_simplecast" name="sched_simplecast" value="{{ config.get('scheduling', {}).get('simplecast', '06:00') }}"></div>
+            <div class="form-group"><label for="sched_vista_social">📷 Instagram / Facebook</label><input type="time" id="sched_vista_social" name="sched_vista_social" value="{{ config.get('scheduling', {}).get('vista_social', '12:00') }}"></div>
+        </div>
+        <div class="form-group">
+            <label for="sched_timezone">Timezone</label>
+            <select id="sched_timezone" name="sched_timezone">
+                {% set tz_options = ["America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Phoenix","Europe/London","Europe/Paris","Australia/Sydney"] %}
+                {% set current_tz = config.get('scheduling', {}).get('timezone', 'America/New_York') %}
+                {% for tz in tz_options %}<option value="{{ tz }}" {% if tz == current_tz %}selected{% endif %}>{{ tz }}</option>{% endfor %}
+                {% if current_tz not in tz_options %}<option value="{{ current_tz }}" selected>{{ current_tz }}</option>{% endif %}
+            </select>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- ✍️ Description Footers -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="footers">
+        <span class="sec-icon">✍️</span>
+        <span class="sec-title">Description Footers</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="footers">
+        {% for key, label in [('youtube_video','YouTube Video'),('youtube_shorts','YouTube Shorts'),('podcast','Podcast'),('vista_social','Instagram / Facebook')] %}
+        <div class="form-group">
+            <label for="footer_{{ key }}">{{ label }} Footer</label>
+            <textarea id="footer_{{ key }}" name="footer_{{ key }}" rows="3" placeholder="e.g. Follow us on Instagram @dailylife..." oninput="document.getElementById('cc_{{ key }}').textContent=this.value.length">{{ config.get('description_footers', {}).get(key, '') }}</textarea>
+            <div class="char-count"><span id="cc_{{ key }}">{{ config.get('description_footers', {}).get(key, '')|length }}</span> characters</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+</div>
+
+<!-- 🎬 Platform Defaults -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="platform">
+        <span class="sec-icon">🎬</span>
+        <span class="sec-title">Platform Defaults</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="platform">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="yt_default_privacy">YouTube Privacy</label>
+                <select id="yt_default_privacy" name="yt_default_privacy">
+                    {% set cp = config.get('youtube', {}).get('default_privacy', 'private') %}
+                    {% for o in ['private','unlisted','public'] %}<option value="{{ o }}" {% if o == cp %}selected{% endif %}>{{ o }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="yt_category_id">YouTube Category ID</label>
+                <input type="text" id="yt_category_id" name="yt_category_id" value="{{ config.get('youtube', {}).get('default_category_id', '22') }}">
+            </div>
+        </div>
+        <div class="form-group">
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+                <input type="checkbox" name="yt_made_for_kids" value="true" {% if config.get('youtube', {}).get('made_for_kids', false) %}checked{% endif %}>
+                YouTube — Made for Kids
+            </label>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="sc_default_season">SimpleCast Season</label>
+                <input type="number" id="sc_default_season" name="sc_default_season" min="1" value="{{ config.get('simplecast', {}).get('default_season', 1) }}">
+            </div>
+            <div class="form-group" style="padding-top:1.4rem;">
+                <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+                    <input type="checkbox" name="sc_explicit" value="true" {% if config.get('simplecast', {}).get('explicit', false) %}checked{% endif %}>
+                    Explicit content
+                </label>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- 🤖 AI Title Generation -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="llm">
+        <span class="sec-icon">🤖</span>
+        <span class="sec-title">AI Title Generation</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="llm">
+        <div class="llamafile-box stopped" id="llamafile-status-box">Checking llamafile status...</div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="llm_num_titles">Number of suggestions</label>
+                <input type="number" id="llm_num_titles" name="llm_num_titles" min="1" max="10" value="{{ config.get('llm', {}).get('num_title_suggestions', 5) }}">
+            </div>
+            <div class="form-group">
+                <label>Model file</label>
+                <input type="text" readonly value="ollama_models/llama3.2.gguf" class="input-mono" style="opacity:.6;">
+            </div>
+        </div>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="checkLlamafileStatus()">🔄 Check Status</button>
+    </div>
+</div>
+</div>
+
+<!-- ⚙️ Whisper -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="whisper">
+        <span class="sec-icon">⚙️</span>
+        <span class="sec-title">Whisper (Transcription)</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="whisper">
+        <div class="form-group">
+            <label for="whisper_model">Model size</label>
+            <select id="whisper_model" name="whisper_model">
+                {% set cw = config.get('whisper', {}).get('model', 'base') %}
+                {% for val, lbl in [('tiny','tiny — fast'),('base','base — recommended'),('small','small — better'),('medium','medium — near human-level')] %}
+                <option value="{{ val }}" {% if val == cw %}selected{% endif %}>{{ lbl }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="inline-actions">
+            <a href="{{ url_for('settings.download_whisper_model') }}" class="btn btn-sm btn-primary">⬇ Download Model</a>
+            <span class="text-sm text-dim">Transcribes the first 30s of video for title generation</span>
+        </div>
+    </div>
+</div>
+</div>
+
+<div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
+    <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+    <a href="{{ url_for('scan.index') }}" class="btn btn-ghost">← Back to Home</a>
+</div>
+</form>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function escapeAttr(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');}
+
+// Collapsible sections
+document.querySelectorAll('.section-card-header[data-section]').forEach(hdr=>{
+    hdr.addEventListener('click',()=>{
+        const key=hdr.dataset.section;
+        const body=hdr.closest('.section-card').querySelector(`[data-body="${key}"]`);
+        const chev=hdr.querySelector('.sec-chevron');
+        if(body)body.classList.toggle('open');
+        if(chev)chev.classList.toggle('open');
+    });
+});
+
+// Browse
+function browseFor(fieldId){
+    const panel=document.getElementById('browse-panel-'+fieldId);
+    if(!panel)return;
+    if(panel.style.display==='block'){panel.style.display='none';return;}
+    panel.style.display='block';
+    const input=document.getElementById(fieldId);
+    loadSettingsBrowse(fieldId,input?input.value.trim():'');
+}
+async function loadSettingsBrowse(fieldId,path){
+    const panel=document.getElementById('browse-panel-'+fieldId);
+    if(!panel)return;
+    panel.innerHTML='<span class="text-dim text-sm">Loading...</span>';
+    try{
+        const url='/browse'+(path?'?path='+encodeURIComponent(path):'');
+        const resp=await fetch(url);const data=await resp.json();
+        if(data.error){panel.innerHTML=`<span class="text-error text-sm">${escapeHtml(data.error)}</span>`;return;}
+        let html=`<div class="browse-path">${escapeHtml(data.current)}</div>`;
+        if(data.parent&&data.parent!==data.current)html+=`<div class="browse-item browse-dir" data-field="${escapeAttr(fieldId)}" data-path="${escapeAttr(data.parent)}">📁 ..</div>`;
+        for(const dir of(data.dirs||[])){const sep=(data.current.endsWith('/')||data.current.endsWith('\\'))?'':'/';html+=`<div class="browse-item browse-dir" data-field="${escapeAttr(fieldId)}" data-path="${escapeAttr(data.current+sep+dir)}">📁 ${escapeHtml(dir)}</div>`;}
+        for(const file of(data.files||[])){if(file.toLowerCase().endsWith('.xlsx')){const sep=(data.current.endsWith('/')||data.current.endsWith('\\'))?'':'/';html+=`<div class="browse-item browse-clickable-file" data-field="${escapeAttr(fieldId)}" data-path="${escapeAttr(data.current+sep+file)}">📊 ${escapeHtml(file)}</div>`;}}
+        if(fieldId==='sharepoint_docx')html+=`<div class="text-dim text-xs" style="margin-top:6px;">Select a .xlsx file above</div>`;
+        else html+=`<div style="margin-top:6px;"><button type="button" class="btn btn-sm btn-primary settings-select-folder-btn" data-field="${escapeAttr(fieldId)}" data-path="${escapeAttr(data.current)}">Select This Folder</button></div>`;
+        panel.innerHTML=html;
+    }catch(e){panel.innerHTML='<span class="text-error text-sm">Failed to load.</span>';}
+}
+
+// Validate
+async function validateSettingsPath(fieldId){
+    const input=document.getElementById(fieldId);const status=document.getElementById('status-'+fieldId);
+    if(!input||!status)return;const path=input.value.trim();
+    if(!path){status.textContent='';return;}
+    try{const resp=await fetch('/validate-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:fieldId,path})});const data=await resp.json();
+    if(!data.exists){status.textContent='✗ Not found';status.style.color='var(--color-error)';}
+    else if(!data.readable){status.textContent='✗ Not readable';status.style.color='var(--color-error)';}
+    else if(data.file_count===0){status.textContent='⚠ Empty';status.style.color='var(--color-warning)';}
+    else{status.textContent=`✓ ${data.file_count} files`;status.style.color='var(--color-success)';}
+    }catch(e){status.textContent='✗ Error';status.style.color='var(--color-error)';}
+}
+const _sd={};function debouncedValidateSettings(f){clearTimeout(_sd[f]);_sd[f]=setTimeout(()=>validateSettingsPath(f),400);}
+
+// Click delegation
+document.addEventListener('click',e=>{
+    const d=e.target.closest('.settings-browse-panel .browse-dir[data-path]');
+    if(d){loadSettingsBrowse(d.dataset.field,d.dataset.path);return;}
+    const f=e.target.closest('.settings-browse-panel .browse-clickable-file[data-path]');
+    if(f){const fid=f.dataset.field;const inp=document.getElementById(fid);if(inp){inp.value=f.dataset.path;validateSettingsPath(fid);if(fid==='sharepoint_docx')onExcelPathChange();}const p=document.getElementById('browse-panel-'+fid);if(p)p.style.display='none';return;}
+    const sb=e.target.closest('.settings-select-folder-btn');
+    if(sb){const fid=sb.dataset.field;const inp=document.getElementById(fid);if(inp){inp.value=sb.dataset.path;validateSettingsPath(fid);}const p=document.getElementById('browse-panel-'+fid);if(p)p.style.display='none';return;}
+    if(!e.target.closest('.settings-browse-panel')&&!e.target.closest('.btn'))document.querySelectorAll('.settings-browse-panel').forEach(p=>p.style.display='none');
+});
+
+// llamafile
+async function checkLlamafileStatus(){
+    const box=document.getElementById('llamafile-status-box');box.textContent='Checking...';
+    try{const r=await fetch('/llamafile/status');const d=await r.json();
+    if(d.running){box.className='llamafile-box running';box.textContent=`✓ Running on port ${d.port}`;}
+    else{box.className='llamafile-box stopped';box.textContent='✗ Not running — starts on launch';}
+    }catch(e){box.className='llamafile-box stopped';box.textContent='✗ Could not check status';}
+}
+
+// Excel
+async function onExcelPathChange(){
+    const path=document.getElementById('sharepoint_docx').value;const st=document.getElementById('excel-file-status');const sel=document.getElementById('excel-sheet-select');
+    if(!path){st.textContent='';return;}
+    try{const r=await fetch('/settings/excel-sheets?path='+encodeURIComponent(path));const d=await r.json();
+    if(d.sheets&&d.sheets.length){st.innerHTML='<span class="badge badge-ok">✓ '+d.sheets.length+' sheet(s)</span>';sel.innerHTML='<option value="">— Select —</option>';d.sheets.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;sel.appendChild(o);});
+    const saved='{{ config.get("excel_mapping", {}).get("sheet_name", "") }}';if(saved&&d.sheets.includes(saved)){sel.value=saved;onSheetChange();}}
+    else{st.innerHTML='<span class="badge badge-error">✗ No sheets</span>';sel.innerHTML='<option value="">—</option>';document.getElementById('column-mapping-section').style.display='none';}
+    }catch(e){st.innerHTML='<span class="badge badge-error">✗ Error</span>';}
+}
+async function onSheetChange(){
+    const path=document.getElementById('sharepoint_docx').value;const sheet=document.getElementById('excel-sheet-select').value;const sec=document.getElementById('column-mapping-section');
+    if(!sheet){sec.style.display='none';return;}sec.style.display='block';
+    try{const r=await fetch(`/settings/excel-columns?path=${encodeURIComponent(path)}&sheet=${encodeURIComponent(sheet)}`);const d=await r.json();const cols=d.columns||[];
+    document.querySelectorAll('.col-map-select').forEach(sel=>{const field=sel.id.replace('map-','');
+    const saved={date_column:'{{ config.get("excel_mapping", {}).get("date_column", "") }}',shorts_title_column:'{{ config.get("excel_mapping", {}).get("shorts_title_column", "") }}',description_column:'{{ config.get("excel_mapping", {}).get("description_column", "") }}',vista_caption_column:'{{ config.get("excel_mapping", {}).get("vista_caption_column", "") }}',tags_column:'{{ config.get("excel_mapping", {}).get("tags_column", "") }}',youtube_title_column:'{{ config.get("excel_mapping", {}).get("youtube_title_column", "") }}',podcast_title_column:'{{ config.get("excel_mapping", {}).get("podcast_title_column", "") }}',episode_title_column:'{{ config.get("excel_mapping", {}).get("episode_title_column", "") }}',passage_column:'{{ config.get("excel_mapping", {}).get("passage_column", "") }}',scripture_column:'{{ config.get("excel_mapping", {}).get("scripture_column", "") }}',prayer_column:'{{ config.get("excel_mapping", {}).get("prayer_column", "") }}',topic_column:'{{ config.get("excel_mapping", {}).get("topic_column", "") }}'};
+    sel.innerHTML='<option value="">(none)</option>';cols.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;if(saved[field]===c)o.selected=true;sel.appendChild(o);});});
+    loadSheetPreview(path,sheet);
+    }catch(e){}
+}
+async function loadSheetPreview(path,sheet){
+    const c=document.getElementById('sheet-preview-section');
+    try{const r=await fetch(`/settings/excel-preview?path=${encodeURIComponent(path)}&sheet=${encodeURIComponent(sheet)}`);const d=await r.json();
+    if(!d.rows||!d.rows.length){c.innerHTML='<p class="text-dim text-sm">No data</p>';return;}
+    const cols=Object.keys(d.rows[0]);let tbl='<table class="preview-table"><thead><tr>';
+    cols.forEach(col=>tbl+=`<th>${col}</th>`);tbl+='</tr></thead><tbody>';
+    d.rows.forEach(row=>{tbl+='<tr>';cols.forEach(col=>tbl+=`<td>${row[col]||''}</td>`);tbl+='</tr>';});
+    tbl+='</tbody></table>';
+    c.innerHTML=`<h4 style="margin:12px 0 6px;font-size:.88rem;">Preview</h4>`+
+        `<div id="preview-viewport" style="position:relative;width:100%;height:200px;overflow:hidden;cursor:grab;box-shadow:inset 0 0 10px rgba(0,0,0,0.18);border-radius:4px;">` +
+        `<div id="preview-canvas" style="position:absolute;top:0;left:0;transform-origin:top left;will-change:transform;">${tbl}</div>`+
+        `<button type="button" id="preview-reset-btn" style="position:absolute;top:6px;right:6px;z-index:10;padding:2px 8px;font-size:.75rem;cursor:pointer;background:var(--color-surface,#fff);border:1px solid var(--color-border,#ccc);border-radius:3px;opacity:.85;" onclick="resetPreviewView()">Reset View</button>`+
+        `</div>`;
+    initPreviewPanZoom();
+    }catch(e){c.innerHTML='<p class="text-error text-sm">Failed</p>';}
+}
+function resetPreviewView(){
+    const vp=document.getElementById('preview-viewport');if(!vp)return;
+    vp._px=0;vp._py=0;vp._scale=1;
+    document.getElementById('preview-canvas').style.transform='translate(0px,0px) scale(1)';
+}
+function initPreviewPanZoom(){
+    const vp=document.getElementById('preview-viewport');if(!vp)return;
+    vp._px=0;vp._py=0;vp._scale=1;vp._dragging=false;vp._sx=0;vp._sy=0;
+    function applyTransform(){
+        document.getElementById('preview-canvas').style.transform=`translate(${vp._px}px,${vp._py}px) scale(${vp._scale})`;
+    }
+    vp.addEventListener('mousedown',e=>{
+        if(e.target.closest('#preview-reset-btn'))return;
+        vp._dragging=true;vp._sx=e.clientX-vp._px;vp._sy=e.clientY-vp._py;
+        vp.style.cursor='grabbing';e.preventDefault();
+    });
+    window.addEventListener('mousemove',e=>{
+        if(!vp._dragging)return;
+        vp._px=e.clientX-vp._sx;vp._py=e.clientY-vp._sy;applyTransform();
+    });
+    window.addEventListener('mouseup',()=>{if(vp._dragging){vp._dragging=false;vp.style.cursor='grab';}});
+    vp.addEventListener('wheel',e=>{
+        e.preventDefault();
+        const delta=e.deltaY>0?-0.08:0.08;
+        vp._scale=Math.min(1.5,Math.max(0.6,vp._scale+delta));applyTransform();
+    },{passive:false});
+}
+async function saveExcelMapping(){
+    const m={sheet_name:document.getElementById('excel-sheet-select').value,date_column:document.getElementById('map-date_column').value,shorts_title_column:document.getElementById('map-shorts_title_column').value,description_column:document.getElementById('map-description_column').value,vista_caption_column:document.getElementById('map-vista_caption_column').value,tags_column:document.getElementById('map-tags_column').value,youtube_title_column:document.getElementById('map-youtube_title_column').value,podcast_title_column:document.getElementById('map-podcast_title_column').value,episode_title_column:document.getElementById('map-episode_title_column').value,passage_column:document.getElementById('map-passage_column').value,scripture_column:document.getElementById('map-scripture_column').value,prayer_column:document.getElementById('map-prayer_column').value,topic_column:document.getElementById('map-topic_column').value};
+    const st=document.getElementById('mapping-save-status');
+    try{const r=await fetch('/settings/save-excel-mapping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(m)});const d=await r.json();
+    if(d.success){st.innerHTML='<span class="text-success">✓ Saved</span>';showToast('Mapping saved','success');}
+    else st.innerHTML='<span class="text-error">✗ '+(d.error||'Failed')+'</span>';
+    }catch(e){st.innerHTML='<span class="text-error">✗ Error</span>';}
+    setTimeout(()=>{st.textContent='';},3000);
+}
+
+// Quota
+async function loadYouTubeQuotaStatus(){
+    const el=document.getElementById('yt-quota-display');if(!el)return;
+    try{const r=await fetch('/youtube/status');const d=await r.json();const used=d.quota_used_this_session||0;const limit=d.quota_limit||10000;
+    el.innerHTML=`<span style="font-weight:500;">~${used.toLocaleString()} / ${limit.toLocaleString()} units this session</span><div class="hint">Resets daily at midnight Pacific · <a href="https://console.cloud.google.com/apis/api/youtube.googleapis.com/quotas" target="_blank" rel="noopener" style="color:var(--color-accent);">View in Console</a></div>`;
+    }catch(e){el.innerHTML='<span class="text-dim text-sm">Could not load</span>';}
+}
+
+// Init
+document.addEventListener('DOMContentLoaded',()=>{
+    checkLlamafileStatus();loadYouTubeQuotaStatus();
+    const xl=document.getElementById('sharepoint_docx').value;if(xl)onExcelPathChange();
+    ['dir_base','dir_youtube_video','dir_youtube_shorts','dir_podcast','dir_thumbnails','dir_email_thumbnails'].forEach(f=>{const i=document.getElementById(f);if(i&&i.value.trim())validateSettingsPath(f);});
+});
+</script>
+{% endblock %}

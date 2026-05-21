@@ -1,0 +1,592 @@
+{% extends "base.html" %}
+{% block title %}Calendar — Daily Life Distributor{% endblock %}
+{% block topbar_title %}Content Calendar{% endblock %}
+{% block topbar_sub %}<div class="topbar-sub">{{ month_label }} · {{ total_visible }} post{{ '' if total_visible == 1 else 's' }}</div>{% endblock %}
+{% block nav_breadcrumb %}{% endblock %}
+
+{% block topbar_actions %}
+<button id="cal-refresh-btn" class="btn btn-secondary btn-sm" type="button">
+    <span class="cal-refresh-label">Refresh sources</span>
+    <span class="cal-refresh-spinner" hidden aria-hidden="true">…</span>
+</button>
+<a href="{{ url_for('calendar.calendar_view', ym=today_ym) }}" class="btn btn-secondary btn-sm">Today</a>
+<div class="cal-monthnav">
+    <a href="{{ url_for('calendar.calendar_view', ym=prev_ym) }}" class="cal-monthnav-btn" aria-label="Previous month">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </a>
+    <span class="cal-monthnav-label">{{ month_label }}</span>
+    <a href="{{ url_for('calendar.calendar_view', ym=next_ym) }}" class="cal-monthnav-btn" aria-label="Next month">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </a>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+    /* Platform palette — used for pills and filter chips */
+    :root {
+        --p-yt-video:   oklch(0.62 0.20 25);
+        --p-yt-shorts:  oklch(0.65 0.21 0);
+        --p-podcast:    oklch(0.72 0.16 70);
+        --p-wistia:     oklch(0.58 0.18 305);
+        --p-rock:       oklch(0.62 0.13 195);
+        --p-instagram:  oklch(0.66 0.20 350);
+        --p-facebook:   oklch(0.55 0.18 265);
+    }
+
+    /* Container override — calendar uses the full viewport, not the centered 960px container.
+       Use a fixed height + overflow:hidden so the month grid auto-fits the viewport
+       instead of pushing past it and triggering a page scroll. */
+    .container { max-width: none; padding: 0; }
+    .calendar-page { display: flex; height: calc(100vh - 64px); overflow: hidden; }
+    .cal-main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 16px 24px 0; min-height: 0; }
+
+    /* Month nav (in topbar) */
+    .cal-monthnav { display: inline-flex; align-items: center; border: 1px solid var(--shell-border-strong); border-radius: 8px; overflow: hidden; background: var(--shell-panel); }
+    .cal-monthnav-btn { width: 30px; height: 30px; display: grid; place-items: center; color: var(--shell-text-muted); transition: background var(--transition-fast); }
+    .cal-monthnav-btn:hover { background: var(--shell-sunken); color: var(--shell-text); }
+    .cal-monthnav-label { padding: 0 12px; font-size: 13px; font-weight: 600; border-left: 1px solid var(--shell-border); border-right: 1px solid var(--shell-border); min-width: 130px; text-align: center; line-height: 30px; }
+
+    /* Filter row */
+    .cal-filters { display: flex; align-items: center; gap: 14px; padding-bottom: 14px; flex-wrap: wrap; }
+    .cal-filters-label { display: inline-flex; align-items: center; gap: 6px; color: var(--shell-text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .cal-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+    .cal-chip {
+        display: inline-flex; align-items: center; gap: 7px;
+        padding: 5px 10px 5px 8px; border-radius: 999px;
+        background: var(--shell-panel); border: 1px solid var(--shell-border);
+        color: var(--shell-text-muted);
+        font-size: 12px; font-weight: 500; cursor: pointer;
+        opacity: 0.6;
+        transition: all var(--transition-normal);
+    }
+    .cal-chip.active { background: var(--shell-panel); border-color: var(--shell-border-strong); color: var(--shell-text); opacity: 1; }
+    .cal-chip-swatch { width: 8px; height: 8px; border-radius: 2px; }
+    .cal-chip-count { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 10.5px; color: var(--shell-text-dim); }
+    .cal-status-chip-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+    /* Dark month grid */
+    .cal-grid-wrap {
+        flex: 1; background: var(--work-bg);
+        border-radius: 14px 14px 0 0;
+        border: 1px solid var(--work-border); border-bottom: none;
+        padding: 14px; display: flex; flex-direction: column; min-height: 0;
+    }
+    .cal-grid-head {
+        display: grid; grid-template-columns: repeat(7, 1fr);
+        border-bottom: 1px solid var(--work-border);
+        padding-bottom: 8px; margin-bottom: 6px;
+    }
+    .cal-grid-head > div {
+        font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
+        text-transform: uppercase; color: oklch(0.5 0.012 250);
+        text-align: center; padding: 2px 0;
+    }
+    .cal-grid {
+        flex: 1; display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        /* minmax(0, 1fr) — no minimum row height, so 6 weeks always divide
+           the available space rather than overflowing the viewport. */
+        grid-auto-rows: minmax(0, 1fr);
+        border-top: 1px solid var(--work-border-soft);
+        border-left: 1px solid var(--work-border-soft);
+        border-radius: 8px; overflow: hidden;
+        min-height: 0;
+    }
+    .cal-day {
+        background: var(--work-panel);
+        border-right: 1px solid var(--work-border-soft);
+        border-bottom: 1px solid var(--work-border-soft);
+        padding: 6px;
+        display: flex; flex-direction: column; gap: 3px;
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
+    }
+    /* Allow vertical scrolling within a day cell when posts exceed the
+       visible area. Slim, theme-aware scrollbar so it doesn't dominate
+       a ~95px-tall cell. */
+    .cal-day-events {
+        min-height: 0;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--work-border) transparent;
+    }
+    .cal-day-events::-webkit-scrollbar { width: 6px; }
+    .cal-day-events::-webkit-scrollbar-track { background: transparent; }
+    .cal-day-events::-webkit-scrollbar-thumb {
+        background: var(--work-border);
+        border-radius: 3px;
+    }
+    .cal-day-events::-webkit-scrollbar-thumb:hover { background: var(--work-border-soft); }
+    .cal-day.other { background: color-mix(in oklch, var(--work-bg) 60%, transparent); }
+    .cal-day-head { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 2px; }
+    .cal-day-num {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px;
+        font-size: 11.5px; font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        color: var(--work-text-muted);
+    }
+    .cal-day.other .cal-day-num { color: oklch(0.5 0.012 250); }
+    .cal-day-num.today { background: var(--accent); color: #fff; }
+    .cal-day-count { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 9.5px; color: oklch(0.5 0.012 250); letter-spacing: 0.02em; }
+    .cal-day-events { display: flex; flex-direction: column; gap: 2px; flex: 1 1 0; }
+    .cal-pill {
+        display: flex; align-items: center; gap: 6px;
+        padding: 2px 6px 2px 7px; border-radius: 4px;
+        width: 100%; text-align: left;
+        font-size: 10.5px; line-height: 1.25;
+        color: var(--work-text);
+        cursor: pointer;
+        transition: outline var(--transition-fast), filter var(--transition-fast), transform var(--transition-fast);
+        outline: none;
+        border-left-width: 3px;
+        border-left-style: solid;
+    }
+    .cal-pill:hover { filter: brightness(0.96) saturate(1.1); }
+    .cal-pill.selected { outline-offset: 1px; }
+    .cal-pill-time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 700; font-size: 9.5px; }
+    .cal-pill-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--work-text); }
+    .cal-pill-extra { width: 4px; height: 4px; border-radius: 50%; background: var(--work-text-muted); flex-shrink: 0; }
+    .cal-pill-overflow { font-size: 10px; color: oklch(0.5 0.012 250); padding: 1px 4px; }
+
+    /* Drawer */
+    .cal-drawer {
+        width: 360px; flex-shrink: 0;
+        background: var(--shell-panel);
+        border-left: 1px solid var(--shell-border);
+        display: flex; flex-direction: column;
+    }
+    .cal-drawer.empty { padding: 24px; color: var(--shell-text-dim); font-size: 13px; }
+    .cal-drawer-head {
+        padding: 16px 20px; border-bottom: 1px solid var(--shell-border);
+        display: flex; align-items: center; justify-content: space-between;
+    }
+    .cal-drawer-platform { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--shell-text-muted); }
+    .cal-drawer-platform-swatch { width: 8px; height: 8px; border-radius: 2px; }
+    .cal-drawer-close { color: var(--shell-text-muted); padding: 4px; border-radius: 6px; }
+    .cal-drawer-close:hover { background: var(--shell-sunken); color: var(--shell-text); }
+    .cal-drawer-body { padding: 20px; overflow-y: auto; flex: 1; }
+    .cal-drawer-title { font-size: 16px; font-weight: 600; line-height: 1.3; letter-spacing: -0.01em; }
+    .cal-drawer-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .cal-field { margin-top: 18px; }
+    .cal-field-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--shell-text-dim); margin-bottom: 5px; }
+    .cal-field-val { font-size: 13px; color: var(--shell-text); }
+    .cal-field-val.mono { font-family: var(--font-mono); font-size: 12px; color: var(--shell-text-muted); word-break: break-all; }
+    .cal-error-box {
+        margin-top: 14px; padding: 10px 12px; border-radius: 8px;
+        background: var(--err-soft); color: var(--err);
+        font-size: 12.5px; line-height: 1.5;
+    }
+    .cal-drawer-foot {
+        padding: 12px 20px; border-top: 1px solid var(--shell-border);
+        display: flex; gap: 8px; justify-content: flex-end;
+    }
+
+    /* Empty state */
+    .cal-empty-day {
+        display: flex; align-items: center; justify-content: center;
+        font-size: 10.5px; color: oklch(0.5 0.012 250);
+        flex: 1;
+    }
+
+    @media (max-width: 1100px) {
+        .cal-drawer { display: none; }
+    }
+    .cal-refresh-banner {
+        margin: 12px 24px 0;
+        padding: 10px 36px 10px 14px;
+        border-radius: 8px;
+        background: var(--shell-panel);
+        border: 1px solid var(--shell-border-strong);
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--shell-text);
+        position: relative;
+    }
+    .cal-refresh-banner.is-error {
+        background: color-mix(in oklch, oklch(0.55 0.22 25) 16%, var(--shell-panel));
+        border-color: oklch(0.55 0.22 25);
+        color: var(--shell-text);
+    }
+    .cal-refresh-banner.is-error::before {
+        content: "";
+        display: inline-block;
+        width: 14px; height: 14px;
+        margin-right: 8px;
+        vertical-align: -2px;
+        background: oklch(0.6 0.22 25);
+        -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='16' x2='12.01' y2='16'/></svg>") center/contain no-repeat;
+                mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='16' x2='12.01' y2='16'/></svg>") center/contain no-repeat;
+    }
+    .cal-refresh-banner-close {
+        position: absolute;
+        top: 6px; right: 8px;
+        width: 22px; height: 22px;
+        display: grid; place-items: center;
+        border-radius: 6px;
+        color: var(--shell-text-muted);
+        cursor: pointer;
+        font-size: 16px; line-height: 1;
+        transition: background var(--transition-fast), color var(--transition-fast);
+    }
+    .cal-refresh-banner-close:hover {
+        background: var(--shell-sunken);
+        color: var(--shell-text);
+    }
+    .cal-refresh-spinner { display: inline-block; }
+    .cal-pill .cal-pill-source-icon { opacity: 0.6; margin-left: 4px; }
+{% endblock %}
+
+{% block content %}
+<div class="calendar-page">
+    <div id="cal-refresh-banner" class="cal-refresh-banner" hidden role="status">
+        <span id="cal-refresh-banner-text"></span>
+        <button type="button" class="cal-refresh-banner-close" id="cal-refresh-banner-close"
+                aria-label="Dismiss" hidden>×</button>
+    </div>
+    <div class="cal-main">
+        <div class="cal-filters" id="cal-filters">
+            <div class="cal-filters-label">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
+                <span>Platforms</span>
+            </div>
+            <div class="cal-chips" id="cal-platform-chips">
+                {% set platforms = [
+                    ('yt_video',  'Video',     '--p-yt-video'),
+                    ('yt_shorts', 'Shorts',    '--p-yt-shorts'),
+                    ('podcast',   'Podcast',   '--p-podcast'),
+                    ('wistia',    'Wistia',    '--p-wistia'),
+                    ('rock',      'Rock',      '--p-rock'),
+                    ('instagram', 'Instagram', '--p-instagram'),
+                    ('facebook',  'Facebook',  '--p-facebook')
+                ] %}
+                {% for pid, plabel, pvar in platforms %}
+                <button type="button" class="cal-chip active" data-platform="{{ pid }}">
+                    <span class="cal-chip-swatch" style="background: var({{ pvar }});"></span>
+                    <span>{{ plabel }}</span>
+                    <span class="cal-chip-count">{{ platform_counts.get(pid, 0) }}</span>
+                </button>
+                {% endfor %}
+            </div>
+            <div style="display:flex; gap:6px;">
+                <button type="button" class="cal-chip active" data-status="scheduled">
+                    <span class="cal-status-chip-dot" style="background: var(--info);"></span>
+                    <span>Scheduled</span>
+                    <span class="cal-chip-count">{{ status_counts.scheduled }}</span>
+                </button>
+                <button type="button" class="cal-chip active" data-status="published">
+                    <span class="cal-status-chip-dot" style="background: var(--ok);"></span>
+                    <span>Published</span>
+                    <span class="cal-chip-count">{{ status_counts.published }}</span>
+                </button>
+                <button type="button" class="cal-chip active" data-status="failed">
+                    <span class="cal-status-chip-dot" style="background: var(--err);"></span>
+                    <span>Failed</span>
+                    <span class="cal-chip-count">{{ status_counts.failed }}</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="cal-grid-wrap">
+            <div class="cal-grid-head">
+                {% for d in weekday_labels %}<div>{{ d }}</div>{% endfor %}
+            </div>
+            <div class="cal-grid">
+                {% for week in grid %}
+                    {% for cell in week %}
+                    <div class="cal-day {% if not cell.in_month %}other{% endif %}" data-iso="{{ cell.iso }}">
+                        <div class="cal-day-head">
+                            <span class="cal-day-num {% if cell.is_today %}today{% endif %}">{{ cell.day }}</span>
+                            {% if cell.posts %}<span class="cal-day-count">{{ cell.posts|length }}</span>{% endif %}
+                        </div>
+                        <div class="cal-day-events">
+                            {% for post in cell.posts %}
+                            {% set pvar = {
+                                'yt_video':'--p-yt-video','yt_shorts':'--p-yt-shorts','podcast':'--p-podcast',
+                                'wistia':'--p-wistia','rock':'--p-rock','instagram':'--p-instagram','facebook':'--p-facebook'
+                            }.get(post.platform, '--accent') %}
+                            <button type="button" class="cal-pill"
+                                data-platform="{{ post.platform }}"
+                                data-status="{{ post.status }}"
+                                data-post='{{ post|tojson|forceescape }}'
+                                style="
+                                    background: color-mix(in oklch, var({{ pvar }}) 28%, var(--work-panel));
+                                    border: 1px solid color-mix(in oklch, var({{ pvar }}) 65%, var(--work-border));
+                                    border-left-color: var({{ pvar }});
+                                    color: var(--work-text);
+                                ">
+                                <span class="cal-pill-time" style="color: color-mix(in oklch, var({{ pvar }}) 80%, var(--work-text));">{{ post.time or '--:--' }}</span>
+                                <span class="cal-pill-title">{{ post.title }}</span>
+                                {% if post.source == 'external' %}
+                                <svg class="cal-pill-source-icon" width="9" height="9" viewBox="0 0 24 24"
+                                     fill="none" stroke="currentColor" stroke-width="2"
+                                     aria-label="Pulled from platform"><path d="M14 3h7v7"/><path d="M10 14L21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
+                                {% endif %}
+                                {% if post.status == 'failed' %}
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+                                {% elif post.status == 'scheduled' %}
+                                    <span class="cal-pill-extra"></span>
+                                {% endif %}
+                            </button>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <aside class="cal-drawer" id="cal-drawer">
+        <div id="cal-drawer-empty" class="cal-drawer empty" style="display:flex; align-items:center; justify-content:center; text-align:center;">
+            Click a post to see details.
+        </div>
+        <div id="cal-drawer-detail" style="display:none; flex-direction:column; height:100%;">
+            <div class="cal-drawer-head">
+                <div class="cal-drawer-platform">
+                    <span class="cal-drawer-platform-swatch" id="cd-swatch"></span>
+                    <span id="cd-platform-label">Platform</span>
+                </div>
+                <button type="button" class="cal-drawer-close" id="cd-close" aria-label="Close">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                </button>
+            </div>
+            <div class="cal-drawer-body">
+                <div class="cal-drawer-title" id="cd-title">—</div>
+                <div class="cal-drawer-meta">
+                    <span class="badge" id="cd-status">—</span>
+                    <span class="badge badge-miss mono" id="cd-when">—</span>
+                </div>
+                <div class="cal-field">
+                    <div class="cal-field-label">Source file</div>
+                    <div class="cal-field-val mono" id="cd-file">—</div>
+                </div>
+                <div class="cal-field" id="cd-schedule-block">
+                    <div class="cal-field-label">Schedule</div>
+                    <div class="cal-field-val mono" id="cd-schedule">—</div>
+                </div>
+                <div class="cal-field" id="cd-url-block">
+                    <div class="cal-field-label">Published URL</div>
+                    <div class="cal-field-val mono"><a id="cd-url" href="#" target="_blank" rel="noopener" style="color: var(--accent);">—</a></div>
+                </div>
+                <div class="cal-error-box" id="cd-error" style="display:none;"></div>
+            </div>
+            <div class="cal-drawer-foot">
+                <a id="cd-open-link" href="#" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="display:none;">Open</a>
+            </div>
+        </div>
+    </aside>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function(){
+    const PLATFORM_LABELS = {
+        yt_video: "YouTube Video", yt_shorts: "YouTube Shorts", podcast: "Podcast",
+        wistia: "Wistia", rock: "Rock RMS", instagram: "Instagram", facebook: "Facebook"
+    };
+    const PLATFORM_VARS = {
+        yt_video: "--p-yt-video", yt_shorts: "--p-yt-shorts", podcast: "--p-podcast",
+        wistia: "--p-wistia", rock: "--p-rock", instagram: "--p-instagram", facebook: "--p-facebook"
+    };
+
+    const enabledP = new Set(Object.keys(PLATFORM_LABELS));
+    const enabledS = new Set(["scheduled", "published", "failed"]);
+
+    function applyFilters(){
+        document.querySelectorAll(".cal-pill").forEach(el => {
+            // Pills with an unrecognized platform or status (e.g. a future
+            // source that emits a new value) stay visible — better to show
+            // an unfilterable item than hide it with no recourse.
+            const p = el.dataset.platform;
+            const s = el.dataset.status;
+            const platformOk = !p || enabledP.has(p) || !PLATFORM_LABELS[p];
+            const statusOk   = !s || enabledS.has(s) || !["scheduled","published","failed"].includes(s);
+            el.style.display = (platformOk && statusOk) ? "" : "none";
+        });
+        document.querySelectorAll(".cal-day").forEach(day => {
+            const pills = day.querySelectorAll(".cal-pill");
+            let visible = 0;
+            pills.forEach(p => { if (p.style.display !== "none") visible++; });
+            const count = day.querySelector(".cal-day-count");
+            if (count) count.textContent = visible;
+        });
+    }
+
+    document.querySelectorAll("[data-platform].cal-chip").forEach(chip => {
+        chip.addEventListener("click", () => {
+            const id = chip.dataset.platform;
+            if (enabledP.has(id)) { enabledP.delete(id); chip.classList.remove("active"); }
+            else { enabledP.add(id); chip.classList.add("active"); }
+            applyFilters();
+        });
+    });
+    document.querySelectorAll("[data-status].cal-chip").forEach(chip => {
+        chip.addEventListener("click", () => {
+            const id = chip.dataset.status;
+            if (enabledS.has(id)) { enabledS.delete(id); chip.classList.remove("active"); }
+            else { enabledS.add(id); chip.classList.add("active"); }
+            applyFilters();
+        });
+    });
+
+    // Drawer
+    const drawerEmpty = document.getElementById("cal-drawer-empty");
+    const drawerDetail = document.getElementById("cal-drawer-detail");
+    let selectedEl = null;
+
+    function showDrawer(post, el){
+        if (selectedEl) selectedEl.classList.remove("selected");
+        selectedEl = el;
+        if (el) {
+            el.classList.add("selected");
+            const pvar = PLATFORM_VARS[post.platform] || "--accent";
+            el.style.outline = `1.5px solid var(${pvar})`;
+        }
+
+        drawerEmpty.style.display = "none";
+        drawerDetail.style.display = "flex";
+
+        const pvar = PLATFORM_VARS[post.platform] || "--accent";
+        document.getElementById("cd-swatch").style.background = `var(${pvar})`;
+        document.getElementById("cd-platform-label").textContent = PLATFORM_LABELS[post.platform] || post.platform;
+        document.getElementById("cd-title").textContent = post.title || "(untitled)";
+
+        const statusEl = document.getElementById("cd-status");
+        const tone = post.status === "published" ? "ok" : post.status === "scheduled" ? "info" : "error";
+        statusEl.className = "badge badge-" + (tone === "error" ? "error" : tone);
+        statusEl.textContent = post.status.charAt(0).toUpperCase() + post.status.slice(1);
+
+        document.getElementById("cd-when").textContent =
+            post.iso_date + (post.time ? " · " + post.time : "");
+        document.getElementById("cd-file").textContent = post.file_path || "—";
+
+        const schedBlock = document.getElementById("cd-schedule-block");
+        if (post.status === "scheduled" && post.scheduled_time) {
+            schedBlock.style.display = "";
+            document.getElementById("cd-schedule").textContent = post.scheduled_time;
+        } else {
+            schedBlock.style.display = "none";
+        }
+
+        const urlBlock = document.getElementById("cd-url-block");
+        const urlAnchor = document.getElementById("cd-url");
+        const openLink = document.getElementById("cd-open-link");
+        if (post.url) {
+            urlBlock.style.display = "";
+            urlAnchor.href = post.url;
+            urlAnchor.textContent = post.url;
+            openLink.href = post.url;
+            openLink.style.display = "";
+        } else {
+            urlBlock.style.display = "none";
+            openLink.style.display = "none";
+        }
+
+        const errorBox = document.getElementById("cd-error");
+        if (post.status === "failed" && post.error) {
+            errorBox.style.display = "";
+            errorBox.innerHTML = "<strong style='display:block;margin-bottom:3px;'>Upload failed</strong>" +
+                escapeHtml(post.error);
+        } else {
+            errorBox.style.display = "none";
+        }
+    }
+    function hideDrawer(){
+        if (selectedEl) { selectedEl.classList.remove("selected"); selectedEl.style.outline = "none"; selectedEl = null; }
+        drawerDetail.style.display = "none";
+        drawerEmpty.style.display = "flex";
+    }
+    function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+    document.querySelectorAll(".cal-pill").forEach(el => {
+        el.addEventListener("click", () => {
+            try {
+                const post = JSON.parse(el.dataset.post);
+                showDrawer(post, el);
+            } catch (e) {
+                // M31: log parse errors so a malformed pill payload (which
+                // would otherwise look like a dead click) is diagnosable.
+                console.error('Calendar: failed to parse pill data', e, el.dataset.post);
+            }
+        });
+    });
+    document.getElementById("cd-close").addEventListener("click", hideDrawer);
+})();
+
+(function() {
+    const btn = document.getElementById('cal-refresh-btn');
+    const banner = document.getElementById('cal-refresh-banner');
+    const label = btn?.querySelector('.cal-refresh-label');
+    const spinner = btn?.querySelector('.cal-refresh-spinner');
+    if (!btn) return;
+
+    const bannerText = document.getElementById('cal-refresh-banner-text');
+    const bannerClose = document.getElementById('cal-refresh-banner-close');
+
+    function showBanner(msg, isError) {
+        if (bannerText) bannerText.textContent = msg;
+        else banner.textContent = msg;
+        banner.classList.toggle('is-error', !!isError);
+        banner.hidden = false;
+        // Errors stay until dismissed; success toasts auto-hide along with
+        // the page reload below.
+        if (bannerClose) bannerClose.hidden = !isError;
+    }
+
+    if (bannerClose) {
+        bannerClose.addEventListener('click', () => {
+            banner.hidden = true;
+            banner.classList.remove('is-error');
+        });
+    }
+
+    btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        if (label) label.textContent = 'Refreshing…';
+        if (spinner) spinner.hidden = false;
+        try {
+            const resp = await fetch('/calendar/refresh', { method: 'POST' });
+            if (resp.status === 409) {
+                showBanner('A refresh is already running. Try again in a moment.', true);
+                return;
+            }
+            const data = await resp.json();
+            const parts = [];
+            const errors = [];
+            const expired = [];
+            for (const [name, r] of Object.entries(data.results || {})) {
+                if (r.ok) parts.push(`${r.count} ${name}`);
+                else if (r.session_expired) expired.push(name);
+                else errors.push(`${name}: ${r.error}`);
+            }
+            const hadError = expired.length || errors.length;
+            if (hadError) {
+                const bits = [];
+                if (parts.length) bits.push(`Refreshed ${parts.join(' · ')}`);
+                if (expired.length) bits.push(
+                    `Session expired for: ${expired.join(', ')} — open Settings to re-login.`
+                );
+                if (errors.length) bits.push(`Failed: ${errors.join('; ')}`);
+                showBanner(bits.join(' · '), true);
+            } else {
+                showBanner(`Refreshed: ${parts.join(' · ') || 'no items in window'}.`, false);
+            }
+            // Only reload on success — otherwise the error message disappears
+            // before the user can read it.
+            if (!hadError) {
+                setTimeout(() => window.location.reload(), 1200);
+            }
+        } catch (e) {
+            showBanner(`Refresh failed: ${e.message || e}`, true);
+        } finally {
+            btn.disabled = false;
+            if (label) label.textContent = 'Refresh sources';
+            if (spinner) spinner.hidden = true;
+        }
+    });
+})();
+</script>
+{% endblock %}

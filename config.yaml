@@ -1,0 +1,106 @@
+directories:
+  base: /Users/marketingserve/Downloads/DailyLife
+  youtube_video: /Users/marketingserve/Downloads/DailyLife/YouTube
+  youtube_shorts: /Users/marketingserve/Downloads/DailyLife/Shorts
+  podcast: /Users/marketingserve/Downloads/DailyLife/Podcast
+  thumbnails: /Users/marketingserve/Downloads/DailyLife/Thumbnails
+  # Email thumbnails are the YouTube-play-button-overlay variant used only by
+  # the Daily Life email channel — kept separate from the YouTube thumbnails.
+  email_thumbnails: /Users/marketingserve/Downloads/DailyLife/EmailThumbnails
+sharepoint_docx: /Users/marketingserve/Downloads/DailyLife/Daily Life Content Publication.xlsx
+scheduling:
+  timezone: America/New_York
+  youtube_video: 03:00
+  youtube_shorts: '14:00'
+  simplecast: 00:00
+  vista_social: 07:00
+platforms:
+  youtube_video: true
+  youtube_shorts: true
+  simplecast: true
+  rock: false
+  rock_email: false
+  vista_social: false
+youtube:
+  default_category_id: '22'
+  default_privacy: private
+  made_for_kids: false
+  daily_quota: 10000
+simplecast:
+  default_season: 1
+  explicit: false
+upload:
+  max_workers: 4
+llm:
+  model: llama3.2
+  num_title_suggestions: 3
+  backend: llamafile
+  port: 8081
+whisper:
+  model: base
+  auto_transcribe: true
+defaults:
+  elements:
+    yt_video_enabled: true
+    yt_video_thumbnail: true
+    yt_video_title: true
+    yt_video_description: true
+    yt_video_tags: true
+    yt_video_schedule: true
+    yt_shorts_enabled: true
+    yt_shorts_thumbnail: true
+    yt_shorts_title: true
+    yt_shorts_description: true
+    yt_shorts_tags: true
+    yt_shorts_schedule: true
+    sc_enabled: true
+    sc_thumbnail: true
+    sc_description: true
+    sc_schedule: true
+    rock_enabled: true
+    rock_spotlight: true
+    rock_vista: true
+    rock_reflection: true
+    rock_image: true
+    rock_email_enabled: true
+    rock_email_thumbnail: true
+    vs_enabled: true
+    vs_description: true
+    vs_schedule: true
+description_footers:
+  youtube_video: "\U0001F44D Like, Comment & Subscribe to stay updated with the latest\
+    \ content! \r\n\r\n\U0001F535 LCBC stands for Lives Changed By Christ. We are\
+    \ one church with multiple locations throughout Pennsylvania. We exist to introduce\
+    \ people to Jesus and together fully follow him.  \r\n\r\n\U0001F5A5 Learn more\
+    \ at https://lcbcchurch.com \r\n\U0001F4F1 Download the LCBC Church App at https://lcbcchurch.com/app\
+    \ \r\n\r\n\U0001F64F Need Prayer? https://my.lcbcchurch.com/prayer \r\n\r\n▶️\
+    \ Watch our Weekend Messages: https://www.youtube.com/playlist?list=PLbZSmvwRUyAG-zsnKezDMb6AZo2SRU5vE\r\
+    \n\U0001F399 Check out the Live Changed Podcast: https://www.youtube.com/playlist?list=PLbZSmvwRUyAEQqovqa9IdkOG4o_x-MP2f\r\
+    \n\r\n\U0001F4F2 Follow LCBC Church:  \r\nInstagram:  https://www.youtube.com/redirect?event=video_description&redir_token=QUFFLUhqbWs5WG9FQUZiZXprTGNHa3FwaWY4WkNOSzZNUXxBQ3Jtc0tscDJtUVU2QlE3SW81cF9jUzZGRllHYUtxWUw3MWpnTFc2Unk4YzFZNFhXdGFzYW9FamFSWXRZcEhVeTBOMVZEYWN1ZGxSdDRLdlNUYTU1QnVjeG9tUDAzcjUxV0xjYUdkWkJLN1cxUVQ3TGNLWlFucw&q=https%3A%2F%2Finstagram.com%2Flcbcchurch&v=UaQfsZpJLuo\r\
+    \nFacebook:  https://www.youtube.com/redirect?event=video_description&redir_token=QUFFLUhqbVdtTmtqSF9vNmJkUmlDbUd0bXZueW91MDRBZ3xBQ3Jtc0tsSUxJQk5MNmZRNW4xbFVIVm5NZDhZTzU0MlpXSFpYVXlfV19vZ1daeVBCcVloam05SjY4VXRaNUxWdHJ1aDluQl9Ecnd1bUdua0N0ZGZ1OFhvYmNycGhUWGNlT0hwRVhaOHZQcFJ4U2lxZHVJQ29xOA&q=https%3A%2F%2Ffacebook.com%2Flcbcchurch&v=UaQfsZpJLuo"
+  youtube_shorts: Share this daily devotional with someone to encourage and give them
+    hope today!
+  podcast: ''
+  vista_social: Share this daily devotional with someone to encourage and give them
+    hope today!
+excel_mapping:
+  sheet_name: May 26
+  date_column: 'Daily Life Production Publication Master Document '
+  shorts_title_column: ''
+  description_column: 'Unnamed: 12'
+  vista_caption_column: 'Unnamed: 12'
+  tags_column: ''
+  youtube_title_column: 'Unnamed: 10'
+  podcast_title_column: 'Unnamed: 10'
+  passage_column: 'Unnamed: 4'
+  scripture_column: 'Unnamed: 5'
+  episode_title_column: 'Unnamed: 10'
+  prayer_column: 'Unnamed: 14'
+  topic_column: ''
+calendar_refresh:
+  window_days_back: 30
+  window_days_forward: 180
+  source_timeout_sec: 180
+  youtube_max_items: 200
+  rock_channel_guids:
+  - 5a2ece2c-88b0-47eb-bea0-cbdb50e5c86c

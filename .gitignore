@@ -1,0 +1,61 @@
+# Secrets and credentials
+.env
+client_secrets.json
+token.json
+*_session.json
+
+# Local state
+state.db
+state.db-journal
+logs/
+
+# Browser-automation debug artifacts (form recons + failure screenshots)
+rock_failure_*.png
+rock_email_form.png
+rock_email_form.html
+rock_email_form_fields.json
+rock_email_mcp_filled.png
+_mcp_cookies.json
+.playwright-mcp/
+
+# Bundled binaries, runtimes & model files — provisioned per host, never
+# committed (bin/ is ~3GB: ffmpeg, llamafile, node, python, whisper + ollama
+# models). See bin/README.md for what to install. Keep the dir + its README.
+bin/*
+!bin/README.md
+
+# Large model / weight files anywhere (whisper, llamafile/ollama, etc.)
+*.gguf
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.ckpt
+
+# Python build / cache / virtualenvs (installed on host via requirements.txt)
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+ENV/
+
+# Node (installed on host; the only copies live under the ignored bin/)
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

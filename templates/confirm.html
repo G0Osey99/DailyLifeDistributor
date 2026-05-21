@@ -1,0 +1,801 @@
+{% extends "base.html" %}
+{% block title %}Confirm — DLD{% endblock %}
+
+{% block extra_css %}
+    .confirm-header { margin-bottom:20px; }
+    .confirm-header h1 { margin-bottom:4px; }
+    .summary-table { width:100%; border-collapse:collapse; }
+    .summary-table th { font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; color:var(--color-text-muted); padding:8px 12px; border-bottom:1px solid var(--color-border); }
+    .summary-table td { padding:10px 12px; border-bottom:1px solid var(--color-border-subtle); font-size:.85rem; }
+    .summary-table tr.skipped { opacity:.4; }
+    .cell-ok { color:var(--color-success); }
+    .cell-miss { color:var(--color-text-dim); }
+    .cell-warn { color:var(--color-warning); }
+    .quota-bar { margin-top:16px; padding:12px 16px; background:var(--color-elevated); border-radius:var(--radius-md); }
+    .quota-label { font-size:.8rem; color:var(--color-text-muted); margin-bottom:6px; }
+    .confirm-actions { display:flex; justify-content:space-between; align-items:center; margin-top:24px; gap:12px; flex-wrap:wrap; }
+    .inline-confirm { display:flex; align-items:center; gap:8px; }
+    .inline-confirm label { font-size:.85rem; font-weight:400; margin:0; cursor:pointer; display:flex; align-items:center; gap:6px; }
+    /* Progress view */
+    #progress-view { display:none; }
+    /* Sticky summary bar */
+    .upload-summary-bar { position:sticky; top:0; z-index:10; background:var(--color-surface,#fff); border-bottom:1px solid var(--color-border); padding:10px 16px; display:flex; gap:20px; align-items:center; font-size:.85rem; font-weight:500; flex-wrap:wrap; }
+    .usb-stat { display:flex; align-items:center; gap:5px; }
+    .usb-done { color:var(--color-success,#22c55e); }
+    .usb-active { color:var(--color-accent,#3b82f6); }
+    .usb-failed { color:var(--color-error,#ef4444); }
+    .usb-queued { color:var(--color-text-muted,#888); }
+    /* Per-row progress items */
+    .progress-item { padding:10px 0; border-bottom:1px solid var(--color-border-subtle); font-size:.88rem; transition:all .3s; }
+    .progress-item:last-child { border-bottom:none; }
+    .progress-item .pi-header { display:flex; align-items:center; gap:10px; }
+    .progress-item .pi-icon { font-size:1.1rem; flex-shrink:0; width:1.4rem; text-align:center; }
+    .progress-item .pi-info { flex:1; min-width:0; }
+    .progress-item .pi-status { font-size:.8rem; color:var(--color-text-dim); margin-top:2px; }
+    .progress-item .pi-phase-label { display:inline-block; font-size:.75rem; padding:2px 7px; border-radius:20px; font-weight:600; margin-left:4px; vertical-align:middle; }
+    .phase-queued { background:#e5e7eb; color:#6b7280; }
+    .phase-uploading { background:#dbeafe; color:#1d4ed8; }
+    .phase-processing { background:#fef9c3; color:#92400e; }
+    .phase-done { background:#dcfce7; color:#15803d; }
+    .phase-skipped { background:#f3f4f6; color:#9ca3af; }
+    .phase-error { background:#fee2e2; color:#b91c1c; }
+    /* Collapsed done row */
+    .progress-item.done-collapsed .pi-details { display:none; }
+    .progress-item.done-collapsed .pi-header { font-size:.83rem; }
+    .progress-item.done { color:var(--color-success,#22c55e); }
+    .progress-item.done .pi-icon::before { content:'✓'; }
+    .progress-item.failed { color:var(--color-error,#ef4444); }
+    .progress-item.failed .pi-icon::before { content:'✗'; }
+    .progress-item.skipped { color:var(--color-text-dim); opacity:.6; }
+    .progress-item.skipped .pi-icon::before { content:'⏭'; }
+    .progress-item.uploading .pi-icon::before { content:'⏫'; }
+    .progress-item.processing .pi-icon::before { content:'⚙'; }
+    .progress-item.queued .pi-icon::before { content:'⧖'; }
+    .upload-bar { width:100%; height:8px; background:var(--color-elevated,#e5e7eb); border-radius:8px; overflow:hidden; margin-top:6px; }
+    .upload-bar-fill { height:100%; background:var(--color-accent,#3b82f6); border-radius:8px; transition:width .3s; }
+    .upload-bar-fill.success-fill { background:var(--color-success,#22c55e); }
+    .upload-bar-fill.error-fill { background:var(--color-error,#ef4444); }
+    /* Error expand */
+    .pi-error-detail { display:none; margin-top:8px; padding:8px 10px; background:var(--color-error-bg,#fee2e2); border:1px solid rgba(239,68,68,.2); border-radius:6px; font-size:.8rem; color:var(--color-error,#b91c1c); }
+    .pi-error-detail.open { display:block; }
+    .btn-expand { background:none; border:1px solid var(--color-border); border-radius:4px; padding:2px 6px; font-size:.75rem; cursor:pointer; margin-left:6px; }
+    .btn-retry { background:var(--color-accent,#3b82f6); color:#fff; border:none; border-radius:4px; padding:4px 10px; font-size:.78rem; cursor:pointer; margin-top:6px; }
+    .btn-retry:hover { opacity:.85; }
+
+    /* ─── Dark workbench overrides for the live progress view ─── */
+    .container:has(#progress-view:not([style*="display: none"])),
+    body.upload-running .container { max-width: none; padding: 0; }
+    #progress-view {
+        background: var(--work-bg);
+        color: var(--work-text);
+        min-height: calc(100vh - 64px - 50px);
+        padding: 22px 28px 28px;
+        margin: -24px -28px -48px;
+    }
+    #progress-view * { color-scheme: light; }
+    /* Top summary bar */
+    #progress-view .upload-summary-bar {
+        background: var(--work-panel) !important;
+        border: 1px solid var(--work-border) !important;
+        border-radius: 12px;
+        padding: 14px 18px !important;
+        display: flex; gap: 28px; align-items: center;
+        margin-bottom: 14px;
+        position: static !important;
+    }
+    #progress-view .usb-stat {
+        display: flex; align-items: center; gap: 9px;
+        font-size: 12.5px; font-weight: 500;
+        color: var(--work-text-muted) !important;
+    }
+    #progress-view .usb-stat::before {
+        content: ""; width: 10px; height: 10px; border-radius: 50%;
+        background: currentColor; box-shadow: 0 0 10px currentColor;
+        flex-shrink: 0;
+    }
+    #progress-view .usb-done   { color: var(--ok) !important; }
+    #progress-view .usb-active { color: var(--accent) !important; }
+    #progress-view .usb-failed { color: var(--err) !important; }
+    #progress-view .usb-queued { color: oklch(0.55 0.012 250) !important; }
+    /* Workers strip */
+    #worker-strip {
+        display: flex; gap: 8px; margin-bottom: 14px;
+    }
+    .worker-tile {
+        flex: 1; padding: 8px 12px; border-radius: 8px;
+        border: 1px solid var(--work-border);
+        background: var(--work-panel);
+        display: flex; align-items: center; gap: 8px;
+        font-size: 11.5px; color: var(--work-text-muted);
+        transition: all var(--transition-normal);
+    }
+    .worker-tile.active {
+        border-color: color-mix(in oklch, var(--accent) 50%, transparent);
+        background: color-mix(in oklch, var(--accent) 10%, var(--work-panel));
+    }
+    .worker-tile .wt-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: oklch(0.5 0.012 250);
+        flex-shrink: 0;
+    }
+    .worker-tile.active .wt-dot {
+        background: var(--accent);
+        box-shadow: 0 0 8px var(--accent);
+        animation: wbPulse 1.4s ease-in-out infinite;
+    }
+    .worker-tile .wt-task {
+        flex: 1; text-align: right;
+        font-family: var(--font-mono); font-size: 11px;
+        color: oklch(0.55 0.012 250);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        min-width: 0;
+    }
+    .worker-tile.active .wt-task { color: var(--work-text); }
+    @keyframes wbPulse { 0%,100% { opacity:1 } 50% { opacity:.4 } }
+
+    /* Overall progress strip */
+    #progress-view .progress-overall { padding: 0 0 14px 0; }
+    #progress-view .progress-overall .progress-bar-outer {
+        height: 6px !important;
+        background: var(--work-elevated) !important;
+    }
+    #progress-view #current-action {
+        color: var(--work-text-muted) !important;
+        font-family: var(--font-mono);
+        font-size: 12px !important;
+    }
+    /* Row card */
+    #progress-view .card {
+        background: var(--work-panel) !important;
+        border: 1px solid var(--work-border) !important;
+        border-radius: 12px !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+        overflow: hidden;
+    }
+    #progress-view .card:hover { border-color: var(--work-border) !important; }
+    #progress-view .progress-item {
+        padding: 12px 16px !important;
+        border-bottom: 1px solid var(--work-border) !important;
+        font-size: 13px;
+        color: var(--work-text);
+    }
+    #progress-view .progress-item:last-child { border-bottom: none !important; }
+    #progress-view .progress-item.uploading {
+        background: color-mix(in oklch, var(--accent) 5%, transparent);
+    }
+    #progress-view .progress-item .pi-status {
+        color: var(--work-text-muted) !important;
+        font-family: var(--font-mono);
+        font-size: 11px !important;
+    }
+    #progress-view .progress-item.done    { color: var(--ok) !important; }
+    #progress-view .progress-item.failed  { color: var(--err) !important; }
+    #progress-view .progress-item.skipped { color: oklch(0.5 0.012 250) !important; }
+    #progress-view .upload-bar {
+        background: var(--work-elevated) !important;
+    }
+    #progress-view .upload-bar-fill { background: var(--accent) !important; }
+    #progress-view .upload-bar-fill.success-fill { background: var(--ok) !important; }
+    #progress-view .upload-bar-fill.error-fill   { background: var(--err) !important; }
+    /* Phase pills repainted onto dark */
+    #progress-view .pi-phase-label {
+        background: var(--work-elevated) !important;
+        color: var(--work-text-muted) !important;
+        font-family: var(--font-mono);
+        font-weight: 500 !important;
+    }
+    #progress-view .phase-uploading  { background: color-mix(in oklch, var(--accent) 14%, transparent) !important; color: var(--accent) !important; }
+    #progress-view .phase-processing { background: color-mix(in oklch, var(--info) 14%, transparent) !important; color: var(--info) !important; }
+    #progress-view .phase-done       { background: color-mix(in oklch, var(--ok) 14%, transparent) !important; color: var(--ok) !important; }
+    #progress-view .phase-error      { background: color-mix(in oklch, var(--err) 14%, transparent) !important; color: var(--err) !important; }
+    #progress-view .pi-error-detail {
+        background: var(--err-soft) !important;
+        border-color: color-mix(in oklch, var(--err) 35%, transparent) !important;
+        color: var(--err) !important;
+    }
+
+    /* Event log */
+    #event-log {
+        margin-top: 18px; padding: 12px 16px;
+        background: var(--work-panel);
+        border: 1px solid var(--work-border);
+        border-radius: 12px;
+        font-family: var(--font-mono); font-size: 11.5px;
+        color: var(--work-text-muted); line-height: 1.7;
+        max-height: 220px; overflow-y: auto;
+    }
+    #event-log .el-head {
+        display: flex; justify-content: space-between; margin-bottom: 8px;
+    }
+    #event-log .el-title { color: var(--work-text); font-weight: 600; }
+    #event-log .el-source { color: oklch(0.55 0.012 250); }
+    #event-log .el-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #event-log .el-time { color: oklch(0.55 0.012 250); margin-right: 6px; }
+    #event-log .el-type { font-weight: 500; margin-right: 6px; }
+    #event-log .el-type.t-success        { color: var(--ok); }
+    #event-log .el-type.t-error          { color: var(--err); }
+    #event-log .el-type.t-phase_change   { color: var(--info); }
+    #event-log .el-type.t-upload_progress { color: var(--accent); }
+    #event-log .el-type.t-start          { color: var(--accent); }
+    #event-log .el-type.t-skip           { color: oklch(0.55 0.012 250); }
+    #event-log .el-type.t-done           { color: var(--ok); }
+    #event-log .el-empty { color: oklch(0.5 0.012 250); }
+
+    /* Scrollbar in workbench */
+    #progress-view *::-webkit-scrollbar-thumb {
+        background: var(--work-border) !important;
+        background-clip: content-box;
+    }
+    /* Completion */
+    .completion-card { text-align:center; padding:32px; }
+    .completion-card h1 { margin-bottom:8px; }
+    .completion-card .summary-text { font-size:1rem; color:var(--color-text-muted); margin-bottom:20px; }
+    .result-link { display:inline-block; margin:4px; padding:6px 14px; background:var(--color-elevated); border:1px solid var(--color-border); border-radius:var(--radius-md); color:var(--color-accent); text-decoration:none; font-size:.85rem; transition:background var(--transition-fast); }
+    .result-link:hover { background:var(--color-accent-dim); }
+    .failure-list { text-align:left; margin:12px auto; max-width:600px; }
+    .failure-item { background:var(--color-error-bg); border:1px solid rgba(248,113,113,0.2); border-radius:var(--radius-md); padding:8px 12px; margin-bottom:6px; font-size:.85rem; color:var(--color-error); }
+{% endblock %}
+
+{% block content %}
+<!-- Confirm View -->
+<div id="confirm-view">
+<div class="confirm-header">
+    <h1>Ready to Upload</h1>
+    <p class="subtitle">Review the summary below before starting.</p>
+</div>
+
+{% if summary %}
+<div class="card">
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th style="width:36px;">Skip</th>
+                <th>Date</th>
+                <th>Platform</th>
+                <th>Title</th>
+                <th>Schedule</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in summary %}
+            <tr id="row-{{ loop.index0 }}" class="{% if item.skipped %}skipped{% endif %}">
+                <td>
+                    <input type="checkbox" class="skip-chk"
+                           name="skip" value="{{ item.date }}_{{ item.platform }}"
+                           {% if item.skipped %}checked{% endif %}>
+                </td>
+                <td>{{ item.date }}</td>
+                <td>{{ item.platform }}</td>
+                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ item.title or '—' }}</td>
+                <td class="text-sm">{{ item.scheduled_time }}</td>
+                <td>
+                    {% if item.skipped %}
+                        <span class="cell-miss">Skipped</span>
+                    {% elif not item.title %}
+                        <span class="cell-warn">⚠ No title</span>
+                    {% else %}
+                        <span class="cell-ok">✓ Ready</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% set yt_count = summary | selectattr("platform", "in", ["YouTube Video", "YouTube Shorts"]) | list | length %}
+    {% if yt_count %}
+    <div class="quota-bar">
+        <div class="quota-label">Estimated YouTube quota usage: ~{{ yt_count * 1650 }} / 10,000 units ({{ yt_count }} YouTube upload{{ 's' if yt_count != 1 }})</div>
+        <div class="progress-bar-outer">
+            <div class="progress-bar-inner" id="quota-bar-inner" style="width:0%;"></div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div class="confirm-actions">
+    <a href="{{ url_for('review.review') }}" class="btn btn-ghost">← Back to Review</a>
+    <div class="inline-confirm">
+        <label>
+            <input type="checkbox" id="confirm-toggle">
+            Upload {{ summary|length }} item{{ 's' if summary|length != 1 }}?
+        </label>
+        <button type="button" id="upload-btn" class="btn btn-primary btn-lg" disabled>Start Upload</button>
+    </div>
+</div>
+{% else %}
+<div class="card" style="text-align:center;padding:48px;">
+    <div style="font-size:2.5rem;margin-bottom:12px;opacity:.5;">📭</div>
+    <p class="text-muted">No uploads to confirm. All platforms may be disabled or no files were found.</p>
+    <a href="{{ url_for('review.review') }}" class="btn btn-secondary" style="margin-top:12px;">← Back to Review</a>
+</div>
+{% endif %}
+</div>
+
+<!-- Progress View -->
+<div id="progress-view">
+    <!-- Sticky summary bar -->
+    <div class="upload-summary-bar" id="upload-summary-bar">
+        <span class="usb-stat usb-done" id="usb-done">&#8593; 0 done</span>
+        <span class="usb-stat usb-active" id="usb-active">&#8635; 0 uploading</span>
+        <span class="usb-stat usb-failed" id="usb-failed">&#10007; 0 failed</span>
+        <span class="usb-stat usb-queued" id="usb-queued">&#10727; 0 queued</span>
+    </div>
+    <div id="worker-strip">
+        {% set worker_count = max_workers if max_workers is defined else 4 %}
+        {% for i in range(worker_count) %}
+        <div class="worker-tile" data-worker="{{ i }}">
+            <span class="wt-dot"></span>
+            <span>Worker {{ i + 1 }}</span>
+            <span class="wt-task">idle</span>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="progress-overall" style="padding:12px 0 0 0;">
+        <div class="progress-bar-outer" style="height:6px;">
+            <div class="progress-bar-inner" id="overall-bar" style="width:0%;"></div>
+        </div>
+        <div class="action-text" id="current-action" style="font-size:.9rem;color:var(--color-text-muted);margin-top:6px;">Preparing uploads...</div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+        <div id="progress-list"></div>
+    </div>
+    <div id="event-log">
+        <div class="el-head">
+            <span class="el-title">Event stream</span>
+            <span class="el-source" id="el-source">SSE · idle</span>
+        </div>
+        <div id="el-rows"><div class="el-empty">Waiting for events…</div></div>
+    </div>
+</div>
+
+<!-- Completion View -->
+<div id="completion-view" style="display:none;">
+    <div class="card completion-card">
+        <h1 id="completion-title">Upload Complete</h1>
+        <div class="summary-text" id="completion-summary"></div>
+        <div id="completion-links"></div>
+        <div class="failure-list" id="failure-list"></div>
+        <div style="margin-top:20px;">
+            <a href="{{ url_for('scan.index') }}" class="btn btn-primary">Start Over</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function(){
+    const confirmView = document.getElementById('confirm-view');
+    const progressView = document.getElementById('progress-view');
+    const completionView = document.getElementById('completion-view');
+    const uploadBtn = document.getElementById('upload-btn');
+    const confirmToggle = document.getElementById('confirm-toggle');
+    const overallBar = document.getElementById('overall-bar');
+    const currentAction = document.getElementById('current-action');
+    const progressList = document.getElementById('progress-list');
+
+    // Summary bar elements
+    const usbDone = document.getElementById('usb-done');
+    const usbActive = document.getElementById('usb-active');
+    const usbFailed = document.getElementById('usb-failed');
+    const usbQueued = document.getElementById('usb-queued');
+
+    let successCount=0, errorCount=0, skipCount=0, totalItems=0, activeCount=0, es=null;
+
+    // Set quota bar width — YouTube uploads only (~1650 units each: 1600 upload + 50 thumbnail).
+    // The bar is omitted server-side when there are no YouTube items.
+    const quotaBarInner = document.getElementById('quota-bar-inner');
+    if(quotaBarInner){
+        const ytCount = Array.from(document.querySelectorAll('.summary-table tbody tr td:nth-child(3)'))
+            .filter(td => /^YouTube\b/.test(td.textContent.trim())).length;
+        const pct = Math.min((ytCount * 1650) / 100, 100);
+        quotaBarInner.style.width = pct + '%';
+    }
+    const results = [];
+    const failures = [];
+
+    function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function formatBytes(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(0)+' KB';return(b/1048576).toFixed(1)+' MB';}
+    function formatSpeed(bytesPerSec){if(bytesPerSec<1024)return bytesPerSec.toFixed(0)+' B/s';if(bytesPerSec<1048576)return(bytesPerSec/1024).toFixed(0)+' KB/s';return(bytesPerSec/1048576).toFixed(1)+' MB/s';}
+
+    // Phase → {percent, label} map for platforms that emit phase_change events
+    // instead of byte-level upload_progress. The bar fills in step-wise as each
+    // phase fires, giving visible feedback during browser-driven uploads.
+    const PHASE_INFO = {
+        // Rock RMS — uploaders/rock_uploader.py
+        gathering_image:     {pct: 10, label: 'Gathering image'},
+        checking_existing:   {pct: 20, label: 'Checking existing'},
+        creating_reflection: {pct: 35, label: 'Creating reflection'},
+        creating_vista:      {pct: 50, label: 'Creating vista'},
+        creating_spotlight:  {pct: 65, label: 'Creating spotlight'},
+        creating_parent:     {pct: 80, label: 'Creating parent'},
+        linking_children:    {pct: 92, label: 'Linking children'},
+        // SimpleCast — uploaders/simplecast_uploader.py
+        launching:           {pct: 8,  label: 'Launching browser'},
+        awaiting_login:      {pct: 12, label: 'Awaiting login'},
+        navigating:          {pct: 20, label: 'Navigating'},
+        filling_form:        {pct: 35, label: 'Filling form'},
+        uploading_audio:     {pct: 60, label: 'Uploading audio'},
+        publishing:          {pct: 80, label: 'Publishing'},
+        scheduling:          {pct: 92, label: 'Scheduling'},
+    };
+
+    // Enable upload button only when confirmed
+    if(confirmToggle){
+        confirmToggle.addEventListener('change',()=>{
+            if(uploadBtn)uploadBtn.disabled=!confirmToggle.checked;
+        });
+    }
+
+    function updateSummaryBar(){
+        const done = successCount + skipCount;
+        const queued = Math.max(0, totalItems - done - errorCount - activeCount);
+        if(usbDone) usbDone.textContent = '\u2191 ' + done + ' done';
+        if(usbActive) usbActive.textContent = '\u21b3 ' + activeCount + ' uploading';
+        if(usbFailed) usbFailed.textContent = '\u2717 ' + errorCount + ' failed';
+        if(usbQueued) usbQueued.textContent = '\u29d6 ' + queued + ' queued';
+    }
+
+    function getOrCreateItem(row, platform, date){
+        let el = document.getElementById('pi-'+row);
+        if(el) return el;
+        el = document.createElement('div');
+        el.id = 'pi-'+row;
+        el.className = 'progress-item queued';
+        el.innerHTML =
+            '<div class="pi-header">' +
+              '<span class="pi-icon"></span>' +
+              '<div class="pi-info">' +
+                '<div class="pi-title"><strong>'+escHtml(platform)+'</strong> &mdash; '+escHtml(date)+'<span class="pi-phase-label phase-queued">Queued</span></div>' +
+                '<div class="pi-status"></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="pi-details">' +
+              '<div class="upload-bar"><div class="upload-bar-fill" style="width:0%"></div></div>' +
+              '<div class="pi-error-detail"></div>' +
+            '</div>';
+        progressList.appendChild(el);
+        totalItems = Math.max(totalItems, row + 1);
+        updateSummaryBar();
+        return el;
+    }
+
+    function setPhaseLabel(item, phase, text){
+        const label = item.querySelector('.pi-phase-label');
+        if(!label) return;
+        // Remove all phase- classes
+        label.className = 'pi-phase-label phase-'+phase;
+        label.textContent = text;
+    }
+
+    function updateOverall(){
+        const done = successCount + errorCount + skipCount;
+        const pct = totalItems > 0 ? Math.round((done / totalItems) * 100) : 0;
+        overallBar.style.width = pct + '%';
+        if(errorCount > 0) overallBar.classList.add('error');
+        else if(done === totalItems && totalItems > 0) overallBar.classList.add('success');
+        updateSummaryBar();
+    }
+
+    function retryItem(rowId, btnEl){
+        btnEl.disabled = true;
+        btnEl.textContent = 'Retrying...';
+        fetch('/upload/retry', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({row_id: rowId})
+        })
+        .then(r => r.json())
+        .then(({job_id, error}) => {
+            if(error || !job_id){
+                btnEl.textContent = 'Retry failed';
+                btnEl.disabled = false;
+                return;
+            }
+            btnEl.textContent = 'Retrying...';
+            // Increment activeCount and totalItems to reflect the in-progress retry
+            activeCount++;
+            totalItems++;
+            updateSummaryBar();
+            const retryEs = new EventSource('/upload/stream?job_id='+encodeURIComponent(job_id));
+            retryEs.onmessage = function(ev){
+                try { handleEvent(JSON.parse(ev.data)); } catch(e){}
+            };
+            retryEs.onerror = function(){ retryEs.close(); };
+        })
+        .catch(() => { btnEl.textContent = 'Retry failed'; btnEl.disabled = false; });
+    }
+
+    // ─── Event log + worker tracking (workbench UI) ───
+    const elRows = document.getElementById('el-rows');
+    const elSource = document.getElementById('el-source');
+    const workerTiles = Array.from(document.querySelectorAll('.worker-tile'));
+    const rowToWorker = new Map(); // row -> worker index
+
+    function appendLog(data){
+        if(!elRows) return;
+        const empty = elRows.querySelector('.el-empty');
+        if(empty) empty.remove();
+        const now = new Date();
+        const hh = String(now.getHours()).padStart(2,'0');
+        const mm = String(now.getMinutes()).padStart(2,'0');
+        const ss = String(now.getSeconds()).padStart(2,'0');
+        const div = document.createElement('div');
+        div.className = 'el-row';
+        let detail = '';
+        if(data.type === 'upload_progress' && data.percent != null) {
+            detail = 'row=' + data.row + ' ' + (data.platform||'') + ' ' + (data.percent||0) + '%';
+        } else if (data.type === 'success' && data.url) {
+            detail = 'row=' + data.row + ' ' + (data.platform||'') + ' → ' + data.url;
+        } else if (data.type === 'error') {
+            detail = 'row=' + data.row + ' ' + (data.platform||'') + ' ' + (data.message||'');
+        } else if (data.type === 'phase_change') {
+            detail = 'row=' + data.row + ' → ' + (data.phase||'');
+        } else if (data.row != null) {
+            detail = 'row=' + data.row + ' ' + (data.platform||'') + ' ' + (data.date||'');
+        }
+        div.innerHTML = '<span class="el-time">' + hh+':'+mm+':'+ss + '</span>' +
+            '<span class="el-type t-' + escHtml(data.type||'') + '">' + escHtml(data.type||'') + '</span>' +
+            escHtml(detail);
+        elRows.insertBefore(div, elRows.firstChild);
+        // Cap at 200 rows
+        while (elRows.children.length > 200) elRows.removeChild(elRows.lastChild);
+    }
+
+    function assignWorker(row, platform, date){
+        if (!workerTiles.length) return;
+        if (rowToWorker.has(row)) return;
+        const used = new Set(rowToWorker.values());
+        let idx = -1;
+        for (let i = 0; i < workerTiles.length; i++) if (!used.has(i)) { idx = i; break; }
+        if (idx < 0) idx = rowToWorker.size % workerTiles.length;
+        rowToWorker.set(row, idx);
+        const tile = workerTiles[idx];
+        tile.classList.add('active');
+        tile.querySelector('.wt-task').textContent = (platform||'') + ' · ' + (date||'');
+    }
+    function freeWorker(row){
+        if (!rowToWorker.has(row)) return;
+        const idx = rowToWorker.get(row);
+        rowToWorker.delete(row);
+        const tile = workerTiles[idx];
+        if (tile) {
+            tile.classList.remove('active');
+            tile.querySelector('.wt-task').textContent = 'idle';
+        }
+    }
+
+    function handleEvent(data){
+        appendLog(data);
+        if (data.type === 'start') assignWorker(data.row, data.platform, data.date);
+        if (data.type === 'success' || data.type === 'error' || data.type === 'skip') freeWorker(data.row);
+        switch(data.type){
+            case 'start':{
+                totalItems = Math.max(totalItems, data.row + 1);
+                activeCount++;
+                const item = getOrCreateItem(data.row, data.platform, data.date);
+                item.className = 'progress-item uploading';
+                item.querySelector('.pi-status').textContent = 'Starting...';
+                setPhaseLabel(item, 'uploading', 'Uploading 0%');
+                currentAction.textContent = 'Uploading '+data.platform+' \u00b7 '+data.date+'...';
+                updateSummaryBar();
+                break;
+            }
+            case 'upload_progress':{
+                const item = getOrCreateItem(data.row, data.platform, data.date);
+                const pct = data.percent || 0;
+                item.querySelector('.upload-bar-fill').style.width = pct + '%';
+                const sent = formatBytes(data.bytes_sent || 0);
+                const total = formatBytes(data.bytes_total || 0);
+                let statusParts = [pct + '%', sent + ' / ' + total];
+                if(data.eta_seconds != null && data.eta_seconds > 0){
+                    statusParts.push('ETA ' + data.eta_seconds + 's');
+                }
+                item.querySelector('.pi-status').textContent = statusParts.join(' \u00b7 ');
+                // Speed estimate
+                if(data.bytes_total > 0 && data.eta_seconds > 0 && pct > 0){
+                    const remaining = (data.bytes_total - (data.bytes_sent || 0));
+                    const speed = remaining / data.eta_seconds;
+                    setPhaseLabel(item, 'uploading', 'Uploading '+pct+'% \u00b7 '+formatSpeed(speed));
+                } else {
+                    setPhaseLabel(item, 'uploading', 'Uploading '+pct+'%');
+                }
+                break;
+            }
+            case 'progress':{
+                const item = getOrCreateItem(data.row, data.platform || '', data.date || '');
+                item.querySelector('.pi-status').textContent = data.message || 'Uploading...';
+                if(data.percent != null) item.querySelector('.upload-bar-fill').style.width = data.percent + '%';
+                break;
+            }
+            case 'phase_change':{
+                const item = getOrCreateItem(data.row, data.platform, data.date);
+                if(data.phase === 'processing'){
+                    item.className = 'progress-item processing';
+                    setPhaseLabel(item, 'processing', 'Processing...');
+                    item.querySelector('.pi-status').textContent = 'YouTube is processing the video...';
+                } else if (PHASE_INFO[data.phase]){
+                    const info = PHASE_INFO[data.phase];
+                    item.className = 'progress-item uploading';
+                    const fill = item.querySelector('.upload-bar-fill');
+                    // Never let the bar move backwards if phases arrive out of order
+                    const current = parseFloat(fill.style.width) || 0;
+                    if(info.pct > current) fill.style.width = info.pct + '%';
+                    setPhaseLabel(item, 'uploading', info.label + ' · ' + info.pct + '%');
+                    item.querySelector('.pi-status').textContent = info.label + '...';
+                }
+                break;
+            }
+            case 'success':{
+                successCount++;
+                activeCount = Math.max(0, activeCount - 1);
+                const item = getOrCreateItem(data.row, data.platform, data.date);
+                item.className = 'progress-item done done-collapsed';
+                const fill = item.querySelector('.upload-bar-fill');
+                fill.style.width = '100%';
+                fill.classList.add('success-fill');
+                // Build collapsed done line
+                let doneHtml = '<strong>'+escHtml(data.platform)+'</strong> &mdash; '+escHtml(data.date);
+                if(data.url) doneHtml += ' &nbsp;<a href="'+escHtml(data.url)+'" target="_blank" rel="noopener" style="font-size:.8rem;color:var(--color-accent)">View \u2197</a>';
+                if(data.scheduled_time) doneHtml += ' &nbsp;<span style="font-size:.78rem;color:var(--color-text-muted)">@ '+escHtml(data.scheduled_time)+'</span>';
+                item.querySelector('.pi-title').innerHTML = doneHtml + '<span class="pi-phase-label phase-done">Done \u2713</span>';
+                item.querySelector('.pi-status').textContent = '';
+                if(data.url) results.push({platform:data.platform, date:data.date, url:data.url});
+                updateOverall();
+                break;
+            }
+            case 'error':{
+                errorCount++;
+                activeCount = Math.max(0, activeCount - 1);
+                const item = getOrCreateItem(data.row, data.platform, data.date);
+                item.className = 'progress-item failed';
+                const fill = item.querySelector('.upload-bar-fill');
+                fill.style.width = '100%';
+                fill.classList.add('error-fill');
+                setPhaseLabel(item, 'error', 'Error \u2717');
+                const rowId = data.date + '_' + data.platform;
+                // Add expand button next to title
+                const titleEl = item.querySelector('.pi-title');
+                if(!titleEl.querySelector('.btn-expand')){
+                    const expandBtn = document.createElement('button');
+                    expandBtn.className = 'btn-expand';
+                    expandBtn.textContent = '\u25bc';
+                    expandBtn.title = 'Show error details';
+                    const errDetail = item.querySelector('.pi-error-detail');
+                    errDetail.innerHTML = escHtml(data.message || 'Unknown error') +
+                        '<br><button class="btn-retry" data-row-id="'+escHtml(rowId)+'">Retry</button>';
+                    expandBtn.addEventListener('click', () => {
+                        errDetail.classList.toggle('open');
+                        expandBtn.textContent = errDetail.classList.contains('open') ? '\u25b2' : '\u25bc';
+                    });
+                    titleEl.appendChild(expandBtn);
+                    // Wire retry button
+                    errDetail.querySelector('.btn-retry').addEventListener('click', function(){
+                        retryItem(this.dataset.rowId, this);
+                    });
+                }
+                item.querySelector('.pi-status').textContent = data.message || 'Failed';
+                failures.push({platform:data.platform, date:data.date, message:data.message});
+                updateOverall();
+                break;
+            }
+            case 'skip':{
+                skipCount++;
+                activeCount = Math.max(0, activeCount - 1);
+                const item = getOrCreateItem(data.row, data.platform, data.date);
+                item.className = 'progress-item skipped';
+                setPhaseLabel(item, 'skipped', 'Skipped');
+                item.querySelector('.pi-status').textContent = 'Skipped';
+                item.querySelector('.upload-bar').style.display = 'none';
+                updateOverall();
+                break;
+            }
+            case 'thumbnail_set':{
+                const item = getOrCreateItem(data.row, data.platform, data.date);
+                const st = item.querySelector('.pi-status');
+                st.textContent = (st.textContent || '') + ' \u00b7 Thumbnail set';
+                break;
+            }
+            case 'processing_done':{
+                const item = getOrCreateItem(data.row, data.platform, data.date);
+                item.querySelector('.upload-bar-fill').style.width = '100%';
+                setPhaseLabel(item, 'uploading', 'Processing done');
+                break;
+            }
+            case 'done':
+                onDone();
+                break;
+        }
+    }
+
+    function onDone(){
+        if(es){es.close();es=null;}
+        progressView.style.display = 'none';
+        completionView.style.display = 'block';
+        const title = document.getElementById('completion-title');
+        const summary = document.getElementById('completion-summary');
+        const links = document.getElementById('completion-links');
+        const failList = document.getElementById('failure-list');
+
+        if(errorCount > 0 && successCount === 0){
+            title.textContent = 'Upload Failed';
+        } else if(errorCount > 0){
+            title.textContent = 'Partial Upload';
+        }
+
+        summary.textContent = successCount+' succeeded \u00b7 '+errorCount+' failed \u00b7 '+skipCount+' skipped';
+
+        links.innerHTML = '';
+        for(const r of results){
+            links.innerHTML += '<a href="'+escHtml(r.url)+'" target="_blank" rel="noopener" class="result-link">View '+escHtml(r.platform)+' \u2014 '+escHtml(r.date)+' \u2192</a>';
+        }
+
+        failList.innerHTML = '';
+        for(const f of failures){
+            failList.innerHTML += '<div class="failure-item"><strong>'+escHtml(f.platform)+'</strong> \u2014 '+escHtml(f.date)+': '+escHtml(f.message)+'</div>';
+        }
+    }
+
+    if(uploadBtn){
+        uploadBtn.addEventListener('click', function(){
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'Starting...';
+
+            confirmView.style.display = 'none';
+            progressView.style.display = 'block';
+            progressList.innerHTML = '';
+            successCount = errorCount = skipCount = totalItems = activeCount = 0;
+            results.length = 0; failures.length = 0;
+            // Reset the overall bar's status styling so a second upload in the
+            // same session doesn't inherit 'success' or 'error' from the first.
+            overallBar.classList.remove('success', 'error');
+            overallBar.style.width = '0%';
+
+            const skipped = Array.from(document.querySelectorAll('.skip-chk:checked')).map(cb => cb.value);
+            // Pre-seed totalItems from the known summary row count minus skips,
+            // so 'queued' reflects items waiting and the overall bar doesn't
+            // prematurely hit 100% after the first upload finishes.
+            const totalRows = document.querySelectorAll('.summary-table tbody tr').length;
+            totalItems = Math.max(0, totalRows - skipped.length);
+            updateSummaryBar();
+
+            const body = skipped.map(v => 'skip='+encodeURIComponent(v)).join('&');
+
+            fetch('/upload', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body})
+            .then(r => r.json())
+            .then(({job_id}) => {
+                if(!job_id) throw new Error('No job_id');
+                if(elSource) elSource.textContent = 'SSE · /upload/stream?job_id=' + job_id;
+                es = new EventSource('/upload/stream?job_id='+encodeURIComponent(job_id));
+                es.onmessage = function(ev){
+                    // M29: surface parse errors instead of silently dropping
+                    // events — an unparseable payload now shows up in the
+                    // browser console for diagnosis.
+                    try { handleEvent(JSON.parse(ev.data)); }
+                    catch (e) { console.error('SSE parse error:', e, ev.data); }
+                };
+                es.onerror = function(){
+                    // M30: EventSource auto-retries on transient errors
+                    // (readyState=CONNECTING). Only close when the stream
+                    // is genuinely dead so a network blip doesn't kill the
+                    // live progress feed for the rest of the upload.
+                    if (es && es.readyState === EventSource.CLOSED) {
+                        es = null;
+                        if (elSource) elSource.textContent = 'SSE · closed';
+                    } else if (elSource) {
+                        elSource.textContent = 'SSE · reconnecting';
+                    }
+                };
+            })
+            .catch(err => {
+                currentAction.textContent = 'Failed to start upload: '+err.message;
+                currentAction.style.color = 'var(--color-error)';
+            });
+        });
+    }
+})();
+</script>
+{% endblock %}

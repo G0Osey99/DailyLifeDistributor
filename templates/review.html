@@ -1,0 +1,871 @@
+{% extends "base.html" %}
+{% block title %}Review — DLD{% endblock %}
+
+{% block extra_css %}
+    /* ── Sticky Bulk-Edit Toolbar ── */
+    .bulk-toolbar {
+        position: sticky;
+        top: 56px; /* height of navbar */
+        z-index: 90;
+        background: var(--color-surface);
+        border-bottom: 1px solid var(--color-border);
+        padding: 0;
+        margin: 0 -24px 20px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    }
+    .bulk-toolbar-inner {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 10px 24px;
+    }
+    .bulk-toolbar-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+    }
+    .bulk-toolbar-title {
+        font-family: var(--font-display);
+        font-size: .9rem;
+        color: var(--color-text-muted);
+        flex: 1;
+    }
+    .bulk-toolbar-sections {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+    }
+    .bulk-section {
+        background: var(--color-elevated);
+        border: 1px solid var(--color-border-subtle);
+        border-radius: var(--radius-md);
+        padding: 8px 12px;
+        min-width: 180px;
+        flex: 1;
+    }
+    .bulk-section h5 {
+        font-size: .72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        color: var(--color-text-dim);
+        margin-bottom: 6px;
+        font-family: var(--font-body);
+    }
+    .bulk-section .bulk-row {
+        display: flex;
+        gap: 6px;
+        align-items: flex-end;
+    }
+    .bulk-section textarea,
+    .bulk-section input[type="text"],
+    .bulk-section input[type="time"] {
+        flex: 1;
+        min-width: 0;
+        padding: 6px 8px;
+        font-size: .82rem;
+    }
+    .bulk-section textarea { min-height: 56px; resize: vertical; }
+    .bulk-apply-btn {
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+    .bulk-platforms { display: flex; flex-direction: column; gap: 4px; }
+    .bulk-platforms label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: .8rem;
+        font-weight: 400;
+        cursor: pointer;
+        margin-bottom: 0;
+    }
+    .bulk-sched-rows { display: flex; flex-direction: column; gap: 4px; }
+    .bulk-sched-row { display: flex; gap: 6px; align-items: center; }
+    .bulk-sched-row label { margin-bottom: 0; font-size: .78rem; font-weight: 400; white-space: nowrap; min-width: 80px; }
+    .generate-all-btn { flex-shrink: 0; }
+
+    /* ── Review Header ── */
+    .review-header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+    .review-header .back-link { color:var(--color-text-muted); text-decoration:none; font-size:.88rem; }
+    .review-header .back-link:hover { color:var(--color-accent); }
+
+    /* ── Global Presets Bar ── */
+    .global-bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+    .preset-select { width:auto; max-width:200px; }
+
+    /* ── Date Cards ── */
+    .date-card { background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-xl); margin-bottom:12px; overflow:hidden; transition:box-shadow var(--transition-normal); }
+    .date-card:hover { box-shadow:var(--shadow-glow); }
+    .date-card-header { display:flex; align-items:center; gap:10px; padding:14px 18px; cursor:pointer; transition:background var(--transition-fast); user-select:none; }
+    .date-card-header:hover { background:rgba(255,255,255,0.02); }
+    .date-card-header .date-title { font-family:var(--font-display); font-size:1.05rem; flex:1; min-width:0; }
+    .date-card-header .status-badge { font-size:.73rem; flex-shrink:0; }
+    .date-card-header .chevron { color:var(--color-text-dim); transition:transform .2s; font-size:.85rem; flex-shrink:0; }
+    .date-card-header .chevron.open { transform:rotate(180deg); }
+    .platform-icons { display:flex; gap:4px; font-size:.82rem; flex-shrink:0; }
+    .date-card-body { display:none; padding:0 18px 18px; border-top:1px solid var(--color-border-subtle); }
+    .date-card-body.open { display:block; }
+
+    /* ── Platform Sections ── */
+    .platform-section { margin-top:14px; padding:10px 14px; border-left:3px solid var(--color-border); border-radius:0 var(--radius-md) var(--radius-md) 0; background:rgba(255,255,255,0.02); }
+    .platform-section.yt-video { border-left-color:rgba(255,68,68,0.4); }
+    .platform-section.yt-shorts { border-left-color:rgba(255,107,107,0.4); }
+    .platform-section.sc { border-left-color:rgba(74,222,128,0.4); }
+    .platform-section.rock { border-left-color:rgba(139,92,246,0.4); }
+    .platform-section.rock .rock-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .platform-section.rock .rock-grid .field-row.full { grid-column: 1 / -1; }
+    .platform-section.disabled { display:none; }
+    .platform-section h4 { font-family:var(--font-display); font-size:.9rem; margin:0 0 8px; }
+    .field-row { margin-bottom:10px; }
+    .field-row label { font-weight:600; font-size:.78rem; margin-bottom:3px; display:flex; justify-content:space-between; }
+    .save-indicator { font-size:.68rem; color:var(--color-text-dim); }
+    .save-indicator.saving { color:var(--color-warning); }
+    .save-indicator.saved { color:var(--color-success); }
+    .save-indicator.error { color:var(--color-error); }
+    .title-row { display:flex; gap:8px; align-items:center; }
+    .title-row input { flex:1; }
+    .suggestions-container { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+    .suggestion-chip { background:transparent; color:var(--color-accent); border:1px solid var(--color-accent); border-radius:20px; padding:4px 12px; font-size:.78rem; cursor:pointer; transition:all var(--transition-fast); font-family:var(--font-body); }
+    .suggestion-chip:hover { background:var(--color-accent); color:var(--color-base); }
+    .generate-error { color:var(--color-warning); font-size:.78rem; margin-top:4px; }
+    .no-file-warn { background:var(--color-warning-bg); color:var(--color-warning); padding:5px 9px; border-radius:var(--radius-sm); font-size:.78rem; margin-bottom:6px; }
+    .file-path { font-family:var(--font-mono); font-size:.7rem; color:var(--color-text-dim); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .advanced-toggle { cursor:pointer; font-size:.78rem; color:var(--color-text-muted); margin-top:8px; display:inline-block; }
+    .advanced-toggle:hover { color:var(--color-accent); }
+    .advanced-body { display:none; margin-top:8px; }
+    .advanced-body.open { display:block; }
+    .opts-grid { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+    .opts-group { background:var(--color-elevated); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:8px; min-width:170px; }
+    .opts-group h4 { margin:0 0 5px; font-size:.78rem; font-family:var(--font-body); font-weight:600; }
+    .opts-group label { display:flex; align-items:center; gap:6px; font-size:.73rem; font-weight:400; margin-bottom:2px; cursor:pointer; }
+    .opts-group.disabled { opacity:.4; pointer-events:none; }
+    .sched-wrapper { transition:max-height .3s, opacity .3s; overflow:hidden; }
+    .sched-wrapper.hidden { max-height:0; opacity:0; }
+    .sched-wrapper.visible { max-height:80px; opacity:1; }
+    .draft-note { font-size:.72rem; color:var(--color-warning); font-style:italic; }
+    .toggle-group { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+    .toggle-group label { display:flex; align-items:center; gap:6px; font-size:.8rem; font-weight:400; cursor:pointer; }
+
+    /* ── LLM Pending badge ── */
+    .badge-llm { background:var(--color-info-bg); color:var(--color-info); }
+    .badge-llm .spinner { width:10px; height:10px; border-width:1.5px; }
+
+    /* ── Card quick-info ── */
+    .card-quick-title { font-size:.8rem; color:var(--color-text-muted); max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* ── Needs-attention card highlight ── */
+    .date-card.needs-attention { border-color:rgba(251,191,36,0.35); }
+{% endblock %}
+
+{% block content %}
+<!-- Sticky Bulk-Edit Toolbar -->
+<div class="bulk-toolbar">
+    <div class="bulk-toolbar-inner">
+        <div class="bulk-toolbar-header">
+            <span class="bulk-toolbar-title">Bulk Edit</span>
+            <button type="button" class="btn btn-sm btn-primary generate-all-btn" id="generate-all-btn">
+                ✨ Generate All Titles
+            </button>
+        </div>
+        <div class="bulk-toolbar-sections">
+            <!-- Schedule -->
+            <div class="bulk-section">
+                <h5>Schedule Times</h5>
+                <div class="bulk-sched-rows">
+                    <div class="bulk-sched-row">
+                        <label>YT Video</label>
+                        <input type="time" id="bulk-sched-yt-video">
+                        <button type="button" class="btn btn-sm btn-secondary bulk-apply-btn" data-bulk-field="youtube_schedule_time" data-bulk-source="bulk-sched-yt-video">All</button>
+                    </div>
+                    <div class="bulk-sched-row">
+                        <label>Shorts</label>
+                        <input type="time" id="bulk-sched-shorts">
+                        <button type="button" class="btn btn-sm btn-secondary bulk-apply-btn" data-bulk-field="shorts_schedule_time" data-bulk-source="bulk-sched-shorts">All</button>
+                    </div>
+                    <div class="bulk-sched-row">
+                        <label>SimpleCast</label>
+                        <input type="time" id="bulk-sched-sc">
+                        <button type="button" class="btn btn-sm btn-secondary bulk-apply-btn" data-bulk-field="podcast_schedule_time" data-bulk-source="bulk-sched-sc">All</button>
+                    </div>
+                    <div class="bulk-sched-row">
+                        <label>Vista Social</label>
+                        <input type="time" id="bulk-sched-vs">
+                        <button type="button" class="btn btn-sm btn-secondary bulk-apply-btn" data-bulk-field="vista_schedule_time" data-bulk-source="bulk-sched-vs">All</button>
+                    </div>
+                </div>
+            </div>
+            <!-- Platforms -->
+            <div class="bulk-section">
+                <h5>Platforms</h5>
+                <div class="bulk-platforms">
+                    <label><input type="checkbox" id="bulk-plat-yt-video" checked> YouTube Video</label>
+                    <label><input type="checkbox" id="bulk-plat-shorts" checked> YouTube Shorts</label>
+                    <label><input type="checkbox" id="bulk-plat-sc" checked> SimpleCast</label>
+                    <label><input type="checkbox" id="bulk-plat-rock" checked> Rock RMS</label>
+                    <label><input type="checkbox" id="bulk-plat-vs" checked> Vista Social</label>
+                </div>
+                <button type="button" class="btn btn-sm btn-secondary mt-sm" id="bulk-platforms-apply">Apply All</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="review-header">
+    <a href="{{ url_for('scan.index') }}" class="back-link">← Back to Setup</a>
+    <h1>Review</h1>
+    <a href="{{ url_for('upload.confirm') }}" class="btn btn-primary">Continue →</a>
+</div>
+
+<div class="card global-bar">
+    <span class="fw-600 text-sm">Presets:</span>
+    <select id="preset-select" class="preset-select">
+        <option value="">— Select —</option>
+        <option value="full">Full Upload</option>
+        <option value="no_thumbs">No Thumbnails</option>
+        <option value="draft">Draft Mode</option>
+    </select>
+    <button type="button" class="btn btn-sm btn-ghost" id="expand-all-btn">Expand All</button>
+    <button type="button" class="btn btn-sm btn-ghost" id="collapse-all-btn">Collapse All</button>
+</div>
+
+<div id="entries-container"></div>
+
+<div style="margin-top:16px; display:flex; gap:12px;">
+    <a href="{{ url_for('scan.index') }}" class="btn btn-ghost">← Back to Setup</a>
+    <a href="{{ url_for('upload.confirm') }}" class="btn btn-primary" style="margin-left:auto;">Continue →</a>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const ENTRIES_DATA = {{ entries | tojson }};
+let lastFocusedTitleInput = null;
+
+function escapeHtml(t){return String(t).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');}
+function toDatetimeLocalValue(iso){return iso?String(iso).slice(0,16):'';}
+function fileName(p){if(!p)return'';const parts=p.replace(/\\/g,'/').split('/');return parts[parts.length-1];}
+function getIndicator(el){return el.closest('.field-row')?.querySelector('.save-indicator')||null;}
+function setSaveState(el,state,msg){const ind=getIndicator(el);if(!ind)return;ind.classList.remove('saving','saved','error');if(!state){ind.textContent='';return;}ind.classList.add(state);ind.textContent=msg||'';}
+
+/* L19: surface failed PATCH/POST so a silently-broken save doesn't leave
+   the UI showing a value the server didn't accept. Wraps fetch() with
+   .ok check + toast on network failure. */
+async function safePatch(url, options, label){
+    try {
+        const r = await fetch(url, options);
+        if (!r.ok) {
+            console.error(`${label||url} failed: HTTP ${r.status}`);
+            try { showToast(`Save failed (${r.status})`, 'error'); } catch(_){}
+        }
+        return r;
+    } catch (err) {
+        console.error(`${label||url} network error:`, err);
+        try { showToast('Network error — change may not be saved', 'error'); } catch(_){}
+        return null;
+    }
+}
+
+/* ─── Status badge computation ─── */
+// Returns a list of missing required fields for an entry. Shape: [{platform, field}].
+// A platform contributes requirements only if it's enabled (and, for media-bound
+// platforms, only if the corresponding file is present — no file = will be skipped).
+function missingFields(entry){
+    const p = entry.platforms_enabled || {};
+    const missing = [];
+    const need = (cond, platform, field) => { if (cond) missing.push({platform, field}); };
+
+    if (p.youtube_video && entry.youtube_video_path){
+        need(!entry.youtube_title, 'youtube_video', 'title');
+        need(!entry.description,   'youtube_video', 'description');
+    }
+    if (p.youtube_shorts && entry.youtube_shorts_path){
+        need(!entry.youtube_shorts_title, 'youtube_shorts', 'title');
+    }
+    if (p.simplecast && entry.podcast_path){
+        need(!entry.podcast_title, 'simplecast', 'title');
+    }
+    // Vista caption is optional (falls back to YouTube description).
+    if (p.rock){
+        need(!entry.episode_title, 'rock', 'episode_title');
+        need(!entry.wistia_ref,    'rock', 'wistia_ref');
+        need(!entry.passage,       'rock', 'passage');
+        need(!entry.scripture,     'rock', 'scripture');
+        need(!entry.prayer,        'rock', 'prayer');
+    }
+    return missing;
+}
+
+function computeStatus(entry){
+    const p = entry.platforms_enabled || {};
+    // Any enabled media-bound platform with a file present, OR rock enabled.
+    const hasUploadable =
+        (p.youtube_video   && entry.youtube_video_path) ||
+        (p.youtube_shorts  && entry.youtube_shorts_path) ||
+        (p.simplecast      && entry.podcast_path) ||
+        (p.vista_social    && entry.youtube_shorts_path) ||
+        p.rock;
+    if (!hasUploadable) return 'needs_attention';
+
+    const miss = missingFields(entry);
+    if (miss.length){
+        // Treat a missing Shorts title (and only that) as LLM-pending so the
+        // background generator's spinner is visible. Anything else = needs attention.
+        const shortsTitleOnly = miss.length === 1
+            && miss[0].platform === 'youtube_shorts'
+            && miss[0].field === 'title';
+        return shortsTitleOnly ? 'llm_pending' : 'needs_attention';
+    }
+    return 'ready';
+}
+
+function renderPlatformIcons(entry){
+    const p=entry.platforms_enabled||{};
+    let h=`<div class="platform-icons">`;
+    if(p.youtube_video)h+=`<span title="YouTube Video">📹</span>`;
+    if(p.youtube_shorts)h+=`<span title="Shorts">📱</span>`;
+    if(p.simplecast)h+=`<span title="Podcast">🎙️</span>`;
+    if(p.rock)h+=`<span title="Rock RMS">⛪</span>`;
+    if(p.vista_social)h+=`<span title="Vista Social (IG + FB)">📷</span>`;
+    h+=`</div>`;
+    return h;
+}
+
+function renderStatusBadge(entry){
+    const s=computeStatus(entry);
+    if(s==='ready')return`<span class="badge badge-ok status-badge">Ready ✓</span>`;
+    if(s==='llm_pending')return`<span class="badge badge-llm status-badge"><span class="spinner"></span> LLM Pending</span>`;
+    return`<span class="badge badge-warn status-badge">Needs Attention ⚠</span>`;
+}
+
+function renderPlatform(entry,platform,icon,label,cls,pathField,titleField,titleLabel,schedField,schedElemKey,hasDesc,hasGen){
+    const enabled=entry.platforms_enabled?.[platform];
+    const filePath=entry[pathField];
+    let h=`<div class="platform-section ${cls} ${enabled?'':'disabled'}" data-platform-section="${platform}">`;
+    h+=`<h4>${icon} ${label}${enabled?'':' <span class="text-dim fw-300" style="font-family:var(--font-body);font-size:.78rem;">— disabled</span>'}</h4>`;
+    if(!filePath){h+=`<div class="no-file-warn">No ${label.toLowerCase()} file found — will be skipped</div>`;}
+    else{h+=`<div class="file-path" title="${escapeHtml(filePath)}">${escapeHtml(filePath)}</div>`;}
+    if(titleField){
+        h+=`<div class="field-row"><label>${titleLabel} <span class="save-indicator"></span></label>`;
+        h+=`<div class="title-row"><input type="text" class="inline-edit title-target" data-date="${entry.date}" data-field="${titleField}" value="${escapeHtml(entry[titleField]||'')}">`;
+        if(hasGen){h+=`<button type="button" class="btn btn-sm btn-primary generate-titles-btn" data-date="${entry.date}" data-target="${titleField}">✨ Generate</button>`;}
+        h+=`</div>`;
+        h+=`<div class="generate-error" data-date="${entry.date}" data-for="${titleField}" style="display:none;"></div>`;
+        h+=`<div class="suggestions-container" id="suggestions-${entry.date}-${titleField}" style="display:none;"></div></div>`;
+    }
+    if(hasDesc){
+        h+=`<div class="field-row"><label>Description <span class="save-indicator"></span></label>`;
+        h+=`<textarea class="inline-edit" data-date="${entry.date}" data-field="description" rows="3">${escapeHtml(entry.description||'')}</textarea></div>`;
+    }
+    if(filePath&&schedField){
+        const vis=entry.elements?.[schedElemKey];
+        h+=`<div class="field-row sched-wrapper ${vis?'visible':'hidden'}" data-sched-for="${schedElemKey}">`;
+        h+=`<label>Schedule <span class="save-indicator"></span></label>`;
+        h+=`<input type="datetime-local" class="inline-edit" data-date="${entry.date}" data-field="${schedField}" value="${toDatetimeLocalValue(entry[schedField])}"></div>`;
+        if(!vis){h+=`<div class="draft-note" data-draft-for="${schedElemKey}">Will upload as private draft</div>`;}
+    }
+    h+=`</div>`;
+    return h;
+}
+
+function renderVistaSection(entry){
+    const enabled=entry.platforms_enabled?.vista_social;
+    const filePath=entry.youtube_shorts_path;
+    let h=`<div class="platform-section vs ${enabled?'':'disabled'}" data-platform-section="vista_social">`;
+    h+=`<h4>📷 Vista Social <span class="text-dim fw-300" style="font-family:var(--font-body);font-size:.78rem;">— Instagram + Facebook</span>${enabled?'':' <span class="text-dim fw-300" style="font-family:var(--font-body);font-size:.78rem;">— disabled</span>'}</h4>`;
+    if(!filePath){h+=`<div class="no-file-warn">No vertical video found — Vista Social will be skipped (it reuses the vertical video as media)</div>`;}
+    else{h+=`<div class="file-path" title="${escapeHtml(filePath)}">${escapeHtml(filePath)}</div>`;}
+    h+=`<div class="field-row"><label>Caption <span class="text-dim fw-300">(blank = use YouTube description)</span> <span class="save-indicator"></span></label>`;
+    h+=`<textarea class="inline-edit" data-date="${entry.date}" data-field="vista_caption" rows="3">${escapeHtml(entry.vista_caption||'')}</textarea></div>`;
+    if(filePath){
+        const vis=entry.elements?.vs_schedule;
+        h+=`<div class="field-row sched-wrapper ${vis?'visible':'hidden'}" data-sched-for="vs_schedule">`;
+        h+=`<label>Schedule <span class="save-indicator"></span></label>`;
+        h+=`<input type="datetime-local" class="inline-edit" data-date="${entry.date}" data-field="vista_schedule_dt" value="${toDatetimeLocalValue(entry.vista_schedule_dt)}"></div>`;
+        if(!vis){h+=`<div class="draft-note" data-draft-for="vs_schedule">Vista requires a schedule — leave on</div>`;}
+    }
+    h+=`</div>`;
+    return h;
+}
+
+function renderRockSection(entry){
+    const enabled=entry.platforms_enabled?.rock;
+    let h=`<div class="platform-section rock ${enabled?'':'disabled'}" data-platform-section="rock">`;
+    h+=`<h4>⛪ Rock RMS Daily Experience${enabled?'':' <span class="text-dim fw-300" style="font-family:var(--font-body);font-size:.78rem;">— disabled</span>'}</h4>`;
+    h+=`<div class="rock-grid">`;
+    // Spotlight (video) title — defaults to youtube_title if blank in Excel
+    h+=`<div class="field-row"><label>Episode Title (Spotlight) <span class="save-indicator"></span></label>`;
+    h+=`<input type="text" class="inline-edit" data-date="${entry.date}" data-field="episode_title" value="${escapeHtml(entry.episode_title||'')}"></div>`;
+    // Wistia reference (inferred from shorts filename, editable)
+    h+=`<div class="field-row"><label>Wistia Media Ref <span class="text-dim fw-300">(must match dropdown label)</span> <span class="save-indicator"></span></label>`;
+    h+=`<input type="text" class="inline-edit" data-date="${entry.date}" data-field="wistia_ref" placeholder="app YYMMDD" value="${escapeHtml(entry.wistia_ref||'')}"></div>`;
+    // Vista — passage + scripture
+    h+=`<div class="field-row"><label>Passage (Vista title) <span class="save-indicator"></span></label>`;
+    h+=`<input type="text" class="inline-edit" data-date="${entry.date}" data-field="passage" placeholder="e.g. Acts 28:30-31" value="${escapeHtml(entry.passage||'')}"></div>`;
+    h+=`<div class="field-row"><label>Topic hint <span class="text-dim fw-300">(optional, feeds image search)</span> <span class="save-indicator"></span></label>`;
+    h+=`<input type="text" class="inline-edit" data-date="${entry.date}" data-field="topic_hint" value="${escapeHtml(entry.topic_hint||'')}"></div>`;
+    h+=`<div class="field-row full"><label>Scripture (Vista content) <span class="save-indicator"></span></label>`;
+    h+=`<textarea class="inline-edit" data-date="${entry.date}" data-field="scripture" rows="2">${escapeHtml(entry.scripture||'')}</textarea></div>`;
+    // Reflection
+    h+=`<div class="field-row full"><label>Prayer (Reflection content) <span class="save-indicator"></span></label>`;
+    h+=`<textarea class="inline-edit" data-date="${entry.date}" data-field="prayer" rows="3">${escapeHtml(entry.prayer||'')}</textarea></div>`;
+    h+=`</div></div>`;
+    return h;
+}
+
+function renderCard(entry){
+    const status=computeStatus(entry);
+    const needsAttention=status==='needs_attention';
+    let h=`<div class="date-card${needsAttention?' needs-attention':''}" id="card-${entry.date}" data-date="${entry.date}">`;
+    h+=`<div class="date-card-header" data-toggle="${entry.date}">`;
+    h+=`<div style="flex:1;min-width:0;">`;
+    h+=`<div class="date-title">${escapeHtml(entry.display_date)}</div>`;
+    // quick summary title
+    const quickTitle=entry.youtube_title||entry.youtube_shorts_title||entry.podcast_title||'';
+    if(quickTitle)h+=`<div class="card-quick-title">${escapeHtml(quickTitle)}</div>`;
+    h+=`</div>`;
+    h+=renderStatusBadge(entry);
+    h+=renderPlatformIcons(entry);
+    h+=`<span class="chevron">▼</span>`;
+    h+=`</div>`; // end header
+
+    // Card body (expanded content)
+    h+=`<div class="date-card-body" data-body="${entry.date}">`;
+    h+=`<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;">`;
+    h+=`<label class="text-sm"><small class="text-muted">Change date:</small> <input type="date" class="change-date-input" value="${entry.date}" style="width:auto;"></label>`;
+    h+=`<button type="button" class="btn btn-sm btn-secondary rescan-btn" data-date="${entry.date}">🔄 Re-scan</button>`;
+    h+=`<span class="text-sm text-muted" data-scan-status="${entry.date}"></span>`;
+    h+=`</div>`;
+    h+=`<div class="toggle-group" style="margin-top:10px;">`;
+    for(const p of['youtube_video','youtube_shorts','simplecast','rock','rock_email','vista_social']){
+        const lbl=p==='youtube_video'?'YouTube Video':p==='youtube_shorts'?'YouTube Shorts':p==='simplecast'?'SimpleCast':p==='rock'?'Rock RMS':p==='rock_email'?'Daily Life Email':'Vista Social';
+        h+=`<label><input type="checkbox" class="platform-toggle" data-date="${entry.date}" data-platform="${p}" ${entry.platforms_enabled?.[p]?'checked':''}> ${lbl}</label>`;
+    }
+    h+=`</div>`;
+    h+=renderPlatform(entry,'youtube_video','📹','YouTube Video','yt-video','youtube_video_path','youtube_title','Title','youtube_schedule_dt','yt_video_schedule',true,true);
+    h+=renderPlatform(entry,'youtube_shorts','📱','YouTube Shorts','yt-shorts','youtube_shorts_path','youtube_shorts_title','Shorts Title','shorts_schedule_dt','yt_shorts_schedule',false,true);
+    h+=renderPlatform(entry,'simplecast','🎙️','SimpleCast','sc','podcast_path','podcast_title','Podcast Title','podcast_schedule_dt','sc_schedule',false,false);
+    h+=renderVistaSection(entry);
+    h+=renderRockSection(entry);
+    h+=`<span class="advanced-toggle">Advanced Options ▾</span>`;
+    h+=`<div class="advanced-body">`;
+    h+=`<div class="opts-grid">`;
+    const groups=[
+        {key:'yt_video',icon:'📹',label:'YouTube Video',pathField:'youtube_video_path',fields:['yt_video_enabled','yt_video_thumbnail','yt_video_title','yt_video_description','yt_video_schedule'],labels:['Upload','Thumbnail','Title','Description','Schedule']},
+        {key:'yt_shorts',icon:'📱',label:'Shorts',pathField:'youtube_shorts_path',fields:['yt_shorts_enabled','yt_shorts_thumbnail','yt_shorts_title','yt_shorts_description','yt_shorts_schedule'],labels:['Upload','Thumbnail','Title','Description','Schedule']},
+        {key:'sc',icon:'🎙️',label:'SimpleCast',pathField:'podcast_path',fields:['sc_enabled','sc_thumbnail','sc_description','sc_schedule'],labels:['Upload','Artwork','Description','Schedule']},
+        {key:'vs',icon:'📷',label:'Vista Social',pathField:'youtube_shorts_path',fields:['vs_enabled','vs_description','vs_schedule'],labels:['Schedule Post','Caption','Schedule Time']},
+        {key:'rock',icon:'⛪',label:'Rock RMS',pathField:null,fields:['rock_enabled','rock_spotlight','rock_vista','rock_reflection','rock_image'],labels:['Build Daily Experience','Spotlight','Vista','Reflection','Verse Image']},
+        {key:'rock_email',icon:'✉️',label:'Daily Life Email',pathField:null,fields:['rock_email_enabled','rock_email_thumbnail'],labels:['Schedule Email','Upload Thumbnail']},
+    ];
+    for(const g of groups){
+        // Rock has no media path — never auto-disable on missing file
+        const dis=g.pathField?(!entry[g.pathField]?'disabled':''):'';
+        h+=`<div class="opts-group ${dis}" data-group="${g.key}"><h4>${g.icon} ${g.label}</h4>`;
+        for(let i=0;i<g.fields.length;i++){
+            const chk=entry.elements?.[g.fields[i]]?'checked':'';
+            h+=`<label><input type="checkbox" class="elem-toggle" data-date="${entry.date}" data-field="elements.${g.fields[i]}" ${chk}> ${g.labels[i]}</label>`;
+        }
+        h+=`</div>`;
+    }
+    h+=`</div></div>`; // close advanced-body
+    h+=`</div></div>`; // close card-body and card
+    return h;
+}
+
+function renderAll(){
+    const container=document.getElementById('entries-container');
+    container.innerHTML=ENTRIES_DATA.map(e=>renderCard(e)).join('');
+    // Auto-expand cards that need attention; collapse ready/pending ones
+    ENTRIES_DATA.forEach(entry=>{
+        const status=computeStatus(entry);
+        const body=document.querySelector(`[data-body="${entry.date}"]`);
+        const chev=document.querySelector(`#card-${entry.date} .chevron`);
+        if(status==='needs_attention'){
+            body?.classList.add('open');
+            chev?.classList.add('open');
+        }
+    });
+    document.querySelectorAll('.inline-edit').forEach(el=>{el.dataset.lastSavedValue=el.value;});
+}
+
+function updateCardStatusBadge(date){
+    const idx=ENTRIES_DATA.findIndex(e=>e.date===date);
+    if(idx<0)return;
+    const entry=ENTRIES_DATA[idx];
+    const card=document.getElementById(`card-${entry.date}`);
+    if(!card)return;
+    // Replace the status badge in the header
+    const oldBadge=card.querySelector('.status-badge');
+    if(oldBadge){
+        const tmp=document.createElement('span');
+        tmp.innerHTML=renderStatusBadge(entry);
+        oldBadge.replaceWith(tmp.firstElementChild);
+    }
+    // Update needs-attention highlight
+    const status=computeStatus(entry);
+    card.classList.toggle('needs-attention',status==='needs_attention');
+    // Refresh header platform-icon row to match current platforms_enabled
+    const oldIcons=card.querySelector('.date-card-header .platform-icons');
+    if(oldIcons){
+        const tmp=document.createElement('span');
+        tmp.innerHTML=renderPlatformIcons(entry);
+        oldIcons.replaceWith(tmp.firstElementChild);
+    }
+}
+
+function rebuildCard(date,entry){
+    const old=document.getElementById(`card-${date}`);
+    const wasOpen=old?.querySelector('.date-card-body.open')!==null;
+    const idx=ENTRIES_DATA.findIndex(e=>e.date===date);
+    if(idx>=0)ENTRIES_DATA[idx]=entry;else ENTRIES_DATA.push(entry);
+    const tmp=document.createElement('div');
+    tmp.innerHTML=renderCard(entry);
+    const nc=tmp.firstElementChild;
+    if(old)old.replaceWith(nc);else document.getElementById('entries-container').appendChild(nc);
+    if(wasOpen||!old){
+        nc.querySelector('.date-card-body')?.classList.add('open');
+        nc.querySelector('.chevron')?.classList.add('open');
+    }
+    nc.querySelectorAll('.inline-edit').forEach(el=>{el.dataset.lastSavedValue=el.value;});
+}
+
+async function saveField(el,force){
+    const date=el.dataset.date,field=el.dataset.field,value=el.value;
+    if(!date||!field)return;
+    if(!force&&el.dataset.lastSavedValue===value)return;
+    setSaveState(el,'saving','Saving…');
+    try{
+        const r=await fetch('/review/update',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({date,field,value})});
+        const d=await r.json();
+        if(!r.ok||!d.success)throw new Error(d.error||'Save failed');
+        el.dataset.lastSavedValue=value;
+        // Keep ENTRIES_DATA in sync for status badge
+        const idx=ENTRIES_DATA.findIndex(e=>e.date===date);
+        if(idx>=0&&field in ENTRIES_DATA[idx])ENTRIES_DATA[idx][field]=value;
+        updateCardStatusBadge(date);
+        setSaveState(el,'saved','Saved');
+        setTimeout(()=>{if(getIndicator(el)?.textContent==='Saved')setSaveState(el,null,'');},900);
+    }catch(_){setSaveState(el,'error','Not saved');}
+}
+
+async function triggerRescan(card,requestedDate,sourceDate){
+    if(!requestedDate)return;
+    const btn=card.querySelector('.rescan-btn');
+    const status=card.querySelector('[data-scan-status]');
+    if(btn){btn.disabled=true;btn.textContent='⏳';}
+    if(status)status.textContent='Scanning…';
+    try{
+        const p=new URLSearchParams({date:requestedDate,source_date:sourceDate});
+        const r=await fetch(`/rescan?${p.toString()}`);const d=await r.json();
+        if(!r.ok||!d.success||!d.entry)throw new Error(d.error||'Rescan failed');
+        rebuildCard(sourceDate,d.entry);
+    }catch(e){if(status)status.textContent='Scan failed';}
+    finally{if(btn){btn.disabled=false;btn.textContent='🔄 Re-scan';}}
+}
+
+/* ─── Populate suggestions into a card ─── */
+function populateSuggestions(date,target,suggestions,transcriptSource,genBtn){
+    let container=document.getElementById(`suggestions-${date}-${target}`);
+    if(!container)return;
+    container.innerHTML='';container.style.display='flex';
+    if(transcriptSource){
+        const badge=document.createElement('span');
+        badge.className='transcript-source-badge';
+        badge.textContent=transcriptSource==='excel'?'Transcript: Excel':'Transcript: Whisper';
+        badge.style.cssText='font-size:0.72em;color:#888;background:rgba(255,255,255,0.07);border-radius:4px;padding:1px 7px;margin-bottom:4px;align-self:flex-start;';
+        container.appendChild(badge);
+    }
+    suggestions.forEach(title=>{
+        const chip=document.createElement('button');
+        chip.type='button';chip.className='suggestion-chip';chip.textContent=title;
+        chip.onclick=()=>{
+            const inp=genBtn?genBtn.closest('.title-row')?.querySelector('input[type=text]'):document.querySelector(`#card-${date} input[data-field="${target}"]`);
+            if(inp){inp.value=title;inp.dispatchEvent(new Event('blur'));}
+            container.style.display='none';
+        };
+        container.appendChild(chip);
+    });
+}
+
+/* ─── Async /generate-titles helper ─────────────────────────────────────────
+   The endpoint kicks off a background thread and returns 202 + {job_id};
+   we then poll /generate-titles/status/<id> until it reports done or error.
+   Returns an object shaped like the old synchronous response so callers
+   don't need to know the difference:
+       {ok: true,  suggestions, transcript_preview, transcript_source}
+       {ok: false, error, http_status}
+   ─────────────────────────────────────────────────────────────────────────── */
+async function generateTitlesAsync(date, type, {pollMs = 1000, timeoutMs = 600000} = {}){
+    let submitResp, submitData;
+    try {
+        submitResp = await fetch('/generate-titles', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({date, type}),
+        });
+        submitData = await submitResp.json();
+    } catch (e) {
+        return {ok: false, error: e.message || String(e), http_status: 0};
+    }
+    if (!submitResp.ok || !submitData.job_id) {
+        return {
+            ok: false,
+            error: submitData.error || `Submit failed (HTTP ${submitResp.status})`,
+            http_status: submitResp.status,
+        };
+    }
+    const jobId = submitData.job_id;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, pollMs));
+        let r, d;
+        try {
+            r = await fetch(`/generate-titles/status/${encodeURIComponent(jobId)}`);
+            d = await r.json();
+        } catch (e) {
+            return {ok: false, error: e.message || String(e), http_status: 0};
+        }
+        if (!r.ok) {
+            return {ok: false, error: d.error || `Status check failed (HTTP ${r.status})`, http_status: r.status};
+        }
+        if (d.status === 'running') continue;
+        if (d.status === 'done') {
+            return {
+                ok: true,
+                suggestions: d.suggestions || [],
+                transcript_preview: d.transcript_preview || '',
+                transcript_source: d.transcript_source || '',
+            };
+        }
+        // d.status === 'error'
+        return {
+            ok: false,
+            error: d.error || 'Unknown error',
+            http_status: d.http_status || 200,
+        };
+    }
+    return {ok: false, error: 'Title generation timed out', http_status: 0};
+}
+
+/* ─── Background auto-LLM generation ─── */
+async function autoGenerateLLM(){
+    const queue=[];
+    for(const entry of ENTRIES_DATA){
+        if(entry.platforms_enabled?.youtube_shorts && entry.youtube_shorts_path && !entry.youtube_shorts_title){
+            queue.push(entry.date);
+        }
+    }
+    for(const date of queue){
+        await new Promise(r=>setTimeout(r,500));
+        try{
+            const data=await generateTitlesAsync(date,'youtube_shorts_title');
+            if(!data.ok)continue;
+            if(data.suggestions?.length){
+                populateSuggestions(date,'youtube_shorts_title',data.suggestions,data.transcript_source,null);
+                updateCardStatusBadge(date);
+            }
+        }catch(_){}
+    }
+}
+
+/* ─── Events ─── */
+document.addEventListener('focusin',e=>{if(e.target.matches('.title-target'))lastFocusedTitleInput=e.target;});
+document.addEventListener('blur',e=>{if(e.target.matches('.inline-edit'))saveField(e.target);},true);
+document.addEventListener('keydown',e=>{
+    if(!e.target.matches('.inline-edit,.change-date-input'))return;
+    if(e.key!=='Enter')return;
+    if(e.target.matches('.change-date-input')){e.preventDefault();const c=e.target.closest('.date-card');if(c)triggerRescan(c,e.target.value,c.dataset.date);return;}
+    if(e.target.tagName==='TEXTAREA'&&e.shiftKey)return;
+    e.preventDefault();saveField(e.target,true);e.target.blur();
+});
+
+document.addEventListener('click',async e=>{
+    // Card toggle
+    const hdr=e.target.closest('.date-card-header[data-toggle]');
+    if(hdr&&!e.target.closest('button,input,select,a')){
+        const date=hdr.dataset.toggle;
+        const body=hdr.closest('.date-card')?.querySelector(`[data-body="${date}"]`);
+        const chev=hdr.querySelector('.chevron');
+        if(body)body.classList.toggle('open');
+        if(chev)chev.classList.toggle('open');
+        return;
+    }
+    // Advanced toggle
+    if(e.target.matches('.advanced-toggle')){e.target.nextElementSibling?.classList.toggle('open');return;}
+    // Generate titles (per-card button)
+    const genBtn=e.target.closest('.generate-titles-btn');
+    if(genBtn){
+        const date=genBtn.dataset.date,target=genBtn.dataset.target;
+        const card=genBtn.closest('.date-card');
+        const errEl=card?.querySelector(`.generate-error[data-for="${target}"]`);
+        if(errEl)errEl.style.display='none';
+        genBtn.disabled=true;genBtn.innerHTML='<span class="spinner"></span> Generating...';
+        try{
+            const data=await generateTitlesAsync(date,target);
+            if(!data.ok)throw new Error(data.error||'Generation failed');
+            if(data.suggestions?.length){
+                populateSuggestions(date,target,data.suggestions,data.transcript_source,genBtn);
+            }
+            genBtn.textContent='↺ Regenerate';
+        }catch(err){
+            if(errEl){errEl.textContent=err.message;errEl.style.display='';}
+            genBtn.textContent='✨ Generate';
+        }finally{genBtn.disabled=false;}
+        return;
+    }
+    // Rescan
+    const rescanBtn=e.target.closest('.rescan-btn');
+    if(rescanBtn){const card=rescanBtn.closest('.date-card');if(!card)return;const di=card.querySelector('.change-date-input');triggerRescan(card,di?.value||card.dataset.date,card.dataset.date);}
+    // Generate All Titles
+    if(e.target.closest('#generate-all-btn')){
+        const btn=document.getElementById('generate-all-btn');
+        btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Generating All…';
+        // Trigger all generate-titles buttons for dates with a Shorts file
+        const allDates=ENTRIES_DATA.filter(en=>en.platforms_enabled?.youtube_shorts&&en.youtube_shorts_path);
+        for(const entry of allDates){
+            await new Promise(r=>setTimeout(r,500));
+            try{
+                const data=await generateTitlesAsync(entry.date,'youtube_shorts_title');
+                if(!data.ok)continue;
+                if(data.suggestions?.length){
+                    populateSuggestions(entry.date,'youtube_shorts_title',data.suggestions,data.transcript_source,null);
+                    updateCardStatusBadge(entry.date);
+                }
+            }catch(_){}
+        }
+        btn.disabled=false;btn.innerHTML='✨ Generate All Titles';
+        showToast('Title generation complete','success');
+        return;
+    }
+});
+
+document.addEventListener('change',async e=>{
+    if(e.target.matches('.platform-toggle')){
+        const t=e.target,d=t.dataset.date,p=t.dataset.platform;
+        await safePatch('/review/update',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d,field:'platforms_enabled',value:{[p]:t.checked}})}, 'platform-toggle');
+        const idx=ENTRIES_DATA.findIndex(en=>en.date===d);
+        if(idx>=0)ENTRIES_DATA[idx].platforms_enabled[p]=t.checked;
+        const card=t.closest('.date-card');
+        const sec=card?.querySelector(`[data-platform-section="${p}"]`);
+        if(sec)sec.classList.toggle('disabled',!t.checked);
+        updateCardStatusBadge(d);
+        return;
+    }
+    if(e.target.matches('.elem-toggle')){
+        const t=e.target,d=t.dataset.date,f=t.dataset.field;
+        await safePatch('/review/update',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d,field:f,value:t.checked})}, 'elem-toggle');
+        return;
+    }
+});
+
+/* ─── Expand / Collapse All ─── */
+document.getElementById('expand-all-btn')?.addEventListener('click',()=>{
+    document.querySelectorAll('.date-card-body').forEach(b=>b.classList.add('open'));
+    document.querySelectorAll('.chevron').forEach(c=>c.classList.add('open'));
+});
+document.getElementById('collapse-all-btn')?.addEventListener('click',()=>{
+    document.querySelectorAll('.date-card-body').forEach(b=>b.classList.remove('open'));
+    document.querySelectorAll('.chevron').forEach(c=>c.classList.remove('open'));
+});
+
+/* ─── Presets ─── */
+const PRESETS={
+    full:{fields:['elements.yt_video_enabled','elements.yt_video_thumbnail','elements.yt_video_title','elements.yt_video_description','elements.yt_video_schedule','elements.yt_shorts_enabled','elements.yt_shorts_thumbnail','elements.yt_shorts_title','elements.yt_shorts_description','elements.yt_shorts_schedule','elements.sc_enabled','elements.sc_thumbnail','elements.sc_description','elements.sc_schedule','elements.vs_enabled','elements.vs_description','elements.vs_schedule'],value:true},
+    no_thumbs:{allOn:true,off:['elements.yt_video_thumbnail','elements.yt_shorts_thumbnail','elements.sc_thumbnail']},
+    // Vista Social can't draft (it requires a schedule), so leave vs_schedule on.
+    draft:{allOn:true,off:['elements.yt_video_schedule','elements.yt_shorts_schedule','elements.sc_schedule']}
+};
+document.getElementById('preset-select')?.addEventListener('change',async function(){
+    const p=PRESETS[this.value];if(!p){return;}this.value='';
+    const all=['elements.yt_video_enabled','elements.yt_video_thumbnail','elements.yt_video_title','elements.yt_video_description','elements.yt_video_schedule','elements.yt_shorts_enabled','elements.yt_shorts_thumbnail','elements.yt_shorts_title','elements.yt_shorts_description','elements.yt_shorts_schedule','elements.sc_enabled','elements.sc_thumbnail','elements.sc_description','elements.sc_schedule','elements.vs_enabled','elements.vs_description','elements.vs_schedule'];
+    if(p.fields){for(const f of p.fields){await fetch('/review/update-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field:f,value:p.value})});document.querySelectorAll(`.elem-toggle[data-field="${f}"]`).forEach(cb=>{cb.checked=p.value;});}}
+    else if(p.allOn){for(const f of all){const v=!(p.off||[]).includes(f);await fetch('/review/update-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field:f,value:v})});document.querySelectorAll(`.elem-toggle[data-field="${f}"]`).forEach(cb=>{cb.checked=v;});}}
+    showToast('Preset applied','success');
+});
+
+/* ─── Bulk Edit Toolbar ─── */
+document.querySelectorAll('.bulk-apply-btn[data-bulk-field]').forEach(btn=>{
+    btn.addEventListener('click',async function(){
+        const field=this.dataset.bulkField;
+        const sourceId=this.dataset.bulkSource;
+        const sourceEl=document.getElementById(sourceId);
+        if(!sourceEl)return;
+        const value=sourceEl.value.trim();
+        if(!value){showToast('Enter a value first','warning');return;}
+
+        // For schedule time fields we need to patch each date's datetime-local field
+        if(field==='youtube_schedule_time'||field==='shorts_schedule_time'||field==='podcast_schedule_time'||field==='vista_schedule_time'){
+            const dtField=field==='youtube_schedule_time'?'youtube_schedule_dt':field==='shorts_schedule_time'?'shorts_schedule_dt':field==='podcast_schedule_time'?'podcast_schedule_dt':'vista_schedule_dt';
+            // For each entry update the time portion of the schedule
+            let count=0;
+            for(const entry of ENTRIES_DATA){
+                const existingDt=entry[dtField];
+                // Build new datetime by combining existing date portion + new time
+                const datePart=existingDt?existingDt.slice(0,10):entry.date;
+                const newDt=`${datePart}T${value}`;
+                const r=await fetch('/review/update',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:entry.date,field:dtField,value:newDt})});
+                const d=await r.json();
+                if(d.success){
+                    // Update the datetime-local input in DOM
+                    const inp=document.querySelector(`input[data-date="${entry.date}"][data-field="${dtField}"]`);
+                    if(inp){inp.value=newDt;inp.dataset.lastSavedValue=newDt;}
+                    count++;
+                }
+            }
+            showToast(`Updated schedule for ${count} dates`,'success');
+            return;
+        }
+
+        // Standard field apply-all via /review/update-all
+        const r=await fetch('/review/update-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field,value})});
+        const d=await r.json();
+        if(!r.ok||!d.success){showToast('Bulk update failed','error');return;}
+        // Update DOM inline-edit inputs/textareas
+        document.querySelectorAll(`.inline-edit[data-field="${field}"]`).forEach(el=>{
+            el.value=value;el.dataset.lastSavedValue=value;
+        });
+        // Update ENTRIES_DATA
+        for(const entry of ENTRIES_DATA){if(field in entry)entry[field]=value;}
+        showToast(`Applied to ${d.updated_count||'all'} dates`,'success');
+    });
+});
+
+document.getElementById('bulk-platforms-apply')?.addEventListener('click',async function(){
+    const ytVideo=document.getElementById('bulk-plat-yt-video').checked;
+    const shorts=document.getElementById('bulk-plat-shorts').checked;
+    const sc=document.getElementById('bulk-plat-sc').checked;
+    const rock=document.getElementById('bulk-plat-rock').checked;
+    const vs=document.getElementById('bulk-plat-vs').checked;
+    const updates=[
+        {field:'platforms_enabled',key:'youtube_video',val:ytVideo},
+        {field:'platforms_enabled',key:'youtube_shorts',val:shorts},
+        {field:'platforms_enabled',key:'simplecast',val:sc},
+        {field:'platforms_enabled',key:'rock',val:rock},
+        {field:'platforms_enabled',key:'vista_social',val:vs},
+    ];
+    for(const upd of updates){
+        await fetch('/review/update-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field:upd.field,value:{[upd.key]:upd.val}})});
+        // Update all DOM platform toggles
+        document.querySelectorAll(`.platform-toggle[data-platform="${upd.key}"]`).forEach(cb=>{
+            cb.checked=upd.val;
+            const card=cb.closest('.date-card');
+            const sec=card?.querySelector(`[data-platform-section="${upd.key}"]`);
+            if(sec)sec.classList.toggle('disabled',!upd.val);
+        });
+        // Update ENTRIES_DATA
+        for(const entry of ENTRIES_DATA){entry.platforms_enabled[upd.key]=upd.val;}
+    }
+    // Refresh all status badges
+    ENTRIES_DATA.forEach(e=>updateCardStatusBadge(e.date));
+    showToast('Platform settings applied to all dates','success');
+});
+
+/* ─── Auto-rescan on load ─── */
+async function autoRescanAll(){for(const card of document.querySelectorAll('.date-card[data-date]')){const date=card.dataset.date;await triggerRescan(card,date,date);}}
+
+renderAll();
+autoGenerateLLM();
+</script>
+{% endblock %}

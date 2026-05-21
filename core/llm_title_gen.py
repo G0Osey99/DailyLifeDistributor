@@ -1,0 +1,177 @@
+"""llamafile local LLM: generates short title suggestions for YouTube Shorts."""
+
+import hashlib
+import json
+import logging
+import os
+import threading
+import time
+import requests
+from collections import OrderedDict
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# Bounded LRU + TTL cache. The previous unbounded dict grew for the lifetime
+# of the process — a long-running USB-resident server can rack up hundreds
+# of unique transcripts and never release them. 256 entries × ~1 KB of titles
+# is trivial, and 24h TTL means a re-run on the same media still benefits.
+_CACHE_MAX_ENTRIES = 256
+_CACHE_TTL_SECONDS = 24 * 60 * 60
+_cache: "OrderedDict[str, tuple[float, list[str]]]" = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _cache_get(key: str) -> Optional[list[str]]:
+    now = time.time()
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry is None:
+            return None
+        ts, value = entry
+        if now - ts > _CACHE_TTL_SECONDS:
+            _cache.pop(key, None)
+            return None
+        _cache.move_to_end(key)
+        return value
+
+
+def _cache_put(key: str, value: list[str]) -> None:
+    with _cache_lock:
+        _cache[key] = (time.time(), value)
+        _cache.move_to_end(key)
+        while len(_cache) > _CACHE_MAX_ENTRIES:
+            _cache.popitem(last=False)
+
+LLAMAFILE_BASE_URL = "http://localhost:8081"
+
+def _get_transcript_hash(transcript: str) -> str:
+    return hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+
+def _load_config() -> dict:
+    from core.config import load_config
+    return load_config()
+
+def is_llamafile_running() -> bool:
+    """Check if llamafile server is running and reachable.
+
+    Treat any failure (including unexpected exceptions) as "not running" —
+    a stale server or DNS hiccup should fail closed so callers fall back to
+    the manual path rather than wedge on a doomed POST.
+    """
+    try:
+        r = requests.get(f"{LLAMAFILE_BASE_URL}/v1/models", timeout=5)
+        return r.status_code < 500
+    except Exception as e:
+        logger.debug("llamafile health check failed: %s", e)
+        return False
+
+def generate_title_suggestions(
+    transcript: Optional[str],
+    num_suggestions: Optional[int] = None,
+    model: Optional[str] = None,
+) -> list[str]:
+    if not transcript or not transcript.strip():
+        return []
+
+    if not is_llamafile_running():
+        logger.error("llamafile is not running — should start automatically on launch")
+        return []
+
+    config = _load_config()
+    llm_config = config.get("llm", {})
+    if num_suggestions is None:
+        num_suggestions = llm_config.get("num_title_suggestions", 5)
+
+    cache_key = _get_transcript_hash(transcript)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    prompt = (
+        "You are an expert social-media copywriter for a faith-based YouTube Shorts "
+        "channel. The channel covers Christian topics: faith, scripture, prayer, "
+        "spiritual growth, and everyday application of biblical principles. "
+        "Titles are conversational, curiosity-driven, and speak directly to the viewer. "
+        "They use rhetorical questions, incomplete sentences that create tension, "
+        "or bold statements. Emoji use is encouraged — include 1 relevant emoji in "
+        "most titles to add personality and energy.\n\n"
+        "Examples of this channel's style:\n"
+        "- 'Our actions are not what condemn us? 🤔'\n"
+        "- 'Attacked by a BEE?! 🐝'\n"
+        "- 'Will you choose to remove the filter?! 🕶️'\n"
+        "- 'Has there been a time where you have felt behind?'\n"
+        "- 'Let's detox our worries! 😌'\n"
+        "- 'It is IMPOSSIBLE to please God without...'\n"
+        "- 'Your faith is more precious than gold! 🏆'\n\n"
+        f"Generate {num_suggestions} YouTube Shorts title options in this style. "
+        f"Each must be under 60 characters. "
+        f"Include at least: one question, one incomplete sentence ending with '...', "
+        f"and one bold declarative statement.\n\n"
+        f"Base them on this transcript:\n{transcript}\n\n"
+        f"Return ONLY a valid JSON array of strings. "
+        f"No explanation, no markdown, no preamble. "
+        f'Example: ["Title one", "Title two", "Title three"]'
+    )
+
+    # H12: pre-bind so the JSONDecodeError handler below never sees an
+    # unbound name when failure happens inside response.json() itself.
+    text = ""
+    try:
+        logger.info("Calling llamafile transcript_length=%d", len(transcript))
+        response = requests.post(
+            f"{LLAMAFILE_BASE_URL}/v1/chat/completions",
+            json={
+                "model": "local",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.8,
+                "max_tokens": 300,
+            },
+            timeout=120
+        )
+        response.raise_for_status()
+        # H12: validate the JSON shape before indexing — an unexpected payload
+        # used to surface as a confusing KeyError/IndexError trace.
+        payload = response.json()
+        try:
+            text = payload["choices"][0]["message"]["content"].strip()
+        except (KeyError, IndexError, TypeError) as e:
+            logger.error("llamafile returned unexpected payload shape: %s | %r", e, payload)
+            return []
+        logger.info("llamafile raw response: %s", text[:200])
+
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            # L12: split may produce <2 parts if the closing fence is missing.
+            parts = text.split("```")
+            text = parts[1] if len(parts) > 1 else parts[0].lstrip("`")
+            if text.startswith("json"):
+                text = text[4:]
+        text = text.strip()
+
+        # Strip Llama special tokens that may appear in output
+        text = text.replace("<|eot_id|>", "")
+        text = text.replace("<|end_of_text|>", "")
+        text = text.replace("<|start_header_id|>", "")
+        text = text.replace("<|end_header_id|>", "")
+        text = text.strip()
+
+        titles = json.loads(text)
+        if isinstance(titles, list) and all(isinstance(t, str) for t in titles):
+            _cache_put(cache_key, titles)
+            return titles
+        return []
+
+    except requests.exceptions.ConnectionError:
+        logger.error("llamafile connection failed — did it start correctly?")
+        return []
+    except json.JSONDecodeError as e:
+        logger.error("llamafile response was not valid JSON: %s | Raw: %s", e, text)
+        return []
+    except Exception as e:
+        logger.error("llamafile title generation failed: %s", e, exc_info=True)
+        return []
+
+def clear_cache():
+    with _cache_lock:
+        _cache.clear()

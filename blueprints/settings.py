@@ -216,6 +216,10 @@ def settings():
     # browser tab that can reach this page. The template only needs
     # presence/absence indicators, which it derives from the *_found flags
     # and from `config` above.
+    from core import secrets_store
+    from core.auth import _HASH_SECRET
+    secret_names = [n for n in secrets_store.list_secret_names()
+                    if n != _HASH_SECRET]
     return render_template(
         "settings.html",
         config=config,
@@ -224,6 +228,7 @@ def settings():
         vista_social_session_found=vista_social_session_found,
         rock_session_found=rock_session_found,
         youtube_authenticated=_cached_yt_authenticated(),
+        secret_names=secret_names,
     )
 
 
@@ -549,5 +554,42 @@ def save_excel_mapping():
     invalidate_config_cache()
     ExcelParser(load_config()).invalidate_cache()
     session.reload_config()
+
+    return jsonify({"success": True})
+
+
+@bp.route("/settings/set-secret", methods=["POST"])
+def set_secret_route():
+    from flask import redirect, request, url_for
+    from core import secrets_store
+    name = (request.form.get("name") or "").strip()
+    value = request.form.get("value") or ""
+    if name and value:
+        secrets_store.set_secret(name, value)
+    return redirect(url_for("settings.settings"))
+
+
+@bp.route("/settings/clear-secret", methods=["POST"])
+def clear_secret_route():
+    from flask import redirect, request, url_for
+    from core import secrets_store
+    name = (request.form.get("name") or "").strip()
+    if name:
+        secrets_store.delete_secret(name)
+    return redirect(url_for("settings.settings"))
+
+
+@bp.route("/settings/change-password", methods=["POST"])
+def change_password_route():
+    from flask import flash, redirect, request, url_for
+    from core import auth
+    current = request.form.get("current") or ""
+    new = request.form.get("new") or ""
+    if new and auth.verify_password(current):
+        auth.set_password(new)
+        flash("Password changed.", "success")
+    else:
+        flash("Could not change password (check your current password).", "danger")
+    return redirect(url_for("settings.settings"))
 
     return jsonify({"success": True})

@@ -394,6 +394,81 @@
     <a href="{{ url_for('scan.index') }}" class="btn btn-ghost">← Back to Home</a>
 </div>
 </form>
+
+<!-- 🔐 Secrets -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="secrets">
+        <span class="sec-icon">🔐</span>
+        <span class="sec-title">Secrets</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="secrets">
+        <p class="hint">Status only — stored values are never shown.</p>
+        {% if secret_names %}
+        <table class="mapping-table">
+            <tbody>
+                {% for name in secret_names %}
+                <tr>
+                    <td>{{ name }}</td>
+                    <td><span class="badge badge-ok">set</span></td>
+                    <td>
+                        <form method="POST" action="{{ url_for('settings.clear_secret_route') }}" style="display:inline" onsubmit="return confirm('Clear secret {{ name }}?');">
+                            <input type="hidden" name="name" value="{{ name }}">
+                            <button type="submit" class="btn btn-sm btn-warn">Clear</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-dim text-sm">No secrets stored yet.</p>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('settings.set_secret_route') }}" style="margin-top:12px;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Secret name</label>
+                    <input name="name" placeholder="e.g. PEXELS_API_KEY" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>Value</label>
+                    <input name="value" type="password" placeholder="Value" autocomplete="new-password">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">Save secret</button>
+        </form>
+    </div>
+</div>
+</div>
+
+<!-- 🔑 Change Password -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="changepass">
+        <span class="sec-icon">🔑</span>
+        <span class="sec-title">Change Password</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="changepass">
+        <form method="POST" action="{{ url_for('settings.change_password_route') }}">
+            <div class="form-group">
+                <label for="cp-current">Current password</label>
+                <input id="cp-current" name="current" type="password" placeholder="Current password" autocomplete="current-password">
+            </div>
+            <div class="form-group">
+                <label for="cp-new">New password</label>
+                <input id="cp-new" name="new" type="password" placeholder="New password" autocomplete="new-password">
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">Change password</button>
+        </form>
+    </div>
+</div>
+</div>
+
 {% endblock %}
 
 {% block extra_scripts %}

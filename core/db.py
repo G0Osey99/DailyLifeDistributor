@@ -126,6 +126,14 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_ext_iso_date "
             "ON external_calendar_items(iso_date)"
         )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS secrets (
+                name TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                value BLOB NOT NULL,
+                updated_at TEXT
+            )
+        """)
         # Idempotent ALTER for the new external_id column on upload_history
         cols = [r[1] for r in conn.execute("PRAGMA table_info('upload_history')").fetchall()]
         if "external_id" not in cols:

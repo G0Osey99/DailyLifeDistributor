@@ -17,30 +17,15 @@ for _ in $(seq 1 50); do
     sleep 0.1
 done
 
-# The WebSocket gate lives on the VNC layer, not the proxy: Caddy's
-# forward_auth breaks the WS upgrade, so instead x11vnc requires a VNC password
-# and the (auth-gated) app hands it to noVNC. An unauthenticated hit on /vnc-ws
-# reaches websockify but can't pass VNC auth. The password is generated once and
-# persisted on the data volume; we export it so the Flask process inherits it.
-VNC_PASS_FILE="${VNC_PASS_FILE:-/data/vnc_password}"
-if [ ! -s "$VNC_PASS_FILE" ]; then
-    mkdir -p "$(dirname "$VNC_PASS_FILE")"
-    # VNC auth (DES) only uses the first 8 chars, so an 8-char password is the
-    # full effective strength; both x11vnc and noVNC truncate identically.
-    head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 8 > "$VNC_PASS_FILE"
-    chmod 600 "$VNC_PASS_FILE"
-fi
-export VNC_PASSWORD="$(cat "$VNC_PASS_FILE")"
+# NOTE: x11vnc is NOT started here. The app (core/vnc.py) starts/stops it per
+# remote-login session with a fresh, single-use VNC password (option 2), so a
+# leaked password is useless beyond its session and there's no live VNC server
+# when nobody is logging in. websockify stays up and simply has nothing to
+# bridge to (and rejects /vnc-ws) until a session starts x11vnc on :5900.
+mkdir -p /data
 
-# x11vnc 0.9.x doesn't take an inline plaintext password (-passwd is forwarded
-# to libvncserver and ignored), so store it as an rfbauth file and use that.
-VNC_AUTH_FILE=/data/vnc_passwd.rfb
-x11vnc -storepasswd "$VNC_PASSWORD" "$VNC_AUTH_FILE" >/dev/null 2>&1 || true
-
-# VNC server bound to loopback only — never expose 5900/6080 publicly.
-x11vnc -display "$DISPLAY" -localhost -rfbauth "$VNC_AUTH_FILE" -forever -shared -rfbport 5900 &
-
-# WebSocket bridge on 6080 (loopback; reached only via the proxy).
+# WebSocket bridge on 6080 (loopback; reached only via the proxy). It connects
+# to :5900 on demand — x11vnc is brought up there per session by the app.
 websockify --web=/usr/share/novnc 6080 localhost:5900 &
 
 # Launch via `flask --app app run`, not `python app.py`: running app.py as

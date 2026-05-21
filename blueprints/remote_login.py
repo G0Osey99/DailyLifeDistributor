@@ -6,9 +6,13 @@ launcher defaults to the real Playwright one but is swappable for tests.
 """
 from __future__ import annotations
 
+import threading
+import time
+
 from flask import Blueprint, jsonify, request
 
-from core import remote_login
+from core import remote_login, vnc
+from core.hosted import is_hosted
 from core.playwright_session import SessionConfig
 
 bp = Blueprint("remote_login", __name__)
@@ -37,8 +41,13 @@ def _default_launcher(config):
     return default_browser_launcher(config)
 
 
-# Single live manager for the process.
-manager = remote_login.RemoteLoginManager(browser_launcher=_default_launcher)
+# Single live manager for the process. On teardown (cancel / save / idle
+# timeout) the per-session VNC server is stopped so its one-time password dies
+# with the session.
+manager = remote_login.RemoteLoginManager(
+    browser_launcher=_default_launcher,
+    on_teardown=vnc.stop_session,
+)
 
 
 @bp.route("/remote-login/start", methods=["POST"])
@@ -53,6 +62,13 @@ def start():
         return jsonify({"ok": False, "error": str(e)}), 409
     except Exception as e:  # noqa: BLE001
         return jsonify({"ok": False, "error": f"could not start: {e}"}), 500
+    # Bring up a fresh single-use VNC password for this session. If it fails,
+    # don't leave a half-started login around.
+    try:
+        vnc.start_session()
+    except Exception as e:  # noqa: BLE001
+        manager.cancel()
+        return jsonify({"ok": False, "error": f"could not start VNC: {e}"}), 500
     return jsonify({"ok": True, "status": _status_dict()})
 
 
@@ -80,15 +96,43 @@ def status():
 
 
 def _status_dict() -> dict:
-    import os
     st = manager.status()
-    # The VNC password gates the noVNC stream (Caddy can't forward_auth a WS
-    # upgrade). These routes are all behind the app auth gate, so only an
-    # authenticated operator ever receives it. Empty locally (no hosted stack).
+    # Per-session VNC password gates the noVNC stream (Caddy can't forward_auth
+    # a WS upgrade). These routes are all behind the app auth gate, so only an
+    # authenticated operator ever receives it; it's regenerated each session and
+    # cleared on teardown. Empty locally (no hosted stack).
     return {
         "active": st.active,
         "service": st.service,
         "phase": st.phase,
         "message": st.message,
-        "vnc_password": os.environ.get("VNC_PASSWORD", ""),
+        "vnc_password": vnc.current_password(),
     }
+
+
+# ── Background idle reaper (option 3) ───────────────────────────────────────
+# status() only runs poll_timeout() while a browser tab is polling; if the
+# operator closes the tab, an abandoned session would linger. A daemon tick
+# enforces the manager's idle timeout regardless. Hosted-only so local/test
+# runs don't spawn a stray thread.
+_reaper_started = False
+
+
+def _start_idle_reaper(interval_s: int = 30) -> None:
+    global _reaper_started
+    if _reaper_started or not is_hosted():
+        return
+    _reaper_started = True
+
+    def _loop():
+        while True:
+            time.sleep(interval_s)
+            try:
+                manager.poll_timeout()
+            except Exception:  # noqa: BLE001
+                pass
+
+    threading.Thread(target=_loop, name="remote-login-reaper", daemon=True).start()
+
+
+_start_idle_reaper()

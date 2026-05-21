@@ -38,10 +38,15 @@ class RemoteLoginManager:
         browser_launcher: BrowserLauncher,
         idle_timeout_s: int = 600,
         clock: Callable[[], float] = time.monotonic,
+        on_teardown: Optional[Callable[[], None]] = None,
     ) -> None:
         self._launch = browser_launcher
         self._idle_timeout_s = idle_timeout_s
         self._clock = clock
+        # Called once per torn-down session (cancel/save/idle), after the
+        # browser is closed. Hosted mode uses it to stop the per-session VNC
+        # server. Failures are swallowed so teardown always completes.
+        self._on_teardown = on_teardown
         self._lock = threading.RLock()
         self._browser = None
         self._service: Optional[str] = None
@@ -121,6 +126,7 @@ class RemoteLoginManager:
                 self._last_activity = self._clock()
 
     def _teardown(self) -> None:
+        had_browser = self._browser is not None
         if self._browser is not None:
             try:
                 self._browser.close()
@@ -132,3 +138,8 @@ class RemoteLoginManager:
         if self._phase not in ("done", "error"):
             self._phase = "idle"
             self._message = ""
+        if had_browser and self._on_teardown is not None:
+            try:
+                self._on_teardown()
+            except Exception:
+                pass

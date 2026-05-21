@@ -133,6 +133,52 @@ def test_save_without_session_raises(mgr):
         mgr.save()
 
 
+def test_on_teardown_called_on_cancel(tmp_path):
+    calls = []
+    m = remote_login.RemoteLoginManager(
+        browser_launcher=lambda c: FakeBrowser(),
+        on_teardown=lambda: calls.append("t"),
+    )
+    m.start("simplecast", _cfg(tmp_path))
+    m.cancel()
+    assert calls == ["t"]
+
+
+def test_on_teardown_called_on_save(tmp_path, temp_db):
+    calls = []
+    m = remote_login.RemoteLoginManager(
+        browser_launcher=lambda c: FakeBrowser(),
+        on_teardown=lambda: calls.append("t"),
+    )
+    m.start("simplecast", _cfg(tmp_path))
+    m.save()
+    assert calls == ["t"]
+
+
+def test_on_teardown_called_on_idle(tmp_path):
+    clk = {"t": 1000.0}
+    calls = []
+    m = remote_login.RemoteLoginManager(
+        browser_launcher=lambda c: FakeBrowser(),
+        idle_timeout_s=300, clock=lambda: clk["t"],
+        on_teardown=lambda: calls.append("t"),
+    )
+    m.start("simplecast", _cfg(tmp_path))
+    clk["t"] += 301
+    m.poll_timeout()
+    assert calls == ["t"]
+
+
+def test_on_teardown_not_called_without_active_session():
+    calls = []
+    m = remote_login.RemoteLoginManager(
+        browser_launcher=lambda c: FakeBrowser(),
+        on_teardown=lambda: calls.append("t"),
+    )
+    m.cancel()  # nothing was active
+    assert calls == []
+
+
 def test_save_encrypts_session_into_store(tmp_path, temp_db):
     created = []
 

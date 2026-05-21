@@ -1,0 +1,20 @@
+# TLS termination + auth-gated VNC websocket in front of the app container.
+#
+# The VNC websocket must NOT be public: websockify (port 6080) speaks raw VNC
+# with -nopw, so anyone who could reach it would see/drive the server's
+# browser. Caddy gates the /vnc-ws path with forward_auth against the app's
+# own auth-required /remote-login/status endpoint: that route returns 200 only
+# for an authenticated session (otherwise a 302 to /login), so an unauthenticated
+# upgrade is denied before it ever reaches websockify.
+#
+# Replace uploader.example.com with the real hostname; Caddy auto-provisions
+# the TLS cert for it.
+uploader.example.com {
+    @vnc path /vnc-ws*
+    forward_auth @vnc localhost:8080 {
+        uri /remote-login/status
+        copy_headers Cookie
+    }
+    reverse_proxy @vnc localhost:6080
+    reverse_proxy localhost:8080
+}

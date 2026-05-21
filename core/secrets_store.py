@@ -70,6 +70,12 @@ def get_blob(name: str) -> bytes | None:
 
 
 def has_secret(name: str) -> bool:
+    """Return True if a row exists for `name`.
+
+    Note: this returns True even if the stored value is currently
+    undecryptable (wrong/rotated key); callers must still handle a None
+    result from get_secret/get_blob.
+    """
     with _get_conn() as conn:
         return conn.execute(
             "SELECT 1 FROM secrets WHERE name=?", (name,)
@@ -84,13 +90,16 @@ def delete_secret(name: str) -> None:
 
 def list_secret_names() -> list[str]:
     with _get_conn() as conn:
-        return [r["name"] for r in conn.execute("SELECT name FROM secrets").fetchall()]
+        return [r["name"] for r in conn.execute(
+            "SELECT name FROM secrets ORDER BY name"
+        ).fetchall()]
 
 
 @contextmanager
 def materialize_blob_to_tempfile(name: str, suffix: str = ""):
-    """Decrypt a blob secret to a 0600 temp file; delete it on exit.
+    """Decrypt a blob secret to a temp file; delete it on exit.
 
+    The temp file is created 0600 on POSIX (Windows ignores POSIX modes).
     Yields the temp-file path, or None if the secret is unset.
     """
     data = get_blob(name)
@@ -99,7 +108,8 @@ def materialize_blob_to_tempfile(name: str, suffix: str = ""):
         return
     fd, path = tempfile.mkstemp(suffix=suffix)
     try:
-        os.chmod(path, 0o600)
+        if os.name != "nt":
+            os.chmod(path, 0o600)  # POSIX only; Windows ignores POSIX modes
         with os.fdopen(fd, "wb") as f:
             f.write(data)
         yield path

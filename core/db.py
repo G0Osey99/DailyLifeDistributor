@@ -131,7 +131,7 @@ def init_db() -> None:
                 name TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,
                 value BLOB NOT NULL,
-                updated_at TEXT
+                updated_at TEXT NOT NULL
             )
         """)
         # Idempotent ALTER for the new external_id column on upload_history

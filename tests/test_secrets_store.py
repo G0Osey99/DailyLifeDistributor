@@ -71,5 +71,12 @@ def test_materialize_blob_to_tempfile_creates_then_removes():
 def test_corrupt_secret_returns_none(monkeypatch):
     secrets_store.set_secret("k", "v")
     from cryptography.fernet import Fernet
+    # Works because crypto._load_fernet() reads os.environ on every call
+    # (no module-level caching); if that changes, revisit this test.
     monkeypatch.setenv("SECRET_ENC_KEY", Fernet.generate_key().decode())
     assert secrets_store.get_secret("k") is None
+
+
+def test_materialize_blob_unset_yields_none():
+    with secrets_store.materialize_blob_to_tempfile("does.not.exist") as path:
+        assert path is None

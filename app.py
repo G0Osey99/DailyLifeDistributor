@@ -138,6 +138,14 @@ def create_app() -> Flask:
     from core import auth as _auth
     _auth.bootstrap_from_env()
 
+    try:
+        from scripts.migrate_secrets import run as _migrate_secrets
+        _migrate_secrets()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Secret auto-import failed; continuing (run python -m scripts.migrate_secrets manually)."
+        )
+
     from blueprints.auth import bp as auth_bp, is_authenticated
     app.register_blueprint(auth_bp)
 

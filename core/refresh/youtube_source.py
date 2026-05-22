@@ -23,12 +23,74 @@ from __future__ import annotations
 import json
 import logging
 import re
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 
 from core.calendar_refresh import ExternalItem
 from core.quota import track_quota_usage
 
 log = logging.getLogger(__name__)
+
+# Browser-ish UA + a consent cookie. YouTube has no Data API field that says
+# "this is a Short", and fileDetails.videoStreams (aspect ratio) comes back
+# empty for this channel — so we detect Shorts by probing the /shorts/<id>
+# URL: a real Short serves 200 there, a normal video 303-redirects to /watch.
+# The cookie is required because EU-egress IPs (the VPS is in the EU) otherwise
+# bounce to consent.youtube.com, which masks the real redirect.
+_PROBE_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120 Safari/537.36"
+)
+_PROBE_COOKIE = "CONSENT=YES+1; SOCS=CAISEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg"
+_PROBE_TIMEOUT = 8.0
+_PROBE_WORKERS = 8
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):  # noqa: D401 - suppress auto-follow
+        return None
+
+
+def _is_short(video_id: str) -> bool | None:
+    """Return True/False if ``video_id`` is/ isn't a YouTube Short, or None if
+    we can't tell (network error, or a consent wall we couldn't bypass).
+
+    Deterministic: GET(HEAD) https://www.youtube.com/shorts/<id> with redirects
+    disabled. 200 → it's a Short; 30x to /watch → it's a normal video.
+    """
+    url = f"https://www.youtube.com/shorts/{video_id}"
+    req = urllib.request.Request(url, method="HEAD", headers={
+        "User-Agent": _PROBE_UA,
+        "Cookie": _PROBE_COOKIE,
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        try:
+            resp = opener.open(req, timeout=_PROBE_TIMEOUT)
+            return resp.status == 200  # stayed on /shorts/ → Short
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308):
+                loc = e.headers.get("Location") or ""
+                if "/watch" in loc:
+                    return False
+                if "consent." in loc:
+                    return None  # consent wall — can't classify
+                return None
+            return None
+    except Exception:  # noqa: BLE001 - any network failure → unknown
+        return None
+
+
+def _probe_shorts(video_ids: list[str]) -> dict[str, bool | None]:
+    """Probe many ids in parallel; map id -> is_short (or None if unknown)."""
+    if not video_ids:
+        return {}
+    with ThreadPoolExecutor(max_workers=_PROBE_WORKERS) as ex:
+        results = list(ex.map(_is_short, video_ids))
+    return dict(zip(video_ids, results))
 
 NAME = "youtube"
 PLATFORMS = ["youtube_video", "youtube_shorts"]
@@ -119,7 +181,18 @@ def _search_owned_video_ids(yt, max_items: int = 100):
     return ids
 
 
-def _classify(duration_seconds: int) -> str:
+def _classify(duration_seconds: int, is_short: bool | None = None) -> str:
+    """Pick the platform for a video.
+
+    Prefer the authoritative /shorts/ probe result (``is_short``). Only when
+    that's unknown (None) do we fall back to the legacy duration heuristic —
+    note that's unreliable on its own because Shorts can now run up to 3
+    minutes, so a probe failure may misfile a long Short as a video.
+    """
+    if is_short is True:
+        return "youtube_shorts"
+    if is_short is False:
+        return "youtube_video"
     return "youtube_shorts" if 0 < duration_seconds <= 60 else "youtube_video"
 
 
@@ -174,6 +247,10 @@ def fetch(window_start: date, window_end: date, max_items: int = 200) -> list[Ex
             seen.add(vid)
             video_ids.append(vid)
 
+    # Authoritatively classify Shorts vs videos by probing /shorts/<id>
+    # (duration alone can't — both run 1.5-3 min on this channel).
+    short_map = _probe_shorts(video_ids)
+
     out: list[ExternalItem] = []
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i + 50]
@@ -197,7 +274,7 @@ def fetch(window_start: date, window_end: date, max_items: int = 200) -> list[Ex
                 continue
 
             duration_s = _iso_duration_to_seconds(content.get("duration", ""))
-            platform = _classify(duration_s)
+            platform = _classify(duration_s, short_map.get(v["id"]))
             out.append(ExternalItem(
                 platform=platform,
                 external_id=v["id"],

@@ -10,7 +10,7 @@ import logging
 import socket
 import time
 
-from agent import config, pair
+from agent import config, pair, scan
 from agent.transport import AgentConnection
 
 log = logging.getLogger(__name__)
@@ -31,8 +31,12 @@ def _ensure_paired(server_url: str) -> str:
 
 
 def _on_message(conn: AgentConnection, msg: dict) -> None:
-    if msg.get("type") == "ping":
+    mtype = msg.get("type")
+    if mtype == "ping":
         conn.send({"v": 1, "type": "pong", "payload": msg.get("payload", {})})
+    elif mtype == "scan_request":
+        report = scan.scan_roots(config.get_media_roots())
+        conn.send({"v": 1, "type": "scan_result", "payload": report})
 
 
 def run(server_url: str) -> None:

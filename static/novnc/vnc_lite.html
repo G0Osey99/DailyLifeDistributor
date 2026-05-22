@@ -213,6 +213,41 @@
                 }
             }
         }, true);
+
+        // ── Nicer one-finger scrolling on touch (mobile) ───────────────────
+        // noVNC maps a one-finger drag to a remote mouse-drag, so scrolling a
+        // page inside the remote browser otherwise needs an awkward two-finger
+        // gesture. Intercept the single-finger 'drag' gesture (in the capture
+        // phase, before noVNC's own handler on the canvas) and turn it into
+        // remote wheel scrolling. Taps (→ click), two-finger drag, long-press
+        // (→ right-click) and pinch are left to noVNC untouched. Desktop/mouse
+        // never emits these gestures, so it's unaffected.
+        const SCROLL_SENS = 2;   // wheel delta per px of finger travel; tunable
+        const screenEl = document.getElementById('screen');
+        let _dragLastY = null;
+        function handleDragScroll(e) {
+            if (!e.detail || e.detail.type !== 'drag') return;   // single-finger drag only
+            e.stopImmediatePropagation();                        // suppress noVNC mouse-drag
+            const canvas = screenEl.querySelector('canvas');
+            if (e.type === 'gestureend') { _dragLastY = null; return; }
+            if (!canvas) return;
+            if (e.type === 'gesturestart' || _dragLastY === null) {
+                _dragLastY = e.detail.clientY;
+                return;
+            }
+            const dy = _dragLastY - e.detail.clientY;   // swipe up → scroll content up
+            _dragLastY = e.detail.clientY;
+            if (dy !== 0) {
+                canvas.dispatchEvent(new WheelEvent('wheel', {
+                    deltaY: dy * SCROLL_SENS, deltaMode: 0,
+                    clientX: e.detail.clientX, clientY: e.detail.clientY,
+                    bubbles: true, cancelable: true,
+                }));
+            }
+        }
+        screenEl.addEventListener('gesturestart', handleDragScroll, true);
+        screenEl.addEventListener('gesturemove', handleDragScroll, true);
+        screenEl.addEventListener('gestureend', handleDragScroll, true);
     </script>
 </head>
 

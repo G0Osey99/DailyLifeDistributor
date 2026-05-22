@@ -179,6 +179,14 @@ re-run, so an interrupted run is safe to resume by re-selecting the rest.
   tags / schedule, plus Rock children) are active.
 - `description_footers` — text appended to descriptions per platform.
 - `upload.max_workers` — parallel upload thread-pool size (default 4).
+- `upload.circuit_breaker` — `failure_threshold` / `recovery_timeout_seconds`
+  for the per-platform breaker that fast-fails a repeatedly-broken platform for
+  the rest of a run (see the RUNBOOK "Health / triage" notes).
+- `upload.youtube_wait_timeout_seconds` — how long the Rock Email row waits for
+  its YouTube Video sibling's watch URL (default 1800).
+- `llm` — besides `model` / `num_title_suggestions`, the title call's
+  `temperature`, `max_tokens`, `request_timeout_seconds`, `health_timeout_seconds`,
+  and a `circuit_breaker` block are all tunable here.
 
 Media folders, the spreadsheet, and the column mapping are **not** in
 `config.yaml` anymore — they're picked per browser session on the dashboard.

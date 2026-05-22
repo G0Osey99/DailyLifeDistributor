@@ -18,10 +18,17 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` skipped (w
 - [x] **M1** `/health` endpoint — probes db, llamafile, Chrome path; returns 503 if any failing
 - [ ] **M2** UI banner when llamafile is down (deferred — `/health` covers on-call diagnosis; UI surface is lower-pain)
 - [-] **M3** SSE milestone delivery on full queue — verified by reading `core/upload_jobs.py:170-176`: milestones use blocking `put`, lossy events use `put_nowait`. Already correct.
+- [x] **M4** Container healthcheck — `deploy/docker-compose.yml` polls `/health` (with the `autoalert.pro` Host header) so `docker ps` shows healthy/unhealthy. Informational only: compose does not auto-restart on unhealthy, so an LLM blip flagging 503 won't bounce the app.
+
+## Resilience
+- [x] **R1** Per-platform circuit breakers — `core/circuit_breaker.py` + `_dispatch_upload`. A platform that hits repeated infra failures (broken session, network, unresponsive page) within a run is skipped for the rest of it instead of relaunching Chrome and burning the login timeout per date. The same breaker guards the LLM title call. Tests: `tests/test_circuit_breaker.py`, `tests/test_dispatch_circuit_breaker.py`.
+- [x] **R2** Env-var validation hardening — integer coercion for the `*_LOGIN_TIMEOUT` / `MAX_CONTENT_LENGTH_BYTES` knobs and a HOSTED-mode `FLASK_SECRET_KEY` requirement so a public deploy can't silently run on an ephemeral key. `core/env_validation.py`, `tests/test_env_validation.py`.
+- [x] **R3** Dependency CVEs — `requests >= 2.32.2` (CVE-2024-35195), `cryptography >= 43.0.1` (CVE-2024-6119).
 
 ## Tests
 - [x] **T1** SimpleCast scheduling math (covered by P1.3 — 29 cases including tz cross-day, hour mod-12, 5-min snap including the 58→00 wrap quirk, uppercase header parse, month delta across years)
-- [ ] **T2** YouTube resumable upload retry on chunk failure (deferred — would need extensive mocking of googleapiclient; lower payoff than schedule-math tests)
+- [x] **T2** YouTube resumable upload retry on chunk failure — `tests/test_youtube_retry.py` covers the retryable-status classifier and the retry loop (retry-then-succeed on 5xx/network, raise on 4xx, exhaust retries) with a fake request object, so no live API calls are needed.
+- [x] **T7** `/health` failure semantics — `tests/test_health_endpoint.py` asserts the db/llamafile/chrome check structure plus 503 with the failing subsystem flagged.
 - [ ] **T3** Session resume after crash (deferred)
 - [ ] **T4** SimpleCast session expiry recovery (deferred — exists in `test_playwright_session.py` partially)
 - [ ] **T5** Excel parser fallbacks (deferred)

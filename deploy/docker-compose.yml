@@ -45,6 +45,23 @@ services:
       - dld-data:/data
     networks: [dld-net]
     depends_on: [ollama]
+    # Container-level health: poll the app's /health probe (db + LLM + Chrome).
+    # The Host header must match ALLOWED_HOSTS or the DNS-rebind guard 403s it.
+    # This surfaces health in `docker ps`; compose does not auto-restart on
+    # unhealthy, so an LLM blip flagging 503 is informational, not disruptive.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request as u, sys;
+          u.urlopen(u.Request('http://127.0.0.1:8080/health',
+          headers={'Host': 'autoalert.pro'}), timeout=5)
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
 
   caddy:
     image: caddy:2

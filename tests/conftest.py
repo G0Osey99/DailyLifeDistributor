@@ -2,6 +2,22 @@
 import os
 import pytest
 
+# Browser-driven tests (Playwright / x11vnc / streamed remote-login) need a
+# real display + browser and HANG in a headless CI or dev box, so they're not
+# collected by default. Opt in with RUN_BROWSER_TESTS=1 on a machine that has
+# them. This is what makes a plain `pytest` fully runnable everywhere.
+_BROWSER_TEST_FILES = [
+    "test_playwright_session.py",
+    "test_playwright_session_secret.py",
+    "test_remote_login.py",
+    "test_remote_login_expiry.py",
+    "test_remote_login_playwright.py",
+    "test_remote_login_routes.py",
+    "test_vnc.py",
+]
+if not os.environ.get("RUN_BROWSER_TESTS"):
+    collect_ignore = list(_BROWSER_TEST_FILES)
+
 
 @pytest.fixture(autouse=True)
 def _isolate_state_db(tmp_path, monkeypatch):

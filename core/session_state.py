@@ -13,8 +13,6 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from core.config import load_config as _load_config
-from core.file_scanner import FileScanner
-from core.excel_parser import ExcelParser
 
 
 _WISTIA_REF_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
@@ -180,7 +178,6 @@ class SessionState:
         self.entries: dict[str, ReviewEntry] = {}
         self.upload_results: dict[str, dict] = {}
         self._config = _load_config()
-        self.path_overrides: dict[str, str] = {}
         self.global_times: dict[str, str] = {}
         # Coarse mutex for cross-thread reads/writes of the singleton. The
         # upload worker pool, the SSE consumer, and the user's review tab
@@ -258,9 +255,9 @@ class SessionState:
     ) -> "ReviewEntry":
         """Construct a ReviewEntry from a media match + Excel metadata row.
 
-        Single source of truth used by both the initial scan (load_for_dates)
-        and the per-date /rescan flow. `media` is a MediaDateEntry-like object
-        or None; `meta` is the dict produced by ExcelParser.
+        Used by the media pipeline's per-batch entry build (blueprints/media.py).
+        `media` is a MediaDateEntry-like object (carrying the batch's temp file
+        paths) or None; `meta` is a parsed spreadsheet row.
         """
         meta = meta or {}
         yt_video_time, yt_shorts_time, sc_time, vs_time = self._scheduled_times()
@@ -303,63 +300,6 @@ class SessionState:
             platforms_enabled=platforms_enabled,
             elements=self._default_elements(),
         )
-
-    def load_for_dates(
-        self,
-        date_list: list[str],
-        global_platforms: Optional[dict] = None,
-        path_overrides: Optional[dict] = None,
-    ):
-        """Populate entries from FileScanner + ExcelParser for selected dates.
-
-        path_overrides: dict of media-type → directory path set by the user in the
-        Directory Setup panel.  When provided, scan_custom_paths() is used so that
-        the same directories the user configured are scanned here — not the bare
-        config.yaml defaults.
-        """
-        import logging as _logging
-        _log = _logging.getLogger(__name__)
-        _log.debug("load_for_dates called with path_overrides: %s", path_overrides)
-
-        self.selected_dates = sorted(date_list, reverse=True)
-        self.entries.clear()
-        self.upload_results.clear()
-
-        scanner = FileScanner(self._config)
-        if path_overrides:
-            all_media = scanner.scan_custom_paths(path_overrides)
-            date_set = set(date_list)
-            media_entries = [m for m in all_media if m.date in date_set]
-        else:
-            media_entries = scanner.get_files_for_dates(date_list)
-        media_by_date = {m.date: m for m in media_entries}
-        _log.debug("load_for_dates found %d media entries for %d requested dates",
-                   len(media_entries), len(date_list))
-
-        # M8: surface Excel load errors so the review page can flash a
-        # warning when titles/descriptions silently went empty.
-        parser = ExcelParser(self._config)
-        all_metadata = parser.get_metadata()
-        self.excel_last_error = getattr(parser, "last_error", "") or ""
-        platforms_enabled = self._resolve_global_platforms(global_platforms)
-
-        for iso_date in self.selected_dates:
-            self.entries[iso_date] = self.build_entry(
-                iso_date,
-                media=media_by_date.get(iso_date),
-                meta=all_metadata.get(iso_date, {}),
-                global_platforms=platforms_enabled,
-            )
-
-        try:
-            self.save()
-        except Exception as e:
-            # M22: log so a totally-broken DB isn't invisible. We still
-            # swallow because persistence failure must never break the
-            # upload workflow; downstream calls check `persistence_error`
-            # to flash a banner.
-            _log.warning("session.save (load_for_dates) failed: %s", e)
-            self.persistence_error = str(e)
 
     def update_entry(self, date: str, field_name: str, value):
         """Update a single field on a ReviewEntry.
@@ -695,7 +635,6 @@ class SessionState:
             "selected_dates": self.selected_dates,
             "entries": {date: entry.to_dict() for date, entry in self.entries.items()},
             "upload_results": self.upload_results,
-            "path_overrides": self.path_overrides,
             "global_times": self.global_times,
         }
 
@@ -826,7 +765,6 @@ class SessionState:
 
         obj.session_id = row.get("id", str(uuid.uuid4()))
         obj.selected_dates = state.get("selected_dates", [])
-        obj.path_overrides = state.get("path_overrides", {})
         obj.global_times = state.get("global_times", {})
         obj.upload_results = state.get("upload_results", {})
 
@@ -858,7 +796,6 @@ class SessionState:
             self.selected_dates.clear()
             self.entries.clear()
             self.upload_results.clear()
-            self.path_overrides.clear()
             self.global_times.clear()
 
     def replace_with(self, other: "SessionState") -> None:
@@ -872,7 +809,6 @@ class SessionState:
             self.selected_dates = other.selected_dates
             self.entries = other.entries
             self.upload_results = other.upload_results
-            self.path_overrides = other.path_overrides
             self.global_times = other.global_times
             self._config = other._config
 

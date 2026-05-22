@@ -213,11 +213,6 @@
                         {% if s.id %} · job_{{ s.id[:8] if s.id|length > 8 else s.id }}{% endif %}
                     </div>
                 </div>
-                {% if s.status == 'in_progress' %}
-                <form method="post" action="{{ url_for('history.resume_session') }}" style="margin:0;">
-                    <button type="submit" class="btn btn-secondary btn-sm">Resume</button>
-                </form>
-                {% endif %}
             </div>
 
             {% if s.records %}

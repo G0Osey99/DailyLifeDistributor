@@ -664,8 +664,8 @@
                         <span>SimpleCast session</span>
                     </div>
                     <div class="sb-conn-row">
-                        <span class="sb-conn-dot dim"></span>
-                        <span>llamafile · idle</span>
+                        <span class="sb-conn-dot dim" id="sb-llm-dot"></span>
+                        <span id="sb-llm-label">Ollama · checking…</span>
                     </div>
                 </div>
             </div>
@@ -723,6 +723,20 @@
             setTimeout(() => toast.remove(), 300);
         }, duration);
     }
+
+    // Live AI-backend (Ollama) indicator in the sidebar, on every page.
+    (function(){
+        const dot = document.getElementById('sb-llm-dot');
+        const label = document.getElementById('sb-llm-label');
+        if(!dot || !label) return;
+        fetch('/llamafile/status', {headers:{'Accept':'application/json'}})
+            .then(r => r.ok ? r.json() : Promise.reject())
+            .then(d => {
+                if(d.running){ dot.className = 'sb-conn-dot ok'; label.textContent = 'Ollama connected'; }
+                else { dot.className = 'sb-conn-dot warn'; label.textContent = 'Ollama offline'; }
+            })
+            .catch(() => { dot.className = 'sb-conn-dot warn'; label.textContent = 'Ollama · unknown'; });
+    })();
     </script>
     {% block extra_scripts %}{% endblock %}
 </body>

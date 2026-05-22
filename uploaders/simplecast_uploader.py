@@ -35,9 +35,11 @@ try:
 except ImportError:
     PlaywrightTimeout = Exception
 
+from core.hosted import is_hosted
 from core.playwright_session import (
     PlaywrightSession,
     SessionConfig,
+    SessionExpiredError,
     emit_phase as _emit,
     url_marker_login_check,
 )
@@ -437,6 +439,7 @@ _SC_SESSION_CONFIG_BASE = SessionConfig(
     login_timeout_env="SIMPLECAST_LOGIN_TIMEOUT",
     chrome_path_env="SIMPLECAST_CHROME_PATH",
     default_timeout_ms=_DEFAULT_TIMEOUT,
+    no_login_recovery=is_hosted(),
 )
 
 
@@ -500,6 +503,7 @@ def upload_episode(entry, elements=None, progress_callback=None) -> dict:
         login_timeout_env=_SC_SESSION_CONFIG_BASE.login_timeout_env,
         chrome_path_env=_SC_SESSION_CONFIG_BASE.chrome_path_env,
         default_timeout_ms=_SC_SESSION_CONFIG_BASE.default_timeout_ms,
+        no_login_recovery=_SC_SESSION_CONFIG_BASE.no_login_recovery,
     )
 
     # ---- Run ----
@@ -575,6 +579,10 @@ def upload_episode(entry, elements=None, progress_callback=None) -> dict:
             _emit(progress_callback, "done")
             return {"success": True, "url": episode_url, "external_id": episode_id}
 
+    except SessionExpiredError:
+        # Hosted mode: let the orchestrator surface the actionable re-Connect
+        # message instead of swallowing it as a generic RuntimeError below.
+        raise
     except PlaywrightTimeout as exc:
         return {"success": False, "error": f"SimpleCast timed out: {exc}"}
     except RuntimeError as exc:

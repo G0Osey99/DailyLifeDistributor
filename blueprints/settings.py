@@ -20,6 +20,20 @@ from flask import (
 )
 
 import core.config as core_config
+from core.hosted import is_hosted
+
+# Canonical secret slots surfaced on the Settings → Secrets panel. Values are
+# never shown; "text" secrets get an overwrite-only input, "managed" secrets are
+# set through their own flow (status + where-to-set only).
+KNOWN_SECRETS = [
+    {"name": "PEXELS_API_KEY", "label": "Pexels API key", "required": False, "kind": "text"},
+    {"name": "UNSPLASH_ACCESS_KEY", "label": "Unsplash access key", "required": False, "kind": "text"},
+    {"name": "youtube.client_secrets", "label": "YouTube client_secrets.json", "required": True, "kind": "managed", "where": "API Credentials → upload client_secrets"},
+    {"name": "youtube.token", "label": "YouTube OAuth token", "required": True, "kind": "managed", "where": "API Credentials → Re-authenticate"},
+    {"name": "playwright.simplecast_session", "label": "SimpleCast session", "required": False, "kind": "managed", "where": "API Credentials → Connect"},
+    {"name": "playwright.vista_social_session", "label": "Vista Social session", "required": False, "kind": "managed", "where": "API Credentials → Connect"},
+    {"name": "playwright.rock_session", "label": "Rock session", "required": False, "kind": "managed", "where": "API Credentials → Connect"},
+]
 from core.config import (
     CONFIG_PATH,
     ENV_PATH,
@@ -202,7 +216,14 @@ def settings():
     config = load_config()
 
     secrets_path = os.path.join(PROJECT_ROOT, "client_secrets.json")
-    client_secrets_found = os.path.isfile(secrets_path)
+    # Check the encrypted store too, not just disk: the upload persists the blob
+    # to the store (which survives redeploys), but the on-disk copy lives on the
+    # ephemeral container fs. Disk-only made it look "lost" after every redeploy
+    # even though the secret was safe — match how sessions report presence.
+    from core import secrets_store as _ss_cs
+    client_secrets_found = (
+        os.path.isfile(secrets_path) or _ss_cs.has_secret("youtube.client_secrets")
+    )
     from core.playwright_session import has_session
     simplecast_session_found = has_session(
         os.path.join(PROJECT_ROOT, "simplecast_session.json")
@@ -221,8 +242,15 @@ def settings():
     # and from `config` above.
     from core import secrets_store
     from core.auth import _HASH_SECRET
-    secret_names = [n for n in secrets_store.list_secret_names()
-                    if n != _HASH_SECRET]
+    known_secrets = [
+        {**spec, "is_set": secrets_store.has_secret(spec["name"])}
+        for spec in KNOWN_SECRETS
+    ]
+    known_names = {spec["name"] for spec in KNOWN_SECRETS}
+    # Anything stored that isn't a known slot (e.g. a manually-added key) —
+    # surface it too so nothing is hidden, with overwrite + clear.
+    extra_secrets = [n for n in secrets_store.list_secret_names()
+                     if n != _HASH_SECRET and n not in known_names]
     return render_template(
         "settings.html",
         config=config,
@@ -231,7 +259,9 @@ def settings():
         vista_social_session_found=vista_social_session_found,
         rock_session_found=rock_session_found,
         youtube_authenticated=_cached_yt_authenticated(),
-        secret_names=secret_names,
+        known_secrets=known_secrets,
+        extra_secrets=extra_secrets,
+        hosted=is_hosted(),
     )
 
 
@@ -270,7 +300,7 @@ def clear_vista_social_session():
 def _run_browser_login(name: str, build_config) -> None:
     """Open a Playwright session for *name*, triggering manual login if needed.
 
-    Used by the per-service Login buttons in Settings: opening the
+    Used by the per-service Login buttons in Settings (local only): opening the
     PlaywrightSession context manager runs `_handle_login` automatically when
     no session file is present (or when the saved session redirects to a
     login page), and the storage_state is persisted on context exit.
@@ -281,9 +311,22 @@ def _run_browser_login(name: str, build_config) -> None:
         pass
 
 
+def _hosted_login_redirect():
+    """On the headless hosted instance, the local-Chrome login can't work —
+    point the user at the streamed Connect panel instead of erroring."""
+    flash(
+        "This is the hosted instance — use the “Connect a browser platform” "
+        "panel in Settings to sign in through the server-hosted browser.",
+        "info",
+    )
+    return redirect(url_for("settings.settings"))
+
+
 @bp.route("/settings/login-simplecast", methods=["POST"])
 def login_simplecast():
     """Open Chrome and walk the user through SimpleCast login."""
+    if is_hosted():
+        return _hosted_login_redirect()
     def _build():
         from dataclasses import replace
         from uploaders.simplecast_uploader import (
@@ -301,6 +344,8 @@ def login_simplecast():
 @bp.route("/settings/login-vista-social", methods=["POST"])
 def login_vista_social():
     """Open Chrome and walk the user through Vista Social login."""
+    if is_hosted():
+        return _hosted_login_redirect()
     def _build():
         from uploaders.vista_social_uploader import _VS_SESSION_CONFIG
         return _VS_SESSION_CONFIG
@@ -315,6 +360,8 @@ def login_vista_social():
 @bp.route("/settings/login-rock", methods=["POST"])
 def login_rock():
     """Open Chrome and walk the user through Rock RMS login."""
+    if is_hosted():
+        return _hosted_login_redirect()
     def _build():
         from uploaders.rock.client import _ROCK_SESSION_CONFIG
         return _ROCK_SESSION_CONFIG
@@ -463,23 +510,17 @@ def whisper_download_status():
 
 @bp.route("/llamafile/status")
 def llamafile_status():
-    """Return llamafile server status."""
-    try:
-        requests.get("http://localhost:8081/v1/models", timeout=5)
-        running = True
-    except (requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout):
-        running = False
-    except Exception as e:
-        # M14: previous code reported running=True on any non-network
-        # exception, which masked real bugs and lied to the user. Fail
-        # closed and log so the Settings page reflects reality.
-        current_app.logger.warning("llamafile status check raised: %s", e)
-        running = False
+    """Return the LLM (title-generation) backend status.
+
+    Checks the *configured* endpoint (LLM_BASE_URL — Ollama on the hosted VPS,
+    a local llamafile elsewhere), not a hardcoded port, so the Settings panel
+    matches /health and reality.
+    """
+    from core.llm_title_gen import is_llamafile_running, LLM_BASE_URL, LLM_MODEL
     return jsonify({
-        "running": running,
-        "model": "llama3.2",
-        "port": 8081
+        "running": bool(is_llamafile_running()),
+        "model": LLM_MODEL,
+        "url": LLM_BASE_URL,
     })
 
 

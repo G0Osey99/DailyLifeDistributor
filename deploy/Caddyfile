@@ -1,0 +1,17 @@
+# Reverse proxy for the Daily Life uploader (container topology — see
+# docker-compose.yml). Cloudflare Tunnel terminates TLS and routes
+# autoalert.pro → http://dld-caddy:80; Caddy serves plain HTTP here.
+#
+# handle blocks give deterministic, mutually-exclusive routing: /vnc-ws* goes
+# to websockify, everything else to Flask. The VNC websocket is intentionally
+# NOT gated here — Caddy's forward_auth breaks the WS upgrade, so the gate lives
+# on the VNC layer (x11vnc requires a per-session password the auth-gated app
+# hands to noVNC). Upstreams are the compose service container names.
+:80 {
+	handle /vnc-ws* {
+		reverse_proxy dld:6080
+	}
+	handle {
+		reverse_proxy dld:8080
+	}
+}

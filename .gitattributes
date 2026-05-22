@@ -1,0 +1,6 @@
+# Shell scripts and Docker assets must keep LF endings so they run correctly
+# inside Linux containers regardless of the checkout platform (Windows dev box).
+*.sh text eol=lf
+deploy/start.sh text eol=lf
+deploy/Dockerfile text eol=lf
+deploy/Caddyfile text eol=lf

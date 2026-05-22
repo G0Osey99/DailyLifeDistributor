@@ -62,7 +62,7 @@
 <form id="form-vs-login" method="POST" action="{{ url_for('settings.login_vista_social') }}" onsubmit="return confirm('Open Chrome to log in to Vista Social? (may take a moment to launch)');"></form>
 <form id="form-rk-login" method="POST" action="{{ url_for('settings.login_rock') }}" onsubmit="return confirm('Open Chrome to log in to Rock? (may take a moment to launch)');"></form>
 
-<form method="POST" action="{{ url_for('settings.settings') }}" enctype="multipart/form-data">
+<form id="settings-form" method="POST" action="{{ url_for('settings.settings') }}" enctype="multipart/form-data">
 
 <!-- 🔑 API Credentials -->
 <div class="settings-section">
@@ -111,10 +111,13 @@
             {% endif %}
             <div class="hint">SimpleCast uses Playwright browser automation; sign in once and the session persists in <code>simplecast_session.json</code>.</div>
             <div class="inline-actions" style="margin-top:6px;">
-                {% if not simplecast_session_found %}
-                <button type="submit" form="form-sc-login" class="btn btn-sm btn-primary">Log in</button>
-                {% else %}
+                {% if hosted %}
+                <button type="button" class="btn btn-sm btn-primary rl-connect" data-service="simplecast">{% if simplecast_session_found %}Reconnect{% else %}Connect{% endif %}</button>
+                {% endif %}
+                {% if simplecast_session_found %}
                 <button type="submit" form="form-sc-clear" class="btn btn-sm btn-warn">Clear saved session</button>
+                {% elif not hosted %}
+                <button type="submit" form="form-sc-login" class="btn btn-sm btn-primary">Log in</button>
                 {% endif %}
             </div>
         </div>
@@ -127,10 +130,13 @@
             {% endif %}
             <div class="hint">Vista Social uses Playwright browser automation; sign in once and the session persists in <code>vista_social_session.json</code>.</div>
             <div class="inline-actions" style="margin-top:6px;">
-                {% if not vista_social_session_found %}
-                <button type="submit" form="form-vs-login" class="btn btn-sm btn-primary">Log in</button>
-                {% else %}
+                {% if hosted %}
+                <button type="button" class="btn btn-sm btn-primary rl-connect" data-service="vista_social">{% if vista_social_session_found %}Reconnect{% else %}Connect{% endif %}</button>
+                {% endif %}
+                {% if vista_social_session_found %}
                 <button type="submit" form="form-vs-clear" class="btn btn-sm btn-warn">Clear saved session</button>
+                {% elif not hosted %}
+                <button type="submit" form="form-vs-login" class="btn btn-sm btn-primary">Log in</button>
                 {% endif %}
             </div>
         </div>
@@ -143,13 +149,33 @@
             {% endif %}
             <div class="hint">Rock RMS uses Playwright browser automation; sign in once and the session persists in <code>rock_session.json</code>.</div>
             <div class="inline-actions" style="margin-top:6px;">
-                {% if not rock_session_found %}
-                <button type="submit" form="form-rk-login" class="btn btn-sm btn-primary">Log in</button>
-                {% else %}
+                {% if hosted %}
+                <button type="button" class="btn btn-sm btn-primary rl-connect" data-service="rock">{% if rock_session_found %}Reconnect{% else %}Connect{% endif %}</button>
+                {% endif %}
+                {% if rock_session_found %}
                 <button type="submit" form="form-rk-clear" class="btn btn-sm btn-warn">Clear saved session</button>
+                {% elif not hosted %}
+                <button type="submit" form="form-rk-login" class="btn btn-sm btn-primary">Log in</button>
                 {% endif %}
             </div>
         </div>
+        {% if hosted %}
+        <!-- Streamed login browser (noVNC). Revealed when a Connect is clicked. -->
+        <div id="rl-panel" class="form-group" hidden>
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap;">
+                <strong id="rl-service-label"></strong>
+                <span id="rl-phase" class="badge badge-ok"></span>
+                <span id="rl-message" class="text-dim text-sm" style="flex:1; min-width:120px;"></span>
+                <button type="button" id="rl-save" class="btn btn-sm btn-primary">Save session</button>
+                <button type="button" id="rl-cancel" class="btn btn-sm btn-warn">Cancel</button>
+            </div>
+            <p class="hint" style="margin-bottom:8px;">Log in inside this window (including 2FA), then click
+                <strong>Save session</strong>. The browser runs on the server; nothing is installed locally.</p>
+            <iframe id="rl-screen" title="Remote login browser"
+                    allow="clipboard-read; clipboard-write"
+                    style="width:100%; height:600px; border:1px solid var(--color-border); border-radius:var(--radius-lg); background:#000;"></iframe>
+        </div>
+        {% endif %}
     </div>
 </div>
 </div>
@@ -346,15 +372,16 @@
         <span class="sec-chevron">▼</span>
     </div>
     <div class="section-card-body" data-body="llm">
-        <div class="llamafile-box stopped" id="llamafile-status-box">Checking llamafile status...</div>
+        <div class="llamafile-box stopped" id="llamafile-status-box">Checking status…</div>
         <div class="form-row">
             <div class="form-group">
                 <label for="llm_num_titles">Number of suggestions</label>
                 <input type="number" id="llm_num_titles" name="llm_num_titles" min="1" max="10" value="{{ config.get('llm', {}).get('num_title_suggestions', 5) }}">
             </div>
             <div class="form-group">
-                <label>Model file</label>
-                <input type="text" readonly value="ollama_models/llama3.2.gguf" class="input-mono" style="opacity:.6;">
+                <label>Model</label>
+                <input type="text" readonly value="{{ config.get('llm', {}).get('model', 'llama3.2') }}" class="input-mono" style="opacity:.6;">
+                <div class="hint">Served by Ollama; set via <code>LLM_MODEL</code> / <code>LLM_BASE_URL</code>.</div>
             </div>
         </div>
         <button type="button" class="btn btn-sm btn-secondary" onclick="checkLlamafileStatus()">🔄 Check Status</button>
@@ -389,10 +416,6 @@
 </div>
 </div>
 
-<div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
-    <button type="submit" class="btn btn-primary">💾 Save Settings</button>
-    <a href="{{ url_for('scan.index') }}" class="btn btn-ghost">← Back to Home</a>
-</div>
 </form>
 
 <!-- 🔐 Secrets -->
@@ -405,13 +428,35 @@
         <span class="sec-chevron">▼</span>
     </div>
     <div class="section-card-body" data-body="secrets">
-        <p class="hint">Status only — stored values are never shown.</p>
-        {% if secret_names %}
+        <p class="hint">Stored values are never shown. Secrets can only be <strong>overwritten</strong> — never viewed or edited in place.</p>
         <table class="mapping-table">
             <tbody>
-                {% for name in secret_names %}
+                {% for s in known_secrets %}
                 <tr>
-                    <td>{{ name }}</td>
+                    <td>
+                        <div>{{ s.label }}</div>
+                        <div class="text-dim text-xs mono">{{ s.name }}</div>
+                    </td>
+                    <td>{% if s.required %}<span class="badge badge-warn">required</span>{% else %}<span class="badge badge-miss">optional</span>{% endif %}</td>
+                    <td>{% if s.is_set %}<span class="badge badge-ok">set</span>{% else %}<span class="badge badge-miss">not set</span>{% endif %}</td>
+                    <td>
+                        {% if s.kind == 'text' %}
+                        <form method="POST" action="{{ url_for('settings.set_secret_route') }}" style="display:flex; gap:6px; align-items:center;">
+                            <input type="hidden" name="name" value="{{ s.name }}">
+                            <input type="password" name="value" autocomplete="new-password" style="max-width:220px;"
+                                   placeholder="{% if s.is_set %}New value to overwrite{% else %}Enter value{% endif %}">
+                            <button type="submit" class="btn btn-sm btn-primary">{% if s.is_set %}Overwrite{% else %}Save{% endif %}</button>
+                        </form>
+                        {% else %}
+                        <span class="text-dim text-sm">Set via {{ s.where }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% for name in extra_secrets %}
+                <tr>
+                    <td><div class="mono text-sm">{{ name }}</div><div class="text-dim text-xs">custom</div></td>
+                    <td><span class="badge badge-miss">optional</span></td>
                     <td><span class="badge badge-ok">set</span></td>
                     <td>
                         <form method="POST" action="{{ url_for('settings.clear_secret_route') }}" style="display:inline" onsubmit="return confirm('Clear secret {{ name }}?');">
@@ -423,23 +468,23 @@
                 {% endfor %}
             </tbody>
         </table>
-        {% else %}
-        <p class="text-dim text-sm">No secrets stored yet.</p>
-        {% endif %}
 
-        <form method="POST" action="{{ url_for('settings.set_secret_route') }}" style="margin-top:12px;">
-            <div class="form-row">
-                <div class="form-group">
-                    <label>Secret name</label>
-                    <input name="name" placeholder="e.g. PEXELS_API_KEY" autocomplete="off">
+        <details style="margin-top:14px;">
+            <summary class="text-sm text-dim" style="cursor:pointer;">Add a custom secret</summary>
+            <form method="POST" action="{{ url_for('settings.set_secret_route') }}" style="margin-top:10px;">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Secret name</label>
+                        <input name="name" placeholder="e.g. SOME_API_KEY" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Value</label>
+                        <input name="value" type="password" placeholder="Value" autocomplete="new-password">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Value</label>
-                    <input name="value" type="password" placeholder="Value" autocomplete="new-password">
-                </div>
-            </div>
-            <button type="submit" class="btn btn-sm btn-primary">Save secret</button>
-        </form>
+                <button type="submit" class="btn btn-sm btn-primary">Save secret</button>
+            </form>
+        </details>
     </div>
 </div>
 </div>
@@ -467,6 +512,12 @@
         </form>
     </div>
 </div>
+</div>
+
+<!-- Save the main settings form (which is closed above; submit it via form=) -->
+<div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
+    <button type="submit" form="settings-form" class="btn btn-primary">💾 Save Settings</button>
+    <a href="{{ url_for('scan.index') }}" class="btn btn-ghost">← Back to Home</a>
 </div>
 
 {% endblock %}
@@ -539,12 +590,12 @@ document.addEventListener('click',e=>{
     if(!e.target.closest('.settings-browse-panel')&&!e.target.closest('.btn'))document.querySelectorAll('.settings-browse-panel').forEach(p=>p.style.display='none');
 });
 
-// llamafile
+// AI title-generation backend (Ollama / any OpenAI-compatible endpoint)
 async function checkLlamafileStatus(){
-    const box=document.getElementById('llamafile-status-box');box.textContent='Checking...';
+    const box=document.getElementById('llamafile-status-box');box.textContent='Checking…';
     try{const r=await fetch('/llamafile/status');const d=await r.json();
-    if(d.running){box.className='llamafile-box running';box.textContent=`✓ Running on port ${d.port}`;}
-    else{box.className='llamafile-box stopped';box.textContent='✗ Not running — starts on launch';}
+    if(d.running){box.className='llamafile-box running';box.textContent=`✓ Running — ${d.model} @ ${d.url}`;}
+    else{box.className='llamafile-box stopped';box.textContent=`✗ Not reachable at ${d.url||'the configured LLM endpoint'}`;}
     }catch(e){box.className='llamafile-box stopped';box.textContent='✗ Could not check status';}
 }
 
@@ -634,6 +685,107 @@ document.addEventListener('DOMContentLoaded',()=>{
     checkLlamafileStatus();loadYouTubeQuotaStatus();
     const xl=document.getElementById('sharepoint_docx').value;if(xl)onExcelPathChange();
     ['dir_base','dir_youtube_video','dir_youtube_shorts','dir_podcast','dir_thumbnails','dir_email_thumbnails'].forEach(f=>{const i=document.getElementById(f);if(i&&i.value.trim())validateSettingsPath(f);});
+    initRemoteLogin();
 });
+
+// ── Remote-login (hosted browser) control ───────────────────────────────
+// The browser's display is streamed via the vendored noVNC client, pointed at
+// the reverse-proxy VNC websocket path (Caddy's /vnc-ws route → websockify).
+const RL_VNC_PATH = 'vnc-ws';   // Caddy routes /vnc-ws* → websockify
+let rlPoll = null;
+let rlVncPassword = '';          // gates the VNC stream; supplied by /status
+
+function rlSetScreen(connect){
+    const f = document.getElementById('rl-screen');
+    if(connect){
+        let url = `/static/novnc/vnc_lite.html?path=${encodeURIComponent(RL_VNC_PATH)}&autoconnect=true&resize=scale`;
+        if(rlVncPassword){ url += `&password=${encodeURIComponent(rlVncPassword)}`; }
+        f.src = url;
+    } else {
+        f.removeAttribute('src');
+        f.src = 'about:blank';
+    }
+}
+
+function rlRender(st){
+    if(st.vnc_password){ rlVncPassword = st.vnc_password; }
+    document.getElementById('rl-phase').textContent = st.phase || 'idle';
+    document.getElementById('rl-message').textContent = st.message || '';
+    document.getElementById('rl-service-label').textContent = st.service ? st.service : '';
+    const panel = document.getElementById('rl-panel');
+    if(st.active){
+        panel.hidden = false;
+    } else {
+        // Not active: stop streaming and hide the panel. Idempotent — the
+        // save handler owns the "just saved" toast/reload so a stale 'done'
+        // status on page load can't trigger a reload loop. 'error' stays
+        // visible so the message remains readable.
+        rlSetScreen(false);
+        if(rlPoll){ clearInterval(rlPoll); rlPoll = null; }
+        if(st.phase !== 'error'){ panel.hidden = true; }
+    }
+}
+
+async function rlStatus(){
+    try{
+        const r = await fetch('/remote-login/status', {headers:{'Accept':'application/json'}});
+        if(r.ok){ rlRender(await r.json()); }
+    }catch(e){ /* transient — keep polling */ }
+}
+
+function rlStartPolling(){
+    if(rlPoll) clearInterval(rlPoll);
+    rlPoll = setInterval(rlStatus, 2000);
+}
+
+function initRemoteLogin(){
+    // Panel only renders on the hosted instance; bail out cleanly otherwise.
+    if(!document.getElementById('rl-panel')) return;
+    document.querySelectorAll('.rl-connect').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+            const service = btn.dataset.service;
+            const body = new URLSearchParams({service});
+            const r = await fetch('/remote-login/start', {method:'POST', body});
+            const d = await r.json().catch(()=>({}));
+            if(r.status === 409){
+                // A login is already in progress — re-attach to its live stream.
+                await rlStatus();
+                rlSetScreen(true);
+                rlStartPolling();
+                return;
+            }
+            if(!r.ok || !d.ok){
+                alert((d && d.error) ? d.error : 'Could not start remote login.');
+                return;
+            }
+            rlRender(d.status);
+            rlSetScreen(true);
+            rlStartPolling();
+        });
+    });
+    const save = document.getElementById('rl-save');
+    if(save) save.addEventListener('click', async ()=>{
+        save.disabled = true;
+        const r = await fetch('/remote-login/save', {method:'POST'});
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok || !d.ok){
+            save.disabled = false;
+            alert((d && d.error) ? d.error : 'Save failed.');
+            return;
+        }
+        rlRender(d.status);              // stops streaming + hides the panel
+        if(typeof showToast === 'function'){ showToast('Session saved.', 'success'); }
+        // Reload so the platform row reflects the newly-cached session.
+        setTimeout(()=>location.reload(), 1000);
+    });
+    const cancel = document.getElementById('rl-cancel');
+    if(cancel) cancel.addEventListener('click', async ()=>{
+        const r = await fetch('/remote-login/cancel', {method:'POST'});
+        const d = await r.json().catch(()=>({}));
+        rlRender(d.status || {active:false, phase:'idle'});
+    });
+    // Resume display if a login is already in progress (e.g. page reload).
+    rlStatus();
+}
 </script>
 {% endblock %}

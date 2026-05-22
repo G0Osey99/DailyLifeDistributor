@@ -1,0 +1,79 @@
+# Full hosted stack for the Daily Life uploader (autoalert.pro).
+#
+#   Cloudflare Tunnel (TLS at the edge) ─▶ caddy ─▶ app (Flask 8080)
+#                                                 └▶ app websockify (6080) ─▶ x11vnc
+#   ollama ──▶ LLM title suggestions
+#
+# x11vnc itself is started per-login-session by the app (core/vnc.py), so it's
+# not a service here. Cloudflare's public-hostname route (autoalert.pro →
+# http://dld-caddy:80) is configured in the Zero-Trust dashboard, keyed to the
+# tunnel TUNNEL_TOKEN below.
+#
+# Secrets live in deploy/.env (NOT committed — see .env.example). Bring up with:
+#   cd deploy && docker compose up -d --build
+name: dld
+
+services:
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: "0.0.0.0:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    networks: [dld-net]
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: dld:latest
+    container_name: dld
+    restart: unless-stopped
+    env_file: .env            # SECRET_ENC_KEY, INITIAL_ADMIN_PASSWORD, ALLOWED_HOSTS
+    environment:
+      HOSTED: "true"
+      DISPLAY: ":99"
+      DLD_STATE_DB: /data/state.db
+      LLM_BASE_URL: http://ollama:11434
+      LLM_MODEL: llama3.2
+    volumes:
+      - dld-data:/data
+    networks: [dld-net]
+    depends_on: [ollama]
+
+  caddy:
+    image: caddy:2
+    container_name: dld-caddy
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    networks: [dld-net]
+    depends_on: [app]
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: dld-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in deploy/.env}
+    networks: [dld-net]
+    depends_on: [caddy]
+
+networks:
+  dld-net:
+    name: dld-net
+
+volumes:
+  # Named to match the volumes created during the initial docker-run rollout so
+  # the encrypted store/sessions (dld-data) and pulled models (ollama-models)
+  # are preserved across the switch to compose.
+  dld-data:
+    name: dld-data
+  ollama-models:
+    name: ollama-models
+  caddy-data:
+    name: dld-caddy-data

@@ -274,6 +274,7 @@ def create_app() -> Flask:
     from blueprints.scan import bp as scan_bp
     from blueprints.settings import bp as settings_bp
     from blueprints.upload import bp as upload_bp
+    from blueprints.remote_login import bp as remote_login_bp
 
     app.register_blueprint(scan_bp)
     app.register_blueprint(review_bp)
@@ -281,6 +282,7 @@ def create_app() -> Flask:
     app.register_blueprint(settings_bp)
     app.register_blueprint(calendar_bp)
     app.register_blueprint(history_bp)
+    app.register_blueprint(remote_login_bp)
 
     return app
 

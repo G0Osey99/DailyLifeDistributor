@@ -93,6 +93,50 @@ def test_batch_run_happy_path_deletes_temp_files(client, monkeypatch):
     assert media._runs[run_id]["bytes_total"] == 0
 
 
+def test_batch_entries_carry_spreadsheet_metadata(client, monkeypatch):
+    """The batch run must upload with the mapped titles, not blanks."""
+    import io
+    import openpyxl
+
+    captured = {}
+
+    def fake_run_batch(**kwargs):
+        captured["entries"] = kwargs["entries_snapshot"]
+        captured["summary"] = kwargs["summary"]
+        return set(kwargs["file_paths"].values())
+
+    monkeypatch.setattr(upload_jobs, "run_batch", fake_run_batch)
+
+    # Upload a sheet mapping Date -> Title and persist the column mapping.
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Plan"
+    ws.append(["Date", "Title"])
+    ws.append(["2025-05-21", "Gratitude Today"])
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    client.post("/media/spreadsheet", data={"file": (buf, "p.xlsx")},
+                content_type="multipart/form-data")
+    client.post("/media/mapping", json={
+        "sheet_name": "Plan", "date_column": "Date", "youtube_title_column": "Title",
+    })
+
+    run_id = _init(client)
+    file_id = _new_file(client, run_id)
+    _complete_file(client, run_id, file_id)
+    resp = client.post("/media/batch/run", json={
+        "run_id": run_id, "dates": ["2025-05-21"], "platforms": ["youtube_video"],
+        "files": {file_id: {"category": "youtube_video", "date": "2025-05-21"}},
+    })
+    assert resp.status_code == 200
+    job_id = resp.get_json()["job_id"]
+    deadline = time.time() + 10
+    while time.time() < deadline and not (upload_jobs.get_job(job_id) or {}).get("done"):
+        time.sleep(0.05)
+
+    entry = captured["entries"]["2025-05-21"]
+    assert entry.youtube_title == "Gratitude Today"   # not blank
+    assert entry.youtube_video_path  # points at the uploaded temp file
+    assert entry.platforms_enabled.get("youtube_video") is True
+
+
 def test_run_finish_releases_lock(client):
     run_id = _init(client)
     # Busy while active.

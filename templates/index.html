@@ -101,8 +101,8 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
                 </div>
                 <div style="min-width:0;">
-                    <div class="picker-row-label">{{ label }}</div>
-                    <input type="file" class="folder-picker" data-category="{{ cat }}" webkitdirectory directory multiple>
+                    <label class="picker-row-label" for="picker-{{ cat }}">{{ label }}</label>
+                    <input id="picker-{{ cat }}" type="file" class="folder-picker" data-category="{{ cat }}" webkitdirectory directory multiple>
                 </div>
                 <div class="picker-count" data-count="{{ cat }}">—</div>
             </div>

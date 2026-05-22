@@ -338,10 +338,10 @@ def batch_run():
             if category and iso:
                 file_paths[(category, iso)] = path
 
-    # Point this run's session entries at the temp files + select the batch's
-    # dates/platforms so get_summary() yields the right rows.
+    # Rebuild this batch's session entries from the cached spreadsheet + the
+    # temp files (titles/descriptions/tags/Rock fields/schedules), then select
+    # the batch's dates/platforms so get_summary() yields the right rows.
     _apply_paths_to_session(file_paths, dates, platforms)
-    session.selected_dates = list(dates)
     summary = [it for it in session.get_summary()
                if it.get("iso_date", it.get("date")) in set(dates)]
     entries_snapshot = dict(session.entries)
@@ -351,40 +351,64 @@ def batch_run():
     upload_jobs.register_job(job_id)
 
     app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
-    threading.Thread(
-        target=_run_batch_worker,
-        args=(job_id, run_id, dates, summary, file_paths, entries_snapshot,
-              session.session_id, app_obj),
-        name=f"media-batch-{run_id[:8]}",
-        daemon=True,
-    ).start()
+    try:
+        threading.Thread(
+            target=_run_batch_worker,
+            args=(job_id, run_id, dates, summary, file_paths, entries_snapshot,
+                  session.session_id, app_obj),
+            name=f"media-batch-{run_id[:8]}",
+            daemon=True,
+        ).start()
+    except Exception as exc:  # noqa: BLE001 — never leave the run lock stuck
+        # The worker (which would have released the lock) never ran; release
+        # here so a failed thread start can't wedge the single-run lock forever.
+        _release_run(run_id)
+        return jsonify({"error": f"Could not start upload worker: {exc}"}), 500
     return jsonify({"job_id": job_id})
 
 
 def _apply_paths_to_session(file_paths, dates, platforms):
-    """Make sure each batch date has a session entry whose path fields point at
-    the temp files and whose platform toggles match the selection."""
-    from core.session_state import ReviewEntry
-    from datetime import datetime
+    """Rebuild this batch's session entries from the cached spreadsheet + temp
+    files so uploads carry the mapped metadata — titles, descriptions, tags,
+    Rock fields, transcript, and the per-platform schedule/element defaults —
+    not blanks. The browser's platform selection for this batch is authoritative.
+    """
+    from core.file_scanner import MediaDateEntry
+
     plat_flags = {k: (k in platforms) for k in (
         "youtube_video", "youtube_shorts", "simplecast", "rock",
         "rock_email", "vista_social",
     )}
-    for iso in dates:
-        entry = session.entries.get(iso)
-        if entry is None:
-            try:
-                display = datetime.strptime(iso, "%Y-%m-%d").strftime("%B %d, %Y")
-            except ValueError:
-                display = iso
-            entry = ReviewEntry(date=iso, display_date=display)
-            session.entries[iso] = entry
-        entry.platforms_enabled.update(plat_flags)
+
+    # Per-date metadata from the cached spreadsheet under the session's mapping.
+    meta_by_date: dict = {}
+    sheet_path = _spreadsheet_path()
+    mapping = flask_session.get("excel_mapping") or {}
+    if os.path.isfile(sheet_path) and mapping.get("date_column"):
+        try:
+            meta_by_date = parse_spreadsheet(sheet_path, mapping)
+        except Exception:  # noqa: BLE001 — a bad sheet shouldn't 500 the run
+            meta_by_date = {}
+
+    # Group this batch's temp files into a media-like object per date.
+    media_by_date: dict = {}
     for (category, iso), path in file_paths.items():
-        entry = session.entries.get(iso)
         field = upload_jobs._CATEGORY_FIELD.get(category)
-        if entry is not None and field:
-            setattr(entry, field, path)
+        if not field:
+            continue
+        m = media_by_date.setdefault(iso, MediaDateEntry(date=iso, display_date=iso))
+        setattr(m, field, path)
+
+    # build_entry() pulls titles/tags/schedules/elements from config + meta.
+    with session._lock:
+        for iso in dates:
+            session.entries[iso] = session.build_entry(
+                iso,
+                media=media_by_date.get(iso),
+                meta=meta_by_date.get(iso, {}),
+                global_platforms=plat_flags,
+            )
+        session.selected_dates = list(dates)
 
 
 @bp.route("/media/run/finish", methods=["POST"])

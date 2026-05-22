@@ -135,6 +135,19 @@ def get_sheet_preview(xlsx_path: str, sheet_name: str, num_rows: int = 5) -> lis
         return []
 
 
+def parse_spreadsheet(xlsx_path: str, mapping: dict) -> dict:
+    """Parse a spreadsheet at an arbitrary path with the given column mapping.
+
+    Entry point for the browser-streaming pipeline: the uploaded/cached
+    spreadsheet lives at ``xlsx_path`` and ``mapping`` is the per-session
+    column mapping (``sheet_name``, ``date_column``, ``*_column`` keys incl.
+    ``transcript_column``). Returns ``{iso_date: metadata_dict}`` where each
+    metadata dict carries ``transcript`` and the other mapped fields.
+    """
+    parser = ExcelParser({"sharepoint_docx": xlsx_path, "excel_mapping": mapping})
+    return parser.get_metadata()
+
+
 class ExcelParser:
     def __init__(self, config: dict):
         self.xlsx_path = config.get("sharepoint_docx", "")  # reusing same key

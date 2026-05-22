@@ -494,27 +494,3 @@ class FileScanner:
 
         entries.sort(key=lambda e: e.date, reverse=True)
         return entries
-
-    @staticmethod
-    def validate_path(path: str) -> dict:
-        """Validate a directory path and return status info.
-
-        Returns: { "exists": bool, "readable": bool, "file_count": int, "sample_files": list[str] }
-        """
-        result = {"exists": False, "readable": False, "file_count": 0, "sample_files": []}
-        if not path:
-            return result
-        if not os.path.exists(path):
-            return result
-        result["exists"] = True
-        try:
-            files = os.listdir(path)
-            result["readable"] = True
-            result["file_count"] = len(files)
-            result["sample_files"] = sorted(files)[:10]
-        except (PermissionError, FileNotFoundError, OSError):
-            # L5: include FileNotFoundError to cover the race where the
-            # directory exists at the os.path.exists() check above but
-            # disappears before listdir() (USB unplug between checks).
-            result["readable"] = False
-        return result

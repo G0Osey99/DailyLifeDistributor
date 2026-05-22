@@ -69,19 +69,6 @@ else
     exit 1
 fi
 
-# ── ffmpeg ──
-if [ -f "$USB_DIR/bin/ffmpeg" ]; then
-    export PATH="$USB_DIR/bin:$PATH"
-    xattr -d com.apple.quarantine "$USB_DIR/bin/ffmpeg" 2>/dev/null
-    echo "✓ Using bundled ffmpeg"
-elif command -v ffmpeg &>/dev/null; then
-    echo "✓ Using system ffmpeg"
-else
-    echo "⚠ ffmpeg not found — transcription will not work"
-    echo "  Download static binary from https://evermeet.cx/ffmpeg/"
-    echo "  Place at: $USB_DIR/bin/ffmpeg"
-fi
-
 # ── llamafile: single universal binary ──
 LLAMAFILE_BIN=""
 if [ -f "$USB_DIR/bin/llamafile" ]; then
@@ -153,7 +140,6 @@ else
 fi
 
 # ── Environment variables ──
-export WHISPER_DOWNLOAD_ROOT="$USB_DIR/bin/whisper_cache"
 export FLASK_APP="app"
 export FLASK_ENV="production"
 export SIMPLECAST_HEADLESS="true"

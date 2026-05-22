@@ -223,7 +223,10 @@
             fd.append("total_chunks", String(total));
             fd.append("data", blob, "chunk");
             const r = await fetch("/media/upload/chunk", { method: "POST", body: fd });
-            if (!r.ok) throw new Error(`chunk ${i} failed (${r.status})`);
+            if (!r.ok) {
+                const data = await r.json().catch(() => ({}));
+                throw new Error(data.error || `chunk ${i} failed (${r.status})`);
+            }
         }
     }
 
@@ -232,8 +235,12 @@
         if (el) el.insertAdjacentHTML("beforeend", html);
     }
 
+    // Resolves to {ok}. ok is false on a stream/connection error or a
+    // batch-level crash (an `error` event with no date/platform). Per-row
+    // errors are logged but don't fail the batch (continue-and-report).
     function consumeStream(jobId) {
         return new Promise((resolve) => {
+            let batchError = false;
             const es = new EventSource(`/upload/stream?job_id=${encodeURIComponent(jobId)}`);
             es.onmessage = (e) => {
                 let d;
@@ -242,14 +249,19 @@
                     logProgress(`<div class="text-sm" style="color:var(--ok)">✓ ${esc(d.date)} — ${esc(d.platform)}</div>`);
                 } else if (d.type === "error") {
                     logProgress(`<div class="text-sm" style="color:var(--err)">✗ ${esc(d.date || "")} — ${esc(d.platform || "")}: ${esc(d.message || "")}</div>`);
+                    if (!d.date && !d.platform) batchError = true;  // batch-level crash
                 } else if (d.type === "skip") {
                     logProgress(`<div class="text-sm text-dim">↷ ${esc(d.date || "")} — ${esc(d.platform || "")} (skipped)</div>`);
                 } else if (d.type === "needs_manual") {
                     logProgress(`<div class="text-sm" style="color:var(--warn)">⚠ ${esc(d.date || "")} — ${esc(d.platform || "")} needs manual action</div>`);
                 }
-                if (d.type === "done") { es.close(); resolve(); }
+                if (d.type === "done") { es.close(); resolve({ ok: !batchError }); }
             };
-            es.onerror = () => { es.close(); resolve(); };
+            es.onerror = () => {
+                es.close();  // close immediately so it can't auto-reconnect
+                logProgress('<div class="text-sm" style="color:var(--err)">⚠ Lost connection to the upload stream.</div>');
+                resolve({ ok: false });
+            };
         });
     }
 
@@ -281,10 +293,13 @@
         });
         if (!res.ok) {
             logProgress(`<div class="text-sm" style="color:var(--err)">Batch failed: ${esc(res.data.error || res.status)}</div>`);
-            return;
+            return { ok: false };
         }
-        await consumeStream(res.data.job_id);
-        batchDates.forEach((d) => completedDates.add(d));
+        const result = await consumeStream(res.data.job_id);
+        // Only mark dates done when the batch actually finished cleanly, so a
+        // re-run retries them (the server's idempotent skip avoids dupes).
+        if (result.ok) batchDates.forEach((d) => completedDates.add(d));
+        return result;
     }
 
     $("#upload-btn")?.addEventListener("click", async () => {
@@ -307,12 +322,20 @@
                 return;
             }
             runId = init.data.run_id;
+            let aborted = false;
             for (let i = 0; i < dates.length; i += BATCH_SIZE) {
                 const batch = dates.slice(i, i + BATCH_SIZE);
                 logProgress(`<div class="text-sm" style="margin-top:8px;font-weight:600;">Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.join(", ")}</div>`);
-                await uploadBatch(runId, batch, platforms);
+                const result = await uploadBatch(runId, batch, platforms);
+                if (!result || !result.ok) {
+                    aborted = true;
+                    logProgress('<div class="text-sm" style="color:var(--err);margin-top:8px;font-weight:600;">Upload stopped — fix the issue above and re-run; finished dates are skipped automatically.</div>');
+                    break;
+                }
             }
-            logProgress('<div class="text-sm" style="color:var(--ok);margin-top:8px;font-weight:600;">All batches complete.</div>');
+            if (!aborted) {
+                logProgress('<div class="text-sm" style="color:var(--ok);margin-top:8px;font-weight:600;">All batches complete.</div>');
+            }
         } catch (err) {
             logProgress(`<div class="text-sm" style="color:var(--err)">Upload error: ${esc(err.message || err)}</div>`);
         } finally {

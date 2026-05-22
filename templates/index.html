@@ -30,6 +30,11 @@
     .mapping-field label { font-size: 11px; font-weight: 600; color: var(--shell-text-dim); text-transform: uppercase; letter-spacing: .04em; }
     .mapping-field select { font-size: 12px; }
     #mapping-section { display: none; }
+    .sheet-preview-label { font-size: 11px; font-weight: 600; color: var(--shell-text-dim); text-transform: uppercase; letter-spacing: .04em; display: block; margin-bottom: 4px; }
+    .sheet-preview { overflow-x: auto; border: 1px solid var(--shell-border, #2a2a2a); border-radius: 6px; max-height: 220px; overflow-y: auto; }
+    .sheet-preview table { border-collapse: collapse; font-size: 11px; width: max-content; min-width: 100%; }
+    .sheet-preview th, .sheet-preview td { border: 1px solid var(--shell-border, #2a2a2a); padding: 4px 8px; text-align: left; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+    .sheet-preview th { position: sticky; top: 0; background: var(--shell-bg-elev, #1c1c1c); font-weight: 600; color: var(--shell-text-dim); }
 
     .platform-toggles { display: flex; gap: 12px; flex-wrap: wrap; }
     .scan-spinner { display: none; }
@@ -110,6 +115,10 @@
                 <div class="mapping-field" style="margin-bottom:12px;">
                     <label for="map-sheet">Sheet</label>
                     <select id="map-sheet"></select>
+                </div>
+                <div id="sheet-preview-wrap" style="display:none; margin-bottom:12px;">
+                    <label class="sheet-preview-label">Sheet preview (first rows)</label>
+                    <div id="sheet-preview" class="sheet-preview"></div>
                 </div>
                 <div class="mapping-grid">
                     {% set _cols = [

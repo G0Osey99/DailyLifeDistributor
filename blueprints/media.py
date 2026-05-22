@@ -24,7 +24,12 @@ from flask import Blueprint, current_app, jsonify, request, session as flask_ses
 
 from core import media_session as ms
 from core import upload_jobs
-from core.excel_parser import get_column_names, get_sheet_names, parse_spreadsheet
+from core.excel_parser import (
+    get_column_names,
+    get_sheet_names,
+    get_sheet_preview,
+    parse_spreadsheet,
+)
 from core.file_scanner import parse_names
 from core.session_state import session
 
@@ -113,12 +118,20 @@ def upload_spreadsheet():
 
 @bp.route("/media/spreadsheet/columns")
 def spreadsheet_columns():
-    """Return the column headers for a sheet in the cached spreadsheet."""
+    """Return the column headers + a short row preview for a sheet.
+
+    The preview (first few rows, keyed by column name) lets the user eyeball
+    which column holds what before mapping — the dropdowns alone don't show
+    any sample data.
+    """
     sheet = request.args.get("sheet", "")
     path = _spreadsheet_path()
     if not sheet or not os.path.isfile(path):
-        return jsonify({"columns": []}), 400
-    return jsonify({"columns": get_column_names(path, sheet)})
+        return jsonify({"columns": [], "preview": []}), 400
+    return jsonify({
+        "columns": get_column_names(path, sheet),
+        "preview": get_sheet_preview(path, sheet),
+    })
 
 
 @bp.route("/media/mapping", methods=["GET", "POST"])

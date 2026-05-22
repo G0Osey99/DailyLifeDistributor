@@ -88,7 +88,32 @@
                 });
                 if (cols.includes(cur)) sel.value = cur;
             });
+            renderSheetPreview(cols, data.preview || []);
         } catch (err) { /* ignore */ }
+    }
+
+    function renderSheetPreview(cols, rows) {
+        const wrap = $("#sheet-preview-wrap");
+        const box = $("#sheet-preview");
+        if (!wrap || !box) return;
+        if (!cols.length || !rows.length) {
+            box.innerHTML = "";
+            wrap.style.display = "none";
+            return;
+        }
+        const esc = (s) => String(s == null ? "" : s)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        let html = "<table><thead><tr>";
+        cols.forEach((c) => { html += `<th>${esc(c)}</th>`; });
+        html += "</tr></thead><tbody>";
+        rows.forEach((row) => {
+            html += "<tr>";
+            cols.forEach((c) => { html += `<td>${esc(row[c])}</td>`; });
+            html += "</tr>";
+        });
+        html += "</tbody></table>";
+        box.innerHTML = html;
+        wrap.style.display = "block";
     }
 
     async function loadExistingMapping() {

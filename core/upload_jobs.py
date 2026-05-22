@@ -162,7 +162,8 @@ def reap_stale_jobs() -> None:
 
 
 # How long the Rock Email row will wait for its YouTube Video sibling to
-# finish before giving up. Generous: a large video upload + processing.
+# finish before giving up. Generous default (a large video upload + processing);
+# overridable via `upload.youtube_wait_timeout_seconds` in config.yaml.
 _YT_WAIT_TIMEOUT_S = 30 * 60
 _YT_POLL_INTERVAL_S = 1.0
 
@@ -173,7 +174,9 @@ def _resolve_youtube_watch_url(iso_date, emit_phase):
     for the date. Returns ("", reason) if it failed/timed out. Reads the
     shared session.upload_results, written by record_result as rows finish.
     """
-    deadline = time.time() + _YT_WAIT_TIMEOUT_S
+    timeout_s = (load_config().get("upload", {}) or {}).get(
+        "youtube_wait_timeout_seconds", _YT_WAIT_TIMEOUT_S)
+    deadline = time.time() + timeout_s
     emit_phase("waiting_for_youtube")
     while time.time() < deadline:
         res = session.upload_results.get(iso_date, {}).get("YouTube Video")

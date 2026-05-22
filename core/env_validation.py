@@ -22,13 +22,45 @@ _OPTIONAL_KEYS: tuple[tuple[str, str], ...] = (
 _NUMERIC_KEYS: tuple[str, ...] = (
     "ROCK_LOGIN_TIMEOUT",
     "SIMPLECAST_LOGIN_TIMEOUT",
+    "VISTA_SOCIAL_LOGIN_TIMEOUT",
+    "MAX_CONTENT_LENGTH_BYTES",
 )
+
+
+def _is_truthy(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes")
 
 
 def validate_env() -> None:
     _warn_missing(_OPTIONAL_KEYS)
     _check_numeric(_NUMERIC_KEYS)
     _check_youtube_secrets()
+    _check_hosted_requirements()
+
+
+def _check_hosted_requirements() -> None:
+    """In a hosted (public) deploy, a few env vars are not optional.
+
+    Without ``FLASK_SECRET_KEY`` the app falls back to a random key that
+    changes on every restart — every session is silently invalidated on each
+    redeploy. That's a tolerable annoyance for local dev but a real defect in
+    production, so fail closed when ``HOSTED`` is set. ``ALLOWED_HOSTS`` backs
+    the DNS-rebind guard; warn loudly if it's missing on a public box.
+    """
+    if not _is_truthy("HOSTED"):
+        return
+    if not (os.environ.get("FLASK_SECRET_KEY") or "").strip():
+        raise RuntimeError(
+            "HOSTED=true but FLASK_SECRET_KEY is not set. A public deploy must "
+            "pin a stable secret key (otherwise sessions reset on every "
+            "restart). Generate one with: python -c \"import secrets; "
+            "print(secrets.token_hex(32))\" and set FLASK_SECRET_KEY."
+        )
+    if not (os.environ.get("ALLOWED_HOSTS") or "").strip():
+        log.warning(
+            "HOSTED=true but ALLOWED_HOSTS is empty; the DNS-rebind / Host-"
+            "spoofing guard is disabled. Set ALLOWED_HOSTS to your public host."
+        )
 
 
 def _warn_missing(keys: Iterable[tuple[str, str]]) -> None:

@@ -31,11 +31,22 @@ upload:
   circuit_breaker:
     failure_threshold: 3
     recovery_timeout_seconds: 120
+  # How long the Rock Email row waits for its YouTube Video sibling's watch URL.
+  youtube_wait_timeout_seconds: 1800
 llm:
   model: llama3.2
   num_title_suggestions: 3
   backend: llamafile
   port: 8081
+  # Sampling + HTTP timeouts for the title-suggestion call.
+  temperature: 0.8
+  max_tokens: 300
+  request_timeout_seconds: 120
+  health_timeout_seconds: 5
+  # Breaker that fails fast when the LLM endpoint is down (see core/llm_title_gen.py).
+  circuit_breaker:
+    failure_threshold: 3
+    recovery_timeout_seconds: 120
 defaults:
   elements:
     yt_video_enabled: true

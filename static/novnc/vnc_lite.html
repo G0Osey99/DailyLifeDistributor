@@ -61,19 +61,31 @@
 
         let rfb;
         let desktopName;
+        let _reconnects = 0;
+        const MAX_RECONNECTS = 30;
 
         // When this function is called we have
         // successfully connected to a server
         function connectedToServer(e) {
+            _reconnects = 0;
             status("Connected to " + desktopName);
+            startKeepAlive();
         }
 
-        // This function is called when we are disconnected
+        // This function is called when we are disconnected. Cloudflare closes
+        // idle proxied WebSockets (~100s) and a static VNC screen sends no
+        // traffic, so reconnect automatically — the remote browser session
+        // persists, so this just re-attaches the view.
         function disconnectedFromServer(e) {
+            stopKeepAlive();
             if (e.detail.clean) {
                 status("Disconnected");
+            } else if (_reconnects < MAX_RECONNECTS) {
+                _reconnects++;
+                status("Reconnecting…");
+                setTimeout(connect, 1200);
             } else {
-                status("Something went wrong, connection is closed");
+                status("Connection lost — reload to retry.");
             }
         }
 
@@ -137,34 +149,51 @@
         // | | | Connect | | |
         // v v v         v v v
 
-        status("Connecting");
-
         // Build the websocket URL used to connect
-        let url;
-        if (window.location.protocol === "https:") {
-            url = 'wss';
-        } else {
-            url = 'ws';
+        function buildUrl() {
+            let url = (window.location.protocol === "https:") ? 'wss' : 'ws';
+            url += '://' + host;
+            if (port) { url += ':' + port; }
+            url += '/' + path;
+            return url;
         }
-        url += '://' + host;
-        if(port) {
-            url += ':' + port;
+
+        // (Re)connect. Called on first load and after an unexpected disconnect.
+        function connect() {
+            status("Connecting");
+            rfb = new RFB(document.getElementById('screen'), buildUrl(),
+                          { credentials: { password: password } });
+            rfb.addEventListener("connect",  connectedToServer);
+            rfb.addEventListener("disconnect", disconnectedFromServer);
+            rfb.addEventListener("credentialsrequired", credentialsAreRequired);
+            rfb.addEventListener("desktopname", updateDesktopName);
+            rfb.viewOnly = readQueryVariable('view_only', false);
+            rfb.scaleViewport = readQueryVariable('scale', false);
         }
-        url += '/' + path;
 
-        // Creating a new RFB object will start a new connection
-        rfb = new RFB(document.getElementById('screen'), url,
-                      { credentials: { password: password } });
+        // ── Keep-alive ─────────────────────────────────────────────────────
+        // Cloudflare closes proxied WebSockets after ~100s of silence; a static
+        // remote screen sends nothing. Nudge a (no-button) cursor move every
+        // 50s so the socket keeps flowing. Tracks the last touch/scroll point
+        // so the nudge doesn't visibly jump the cursor.
+        let _kaTimer = null, _kaTick = 0;
+        let _lastPos = null;   // {x, y} in client coords
+        function startKeepAlive() {
+            stopKeepAlive();
+            _kaTimer = setInterval(() => {
+                const canvas = document.getElementById('screen').querySelector('canvas');
+                if (!canvas) return;
+                const rect = canvas.getBoundingClientRect();
+                const p = _lastPos || { x: rect.left + 3, y: rect.top + 3 };
+                _kaTick = (_kaTick + 1) % 2;   // 1px jitter so noVNC emits the move
+                canvas.dispatchEvent(new MouseEvent('mousemove', {
+                    clientX: p.x + _kaTick, clientY: p.y, bubbles: true,
+                }));
+            }, 50000);
+        }
+        function stopKeepAlive() { if (_kaTimer) { clearInterval(_kaTimer); _kaTimer = null; } }
 
-        // Add listeners to important events from the RFB module
-        rfb.addEventListener("connect",  connectedToServer);
-        rfb.addEventListener("disconnect", disconnectedFromServer);
-        rfb.addEventListener("credentialsrequired", credentialsAreRequired);
-        rfb.addEventListener("desktopname", updateDesktopName);
-
-        // Set parameters that can be changed on an active connection
-        rfb.viewOnly = readQueryVariable('view_only', false);
-        rfb.scaleViewport = readQueryVariable('scale', false);
+        connect();
 
         // ── Seamless clipboard paste (local → remote) ──────────────────────
         // A paste gesture — Ctrl/Cmd+V, right-click → Paste, or a mobile
@@ -222,31 +251,54 @@
         // remote wheel scrolling. Taps (→ click), two-finger drag, long-press
         // (→ right-click) and pinch are left to noVNC untouched. Desktop/mouse
         // never emits these gestures, so it's unaffected.
-        const SCROLL_SENS = 2;   // wheel delta per px of finger travel; tunable
+        const SCROLL_SENS = 2;     // wheel delta per px of finger travel; tunable
+        const WHEEL_STEP = 50;     // == noVNC's WHEEL_STEP (px per discrete step)
         const screenEl = document.getElementById('screen');
-        let _dragLastX = null, _dragLastY = null;
+        let _dragLastX = null, _dragLastY = null;     // last finger position
+        let _accX = 0, _accY = 0, _scrollRAF = null;  // accumulated, un-emitted delta
+
+        // Emit whole wheel steps for the accumulated delta, on each axis,
+        // carrying the remainder forward. noVNC emits at most one step per axis
+        // per wheel event, so we dispatch one event per step rather than a
+        // single large delta (which would be truncated and under-scroll).
+        function flushScroll() {
+            _scrollRAF = null;
+            const canvas = screenEl.querySelector('canvas');
+            if (!canvas) { _accX = _accY = 0; return; }
+            let guard = 0;
+            while ((Math.abs(_accX) >= WHEEL_STEP || Math.abs(_accY) >= WHEEL_STEP) && guard++ < 200) {
+                const dX = Math.abs(_accX) >= WHEEL_STEP ? (_accX > 0 ? WHEEL_STEP : -WHEEL_STEP) : 0;
+                const dY = Math.abs(_accY) >= WHEEL_STEP ? (_accY > 0 ? WHEEL_STEP : -WHEEL_STEP) : 0;
+                canvas.dispatchEvent(new WheelEvent('wheel', {
+                    deltaX: dX, deltaY: dY, deltaMode: 0,
+                    clientX: _dragLastX || 0, clientY: _dragLastY || 0,
+                    bubbles: true, cancelable: true,
+                }));
+                _accX -= dX; _accY -= dY;
+            }
+        }
+
         function handleDragScroll(e) {
             if (!e.detail || e.detail.type !== 'drag') return;   // single-finger drag only
             e.stopImmediatePropagation();                        // suppress noVNC mouse-drag
-            const canvas = screenEl.querySelector('canvas');
-            if (e.type === 'gestureend') { _dragLastX = _dragLastY = null; return; }
-            if (!canvas) return;
+            if (e.type === 'gestureend') {
+                if (_scrollRAF) { cancelAnimationFrame(_scrollRAF); _scrollRAF = null; }
+                flushScroll();
+                _dragLastX = _dragLastY = null;
+                return;
+            }
             if (e.type === 'gesturestart' || _dragLastY === null) {
                 _dragLastX = e.detail.clientX;
                 _dragLastY = e.detail.clientY;
+                _lastPos = { x: e.detail.clientX, y: e.detail.clientY };
                 return;
             }
-            const dx = _dragLastX - e.detail.clientX;   // swipe left → scroll content left
-            const dy = _dragLastY - e.detail.clientY;   // swipe up → scroll content up
+            _accX += (_dragLastX - e.detail.clientX) * SCROLL_SENS;   // swipe left → scroll left
+            _accY += (_dragLastY - e.detail.clientY) * SCROLL_SENS;   // swipe up → scroll up
             _dragLastX = e.detail.clientX;
             _dragLastY = e.detail.clientY;
-            if (dx !== 0 || dy !== 0) {
-                canvas.dispatchEvent(new WheelEvent('wheel', {
-                    deltaX: dx * SCROLL_SENS, deltaY: dy * SCROLL_SENS, deltaMode: 0,
-                    clientX: e.detail.clientX, clientY: e.detail.clientY,
-                    bubbles: true, cancelable: true,
-                }));
-            }
+            _lastPos = { x: e.detail.clientX, y: e.detail.clientY };  // feed keep-alive
+            if (!_scrollRAF) _scrollRAF = requestAnimationFrame(flushScroll);
         }
         screenEl.addEventListener('gesturestart', handleDragScroll, true);
         screenEl.addEventListener('gesturemove', handleDragScroll, true);

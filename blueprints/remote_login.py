@@ -91,6 +91,11 @@ def cancel():
 
 @bp.route("/remote-login/status")
 def status():
+    # The Settings panel polls this every 2s while it's open, which is our only
+    # signal that the operator is still present (the VNC traffic never touches
+    # the app). Treat a poll as activity so an actively-watched session isn't
+    # reaped; the idle reaper only fires once polling stops (tab closed).
+    manager.touch()
     manager.poll_timeout()
     return jsonify(_status_dict())
 

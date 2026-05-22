@@ -31,8 +31,8 @@ def main() -> None:
         page = sess.page
         try:
             page.wait_for_load_state("networkidle", timeout=30_000)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — networkidle may never fire
+            print(f"(networkidle wait timed out, continuing: {e})")
         page.wait_for_selector("[data-date]", timeout=20_000)
         events = _capture_events_in_window(page, start, end)
 

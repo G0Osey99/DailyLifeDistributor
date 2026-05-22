@@ -8,12 +8,15 @@ marshal commands to it. For unit-testing, the browser is created by an injected
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 from core.playwright_session import SessionConfig, _persist_session_blob
+
+_log = logging.getLogger(__name__)
 
 
 class RemoteLoginError(RuntimeError):
@@ -130,8 +133,8 @@ class RemoteLoginManager:
         if self._browser is not None:
             try:
                 self._browser.close()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 — teardown is best-effort
+                _log.debug("remote-login browser close failed: %s", e)
         self._browser = None
         self._service = None
         self._config = None
@@ -141,5 +144,5 @@ class RemoteLoginManager:
         if had_browser and self._on_teardown is not None:
             try:
                 self._on_teardown()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 — teardown hook is best-effort
+                _log.debug("remote-login teardown hook failed: %s", e)

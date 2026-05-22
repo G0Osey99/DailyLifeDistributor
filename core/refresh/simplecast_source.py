@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import date, datetime
@@ -18,6 +19,8 @@ from core.playwright_session import (
     SessionConfig,
     url_marker_login_check,
 )
+
+_log = logging.getLogger(__name__)
 
 NAME = "simplecast"
 PLATFORMS = ["simplecast"]
@@ -97,8 +100,8 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
         # to settle before scanning the DOM.
         try:
             page.wait_for_load_state("networkidle", timeout=30_000)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — networkidle may never fire; scan anyway
+            _log.debug("simplecast: networkidle wait timed out, proceeding: %s", e)
 
         try:
             page.wait_for_selector("a[href*='/episodes/']", timeout=15_000)

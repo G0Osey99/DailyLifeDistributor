@@ -451,8 +451,8 @@ def _resolve_upload_url() -> str:
         cfg_upload_url = (
             load_config().get("simplecast", {}).get("upload_url", "") or ""
         ).strip()
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — fall back to env/default URL
+        logger.debug("simplecast: could not read upload_url from config: %s", e)
     return (
         os.environ.get("SIMPLECAST_UPLOAD_URL", "").strip()
         or cfg_upload_url

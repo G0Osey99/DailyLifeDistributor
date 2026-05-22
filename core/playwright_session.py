@@ -452,8 +452,8 @@ class PlaywrightSession:
                     wait_until="domcontentloaded",
                     timeout=self.config.default_timeout_ms,
                 )
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 — _wait_for_login handles the outcome
+                log.warning("%s: navigation to login URL failed: %s", self.config.name, e)
 
         self._wait_for_login()
 
@@ -502,18 +502,18 @@ class PlaywrightSession:
         try:
             if self.page is not None:
                 self.page.close()
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — best-effort teardown
+            log.debug("%s: page close during relaunch failed: %s", self.config.name, e)
         try:
             if self.context is not None:
                 self.context.close()
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — best-effort teardown
+            log.debug("%s: context close during relaunch failed: %s", self.config.name, e)
         try:
             if self.browser is not None:
                 self.browser.close()
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — best-effort teardown
+            log.debug("%s: browser close during relaunch failed: %s", self.config.name, e)
         self.browser = self._launch(headless=False)
         self.context = self._new_context(with_session=False)
         self.page = self.context.new_page()
@@ -559,8 +559,8 @@ def emit_phase(cb: Optional[Callable[[str], None]], phase: str) -> None:
         return
     try:
         cb(phase)
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — a buggy listener must not abort the upload
+        log.debug("progress callback raised for phase %r: %s", phase, e)
 
 
 def url_marker_login_check(markers: tuple[str, ...]) -> Callable[[str], bool]:

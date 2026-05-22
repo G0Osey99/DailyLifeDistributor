@@ -14,6 +14,7 @@ This module is built up across plan tasks:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -28,6 +29,7 @@ from core.file_scanner import parse_names
 from core.session_state import session
 
 bp = Blueprint("media", __name__)
+_log = logging.getLogger(__name__)
 
 # Spreadsheets are small (planning sheets); keep a tight cap.
 _MAX_SPREADSHEET_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -258,8 +260,8 @@ def _run_batch_worker(job_id, run_id, dates, summary, file_paths,
         if q is not None:
             try:
                 q.put(json.dumps(payload))
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 — a dropped event must not kill the worker
+                _log.debug("media: dropped SSE event for run %s: %s", run_id, e)
 
     consumed: set = set()
     try:

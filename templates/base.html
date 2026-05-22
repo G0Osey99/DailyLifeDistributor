@@ -698,6 +698,18 @@
     <div id="toast-container"></div>
 
     <script>
+    // Project-wide safety net: surface unhandled promise rejections and
+    // uncaught errors instead of failing silently. Logs to the console and
+    // shows a brief toast so a swallowed async failure is at least visible.
+    window.addEventListener('unhandledrejection', (e) => {
+        const reason = (e.reason && e.reason.message) || e.reason || 'unknown error';
+        console.error('Unhandled promise rejection:', e.reason);
+        try { showToast('Unexpected error: ' + reason, 'error'); } catch (_) {}
+    });
+    window.addEventListener('error', (e) => {
+        console.error('Uncaught error:', e.error || e.message);
+    });
+
     function showToast(message, type = 'info', duration = 4000) {
         const container = document.getElementById('toast-container');
         const toast = document.createElement('div');

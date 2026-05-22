@@ -316,8 +316,8 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
         # FullCalendar finish its async hydration before we read the DOM.
         try:
             page.wait_for_load_state("networkidle", timeout=30_000)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — networkidle may never fire; scan anyway
+            logger.debug("vista: networkidle wait timed out, proceeding: %s", e)
 
         # Wait for FullCalendar to render at least one day cell.
         try:

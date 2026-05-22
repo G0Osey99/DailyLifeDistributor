@@ -6,6 +6,7 @@ launcher defaults to the real Playwright one but is swappable for tests.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -16,6 +17,7 @@ from core.hosted import is_hosted
 from core.playwright_session import SessionConfig
 
 bp = Blueprint("remote_login", __name__)
+_log = logging.getLogger(__name__)
 
 
 # Per-service login configs. Reuse each uploader's SessionConfig so login URLs
@@ -134,16 +136,16 @@ def _start_idle_reaper(interval_s: int = 30) -> None:
             time.sleep(interval_s)
             try:
                 manager.poll_timeout()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001 — reaper must keep looping
+                _log.debug("remote-login reaper poll_timeout failed: %s", e)
             # Also sweep abandoned media-upload temp dirs (Task 8): any run
             # dir whose run is no longer active gets removed, bounding disk.
             try:
                 from blueprints.media import active_run_ids
                 from core import media_session as _ms
                 _ms.sweep_orphans(active_run_ids())
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001 — reaper must keep looping
+                _log.debug("media orphan sweep failed: %s", e)
 
     threading.Thread(target=_loop, name="remote-login-reaper", daemon=True).start()
 

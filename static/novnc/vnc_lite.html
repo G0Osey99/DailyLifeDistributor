@@ -224,22 +224,25 @@
         // never emits these gestures, so it's unaffected.
         const SCROLL_SENS = 2;   // wheel delta per px of finger travel; tunable
         const screenEl = document.getElementById('screen');
-        let _dragLastY = null;
+        let _dragLastX = null, _dragLastY = null;
         function handleDragScroll(e) {
             if (!e.detail || e.detail.type !== 'drag') return;   // single-finger drag only
             e.stopImmediatePropagation();                        // suppress noVNC mouse-drag
             const canvas = screenEl.querySelector('canvas');
-            if (e.type === 'gestureend') { _dragLastY = null; return; }
+            if (e.type === 'gestureend') { _dragLastX = _dragLastY = null; return; }
             if (!canvas) return;
             if (e.type === 'gesturestart' || _dragLastY === null) {
+                _dragLastX = e.detail.clientX;
                 _dragLastY = e.detail.clientY;
                 return;
             }
+            const dx = _dragLastX - e.detail.clientX;   // swipe left → scroll content left
             const dy = _dragLastY - e.detail.clientY;   // swipe up → scroll content up
+            _dragLastX = e.detail.clientX;
             _dragLastY = e.detail.clientY;
-            if (dy !== 0) {
+            if (dx !== 0 || dy !== 0) {
                 canvas.dispatchEvent(new WheelEvent('wheel', {
-                    deltaY: dy * SCROLL_SENS, deltaMode: 0,
+                    deltaX: dx * SCROLL_SENS, deltaY: dy * SCROLL_SENS, deltaMode: 0,
                     clientX: e.detail.clientX, clientY: e.detail.clientY,
                     bubbles: true, cancelable: true,
                 }));

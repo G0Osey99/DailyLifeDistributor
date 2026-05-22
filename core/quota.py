@@ -42,6 +42,7 @@ QUOTA_COSTS = {
     "refresh_channels_list": 1,
     "refresh_playlist_items_list": 1,
     "refresh_videos_list": 1,
+    "refresh_search_list": 100,  # search.list is 100 units/call (YouTube quota docs)
 }
 def _load_daily_quota() -> int:
     """Read youtube.daily_quota from config.yaml; fall back to Google's default."""

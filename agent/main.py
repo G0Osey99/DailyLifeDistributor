@@ -10,7 +10,7 @@ import logging
 import socket
 import time
 
-from agent import config, pair, scan
+from agent import config, pair, scan, updater
 from agent.transport import AgentConnection
 
 log = logging.getLogger(__name__)
@@ -41,6 +41,10 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
 
 def run(server_url: str) -> None:
     token = _ensure_paired(server_url)
+    try:
+        updater.check_and_apply(server_url)
+    except Exception:
+        log.debug("update check raised; continuing", exc_info=True)
     while True:
         conn = AgentConnection(server_url, token)
         try:

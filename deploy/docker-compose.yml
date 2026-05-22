@@ -47,6 +47,7 @@ services:
       HYBRID_AGENT_ENABLED: "true"
     volumes:
       - dld-data:/data
+      - ~/dld-releases:/data/releases:ro
     networks: [dld-net]
     depends_on: [ollama]
     # Container-level health: poll the app's /health probe (db + LLM + Chrome).

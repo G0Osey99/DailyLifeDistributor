@@ -6,9 +6,10 @@ The blueprint and sockets are only registered when HYBRID_AGENT_ENABLED.
 from __future__ import annotations
 
 import json as _json
+import os
 import secrets
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, abort, jsonify, request, send_file
 
 from blueprints.auth import is_authenticated as _is_authenticated
 from core import devices
@@ -110,3 +111,25 @@ def register_sockets(sock) -> None:
                 RELAY.route_from_browser(_ACCOUNT, msg)
         finally:
             RELAY.unregister_browser(_ACCOUNT, session_id)
+
+
+from core import release_store as _release_store
+
+
+@bp.route("/agent/releases/manifest.json", methods=["GET"])
+def release_manifest():
+    p = _release_store.manifest_path()
+    if not os.path.isfile(p):
+        abort(404)
+    return send_file(p, mimetype="application/json")
+
+
+@bp.route("/agent/releases/<filename>", methods=["GET"])
+def release_binary(filename):
+    p = _release_store.binary_path(filename)
+    if p is None:
+        abort(400)
+    if not os.path.isfile(p):
+        abort(404)
+    return send_file(p, mimetype="application/octet-stream", as_attachment=True,
+                     download_name=filename)

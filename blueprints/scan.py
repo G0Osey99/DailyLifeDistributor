@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from flask import Blueprint, render_template
 
-from core import db as _db
 from core.config import load_config
 from uploaders.youtube_uploader import is_authenticated as yt_is_authenticated
 
@@ -23,5 +22,4 @@ def index():
         "index.html",
         platforms=config.get("platforms", {}),
         youtube_authenticated=yt_is_authenticated(),
-        resume_session=_db.get_latest_in_progress(),
     )

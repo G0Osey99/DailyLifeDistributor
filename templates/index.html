@@ -52,20 +52,6 @@
 {% endblock %}
 
 {% block content %}
-{% if resume_session %}
-<div style="background: var(--info-soft); border: 1px solid color-mix(in oklch, var(--info) 25%, transparent); border-radius: 12px; padding: 14px 18px; margin-bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
-    <div>
-        <div style="font-size:13.5px; font-weight:600; color:var(--info);">Unfinished session detected</div>
-        <div style="font-size:12.5px; color:var(--shell-text-muted);">
-            {{ resume_session.label }} &mdash; last updated {{ resume_session.updated_at[:16].replace('T', ' ') if resume_session.updated_at else '' }}
-        </div>
-    </div>
-    <form method="post" action="{{ url_for('history.resume_session') }}" style="margin:0;">
-        <button type="submit" class="btn btn-primary btn-sm">Resume session</button>
-    </form>
-</div>
-{% endif %}
-
 {% if not youtube_authenticated %}
 <div class="auth-banner">
     <div class="auth-banner-text">

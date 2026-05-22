@@ -316,15 +316,16 @@ def create_app() -> Flask:
 
     from blueprints.calendar import bp as calendar_bp
     from blueprints.history import bp as history_bp
-    from blueprints.review import bp as review_bp
     from blueprints.scan import bp as scan_bp
     from blueprints.settings import bp as settings_bp
+    # upload_bp now exposes only the shared /upload/stream SSE endpoint that the
+    # media pipeline consumes; the legacy /upload + /confirm + /review flow was
+    # removed when the browser-streaming dashboard replaced it.
     from blueprints.upload import bp as upload_bp
     from blueprints.remote_login import bp as remote_login_bp
     from blueprints.media import bp as media_bp
 
     app.register_blueprint(scan_bp)
-    app.register_blueprint(review_bp)
     app.register_blueprint(upload_bp)
     app.register_blueprint(settings_bp)
     app.register_blueprint(calendar_bp)

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run tests
+        env:
+          # The crypto layer fails closed without a master key; tests also set
+          # one per-test, but provide a stable one for any import-time use.
+          SECRET_ENC_KEY: ${{ secrets.SECRET_ENC_KEY || '' }}
+        run: |
+          # Generate a throwaway key if the repo secret isn't configured.
+          if [ -z "$SECRET_ENC_KEY" ]; then
+            export SECRET_ENC_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+          fi
+          # Browser/VNC tests are skipped by default (no display in CI); the
+          # rest of the suite runs. See tests/conftest.py (RUN_BROWSER_TESTS).
+          python -m pytest -q

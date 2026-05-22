@@ -115,6 +115,51 @@ def test_failure_in_one_provider_not_suppressed_by_external_in_another():
     assert len(merged) == 2
 
 
+def test_published_external_beats_scheduled_history_same_id():
+    """Same content: scheduled in history, now published on the platform.
+    The published row wins, collapsed to one item — the day-over-day transition.
+    """
+    h = _hist("youtube_video", "vidX", "2026-05-10", title="sched")
+    h["_status"] = "scheduled"
+    external = [_ext("youtube_video", "vidX", "2026-05-10",
+                     status="published", title="live")]
+    merged = merge_for_window([h], external)
+    assert len(merged) == 1
+    assert merged[0]["source"] == "external"
+    assert merged[0]["title"] == "live"
+
+
+def test_published_history_beats_scheduled_external_same_id():
+    h = _hist("youtube_video", "vidY", "2026-05-10", title="live")
+    h["_status"] = "published"
+    external = [_ext("youtube_video", "vidY", "2026-05-10", status="scheduled")]
+    merged = merge_for_window([h], external)
+    assert len(merged) == 1
+    assert merged[0]["source"] == "upload"
+    assert merged[0]["title"] == "live"
+
+
+def test_scheduled_then_published_keeps_total_count_stable():
+    """Two distinct posts: one already published, one still scheduled. The
+    scheduled one's later 'published' refresh must not add a row — total stays
+    the same, scheduled count drops by one as published rises."""
+    # Day 1: post A published, post B scheduled.
+    day1 = merge_for_window(
+        [],
+        [_ext("simplecast", "A", "2026-05-10", status="published"),
+         _ext("simplecast", "B", "2026-05-11", status="scheduled")],
+    )
+    assert len(day1) == 2
+    # Day 2: B has now published (same id, status flips). Still two items.
+    day2 = merge_for_window(
+        [],
+        [_ext("simplecast", "A", "2026-05-10", status="published"),
+         _ext("simplecast", "B", "2026-05-11", status="published")],
+    )
+    assert len(day2) == 2
+    assert sum(1 for r in day2 if (r.get("_status") or r.get("status")) == "published") == 2
+
+
 def test_status_field_recognized_as_failure_signal():
     """Calendar pre-decorates rows with `_status='failed'` instead of `success`."""
     history = [{

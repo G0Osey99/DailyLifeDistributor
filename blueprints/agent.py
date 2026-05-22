@@ -5,11 +5,22 @@ The blueprint and sockets are only registered when HYBRID_AGENT_ENABLED.
 """
 from __future__ import annotations
 
+import json as _json
+import secrets
+
 from flask import Blueprint, jsonify, request
 
+from blueprints.auth import is_authenticated as _is_authenticated
 from core import devices
+from core import relay as _relay_mod
+from core.devices import touch_device, verify_device_token
 
 bp = Blueprint("agent", __name__)
+
+# Largest control message the relay will forward. Phase 1 only carries tiny
+# JSON envelopes (ping/pong/hello/presence); the cap is defense-in-depth so a
+# misbehaving peer can't buffer/forward an oversized message.
+_MAX_MESSAGE_BYTES = 65_536
 
 
 @bp.route("/agent/pair/new", methods=["POST"])
@@ -46,20 +57,12 @@ def revoke_device(device_id):
 # WebSocket relay handlers (registered via register_sockets, not as blueprint
 # routes, because flask-sock uses a Sock instance bound to the app directly).
 # ---------------------------------------------------------------------------
-import json as _json  # noqa: E402
-
-from flask import session as _session  # noqa: E402
-
-from core import relay as _relay_mod  # noqa: E402
-from core.devices import verify_device_token, touch_device  # noqa: E402
-
 # One process-wide relay shared by all sockets.
 RELAY = _relay_mod.Relay()
 
 # Single shared account for now (shared-password deploy). Future multi-tenant
 # work keys rooms by real account id.
 _ACCOUNT = "default"
-_AUTH_SESSION_KEY = "authenticated"
 
 
 def register_sockets(sock) -> None:
@@ -80,24 +83,29 @@ def register_sockets(sock) -> None:
                 msg = ws.receive()
                 if msg is None:
                     break
+                if len(msg) > _MAX_MESSAGE_BYTES:
+                    break
                 RELAY.route_from_agent(_ACCOUNT, msg)
         finally:
             RELAY.unregister_agent(_ACCOUNT, device_id)
 
     @sock.route("/agent/ws")
     def agent_browser_socket(ws):
-        # Session-authenticated (the global _require_auth lets the upgrade GET
-        # through only for logged-in browsers; double-check here too).
-        if not _session.get(_AUTH_SESSION_KEY):
+        # Session-authenticated. The global _require_auth lets the upgrade GET
+        # through only for logged-in browsers; we re-check here via the shared
+        # is_authenticated() so the auth key can never drift out of sync.
+        if not _is_authenticated():
             ws.send(_json.dumps({"v": 1, "type": "error",
                                  "payload": {"reason": "unauthorized"}}))
             return
-        session_id = _json.dumps(id(ws))  # unique per connection
+        session_id = secrets.token_hex(8)  # unique, unambiguous per connection
         RELAY.register_browser(_ACCOUNT, session_id, ws.send)
         try:
             while True:
                 msg = ws.receive()
                 if msg is None:
+                    break
+                if len(msg) > _MAX_MESSAGE_BYTES:
                     break
                 RELAY.route_from_browser(_ACCOUNT, msg)
         finally:

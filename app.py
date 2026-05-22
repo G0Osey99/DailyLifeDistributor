@@ -181,8 +181,7 @@ def create_app() -> Flask:
 
     # Endpoints reachable without a session: the login routes, the health
     # probe, and static assets. Everything else requires authentication.
-    _PUBLIC_ENDPOINTS = {"auth.login", "auth.login_submit", "_health", "static",
-                         "agent.pair_redeem", "agent_socket"}
+    _PUBLIC_ENDPOINTS = {"auth.login", "auth.login_submit", "_health", "static"}
 
     _ALLOWED_HOSTS = {
         h.strip().lower()
@@ -367,6 +366,11 @@ def create_app() -> Flask:
         app.register_blueprint(agent_bp)
         sock = Sock(app)
         register_sockets(sock)
+        # Public (no-session) agent endpoints: the agent redeems a pairing code
+        # and connects its token-authed socket before it has any session. Gated
+        # with the feature so the exemptions only exist when the feature does.
+        # _require_auth closes over this set, so mutating it here is seen there.
+        _PUBLIC_ENDPOINTS.update({"agent.pair_redeem", "agent_socket"})
 
     # Startup orphan sweep: clear any media-upload temp dirs left behind by a
     # previous process (crash / restart). No run is active yet, so pass empty.

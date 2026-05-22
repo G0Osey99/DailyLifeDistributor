@@ -15,6 +15,7 @@ def test_browser_ping_routed_to_agent():
     browser = _Sink()
     r.register_agent("acct", "dev1", agent)
     r.register_browser("acct", "sess1", browser)
+    assert agent.sent == []  # registering a browser must not message the agent
     r.route_from_browser("acct", '{"v":1,"type":"ping","payload":{"x":1}}')
     assert agent.sent == ['{"v":1,"type":"ping","payload":{"x":1}}']
 

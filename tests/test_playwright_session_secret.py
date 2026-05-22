@@ -4,7 +4,6 @@ import os
 import pytest
 
 from core import playwright_session as ps
-from core import secrets_store
 
 
 @pytest.fixture(autouse=True)

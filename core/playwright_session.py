@@ -31,10 +31,9 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Iterator, Optional
 
 try:

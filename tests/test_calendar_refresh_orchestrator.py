@@ -1,4 +1,3 @@
-import pytest
 
 from core.calendar_refresh import (
     ExternalItem,

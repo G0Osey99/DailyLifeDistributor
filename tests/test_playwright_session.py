@@ -9,7 +9,6 @@ Covers the parts that don't actually require Playwright:
 """
 from __future__ import annotations
 
-import os
 
 import pytest
 

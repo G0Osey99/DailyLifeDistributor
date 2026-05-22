@@ -8,7 +8,6 @@ Split into focused modules:
   - client:      RockBrowserClient (Playwright lifecycle + page actions)
   - orchestrator: upload_daily_experience (the per-date workflow)
 """
-from .constants import _BASE_URL  # re-exported for legacy callers/tests
 from .fields import (
     ItemRef,
     ParentFields,
@@ -24,8 +23,7 @@ from .text import (
     reflection_title,
     email_title,
     compose_email_message,
-    _format_date_for_rock,
-    _extract_item_id,
+    _format_date_for_rock,  # re-exported for tests
 )
 from .client import RockBrowserClient
 from .orchestrator import upload_daily_experience
@@ -47,4 +45,5 @@ __all__ = [
     "reflection_title",
     "email_title",
     "compose_email_message",
+    "_format_date_for_rock",
 ]

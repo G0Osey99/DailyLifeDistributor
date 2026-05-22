@@ -301,75 +301,6 @@ class SessionState:
             elements=self._default_elements(),
         )
 
-    def update_entry(self, date: str, field_name: str, value):
-        """Update a single field on a ReviewEntry.
-
-        Supports dot-notation for elements fields, e.g.
-        "elements.yt_video_thumbnail" maps to entry.elements.yt_video_thumbnail.
-        """
-        with self._lock:
-            return self._update_entry_locked(date, field_name, value)
-
-    def _update_entry_locked(self, date: str, field_name: str, value):
-        if date not in self.entries:
-            return False
-
-        entry = self.entries[date]
-
-        def _persist_and_return_true() -> bool:
-            try:
-                self.save()
-            except Exception as e:
-                # M22: persistence failures are non-fatal for the in-memory
-                # workflow but must not be invisible.
-                _log.warning("session.save (update_entry) failed: %s", e)
-                self.persistence_error = str(e)
-            return True
-
-        # Handle dot-notation for elements fields
-        if field_name.startswith("elements."):
-            attr = field_name[len("elements."):]
-            if hasattr(entry.elements, attr):
-                setattr(entry.elements, attr, bool(value))
-                return _persist_and_return_true()
-            return False
-
-        if field_name == "tags" and isinstance(value, str):
-            value = [t.strip() for t in value.split(",") if t.strip()]
-
-        if field_name == "platforms_enabled" and isinstance(value, dict):
-            entry.platforms_enabled.update(value)
-            return _persist_and_return_true()
-
-        if field_name in (
-            "youtube_schedule_dt",
-            "shorts_schedule_dt",
-            "podcast_schedule_dt",
-            "vista_schedule_dt",
-        ):
-            if isinstance(value, str) and value:
-                try:
-                    tz_name = self._config.get("scheduling", {}).get(
-                        "timezone", "America/New_York"
-                    )
-                    tz = ZoneInfo(tz_name)
-                    dt = datetime.fromisoformat(value)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=tz)
-                    setattr(entry, field_name, dt)
-                    return _persist_and_return_true()
-                except (ValueError, AttributeError):
-                    return False
-            elif value is None:
-                setattr(entry, field_name, None)
-                return _persist_and_return_true()
-
-        if hasattr(entry, field_name):
-            setattr(entry, field_name, value)
-            return _persist_and_return_true()
-
-        return False
-
     def record_result(self, iso_date: str, platform: str, result: dict) -> None:
         """Thread-safe write into upload_results from the upload worker pool.
 
@@ -379,22 +310,6 @@ class SessionState:
         """
         with self._lock:
             self.upload_results.setdefault(iso_date, {})[platform] = result
-
-    def pop_result(self, iso_date: str) -> None:
-        """Thread-safe drop of upload_results for one date (rescan/reinterpret)."""
-        with self._lock:
-            self.upload_results.pop(iso_date, None)
-
-    def update_all_entries(self, field_name: str, value) -> int:
-        """Update a field across ALL entries. Returns count of updated entries."""
-        # Take the lock once for the whole loop so a concurrent reader
-        # never sees a partially-applied bulk edit.
-        with self._lock:
-            count = 0
-            for date in self.selected_dates:
-                if self._update_entry_locked(date, field_name, value):
-                    count += 1
-            return count
 
     def get_summary(self) -> list[dict]:
         """Return a list of summary dicts for the confirm view."""

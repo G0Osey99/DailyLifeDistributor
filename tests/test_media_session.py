@@ -1,6 +1,5 @@
 """Per-session settings + run-state for the browser-streaming pipeline."""
 import os
-import pytest
 from core import media_session as ms
 
 

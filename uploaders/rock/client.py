@@ -28,7 +28,6 @@ from core.hosted import is_hosted
 from core.playwright_session import PlaywrightSession, SessionConfig
 
 from .constants import (
-    _BASE_URL,
     _CHANNEL_GUID_EMAIL,
     _CHANNEL_GUID_PARENT,
     _CHANNEL_GUID_REFLECTION,

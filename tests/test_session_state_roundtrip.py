@@ -9,10 +9,8 @@ the resume flow silently. We exercise:
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 
-import pytest
 
 from core.session_state import ReviewEntry, SessionState, UploadElements, infer_wistia_ref
 

@@ -510,23 +510,17 @@ def whisper_download_status():
 
 @bp.route("/llamafile/status")
 def llamafile_status():
-    """Return llamafile server status."""
-    try:
-        requests.get("http://localhost:8081/v1/models", timeout=5)
-        running = True
-    except (requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout):
-        running = False
-    except Exception as e:
-        # M14: previous code reported running=True on any non-network
-        # exception, which masked real bugs and lied to the user. Fail
-        # closed and log so the Settings page reflects reality.
-        current_app.logger.warning("llamafile status check raised: %s", e)
-        running = False
+    """Return the LLM (title-generation) backend status.
+
+    Checks the *configured* endpoint (LLM_BASE_URL — Ollama on the hosted VPS,
+    a local llamafile elsewhere), not a hardcoded port, so the Settings panel
+    matches /health and reality.
+    """
+    from core.llm_title_gen import is_llamafile_running, LLM_BASE_URL, LLM_MODEL
     return jsonify({
-        "running": running,
-        "model": "llama3.2",
-        "port": 8081
+        "running": bool(is_llamafile_running()),
+        "model": LLM_MODEL,
+        "url": LLM_BASE_URL,
     })
 
 

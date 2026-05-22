@@ -371,15 +371,16 @@
         <span class="sec-chevron">▼</span>
     </div>
     <div class="section-card-body" data-body="llm">
-        <div class="llamafile-box stopped" id="llamafile-status-box">Checking llamafile status...</div>
+        <div class="llamafile-box stopped" id="llamafile-status-box">Checking status…</div>
         <div class="form-row">
             <div class="form-group">
                 <label for="llm_num_titles">Number of suggestions</label>
                 <input type="number" id="llm_num_titles" name="llm_num_titles" min="1" max="10" value="{{ config.get('llm', {}).get('num_title_suggestions', 5) }}">
             </div>
             <div class="form-group">
-                <label>Model file</label>
-                <input type="text" readonly value="ollama_models/llama3.2.gguf" class="input-mono" style="opacity:.6;">
+                <label>Model</label>
+                <input type="text" readonly value="{{ config.get('llm', {}).get('model', 'llama3.2') }}" class="input-mono" style="opacity:.6;">
+                <div class="hint">Served by Ollama; set via <code>LLM_MODEL</code> / <code>LLM_BASE_URL</code>.</div>
             </div>
         </div>
         <button type="button" class="btn btn-sm btn-secondary" onclick="checkLlamafileStatus()">🔄 Check Status</button>
@@ -588,12 +589,12 @@ document.addEventListener('click',e=>{
     if(!e.target.closest('.settings-browse-panel')&&!e.target.closest('.btn'))document.querySelectorAll('.settings-browse-panel').forEach(p=>p.style.display='none');
 });
 
-// llamafile
+// AI title-generation backend (Ollama / any OpenAI-compatible endpoint)
 async function checkLlamafileStatus(){
-    const box=document.getElementById('llamafile-status-box');box.textContent='Checking...';
+    const box=document.getElementById('llamafile-status-box');box.textContent='Checking…';
     try{const r=await fetch('/llamafile/status');const d=await r.json();
-    if(d.running){box.className='llamafile-box running';box.textContent=`✓ Running on port ${d.port}`;}
-    else{box.className='llamafile-box stopped';box.textContent='✗ Not running — starts on launch';}
+    if(d.running){box.className='llamafile-box running';box.textContent=`✓ Running — ${d.model} @ ${d.url}`;}
+    else{box.className='llamafile-box stopped';box.textContent=`✗ Not reachable at ${d.url||'the configured LLM endpoint'}`;}
     }catch(e){box.className='llamafile-box stopped';box.textContent='✗ Could not check status';}
 }
 

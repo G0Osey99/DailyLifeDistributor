@@ -136,6 +136,14 @@ def _start_idle_reaper(interval_s: int = 30) -> None:
                 manager.poll_timeout()
             except Exception:  # noqa: BLE001
                 pass
+            # Also sweep abandoned media-upload temp dirs (Task 8): any run
+            # dir whose run is no longer active gets removed, bounding disk.
+            try:
+                from blueprints.media import active_run_ids
+                from core import media_session as _ms
+                _ms.sweep_orphans(active_run_ids())
+            except Exception:  # noqa: BLE001
+                pass
 
     threading.Thread(target=_loop, name="remote-login-reaper", daemon=True).start()
 

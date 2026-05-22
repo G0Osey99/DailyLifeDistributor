@@ -142,6 +142,122 @@ def reap_stale_jobs() -> None:
             _jobs.pop(jid, None)
 
 
+# How long the Rock Email row will wait for its YouTube Video sibling to
+# finish before giving up. Generous: a large video upload + processing.
+_YT_WAIT_TIMEOUT_S = 30 * 60
+_YT_POLL_INTERVAL_S = 1.0
+
+
+def _resolve_youtube_watch_url(iso_date, emit_phase):
+    """Block until this date's YouTube Video upload result is available, then
+    return (watch_url, error). Only called when a YT Video upload is expected
+    for the date. Returns ("", reason) if it failed/timed out. Reads the
+    shared session.upload_results, written by record_result as rows finish.
+    """
+    deadline = time.time() + _YT_WAIT_TIMEOUT_S
+    emit_phase("waiting_for_youtube")
+    while time.time() < deadline:
+        res = session.upload_results.get(iso_date, {}).get("YouTube Video")
+        if res is not None:
+            if res.get("skipped"):
+                return "", "YouTube Video was skipped for this date."
+            if res.get("success") and res.get("url"):
+                return res["url"], ""
+            return "", (
+                "YouTube Video upload did not succeed for this date "
+                f"({res.get('error') or 'unknown error'}); cannot schedule email."
+            )
+        time.sleep(_YT_POLL_INTERVAL_S)
+    return "", "Timed out waiting for the YouTube Video upload to finish."
+
+
+def _dispatch_upload(platform, entry, elements, emit, effective_row, item,
+                     iso_date, yt_video_expected):
+    """Run the uploader for one (date, platform) item and return its result.
+
+    Shared by the legacy whole-session runner and the per-batch runner so the
+    platform dispatch + progress events live in one place. Emits the same
+    progress / phase_change events both paths always have.
+    """
+    def _yt_progress_cb(percent, bytes_sent, bytes_total, eta_seconds):
+        emit({
+            "type": "upload_progress",
+            "row": effective_row,
+            "date": item["date"],
+            "platform": item["platform"],
+            "percent": percent,
+            "bytes_sent": bytes_sent,
+            "bytes_total": bytes_total,
+            "eta_seconds": eta_seconds,
+        })
+
+    def _yt_event_cb(payload):
+        payload.setdefault("row", effective_row)
+        payload.setdefault("date", item["date"])
+        payload.setdefault("platform", item["platform"])
+        emit(payload)
+
+    def _phase(phase):
+        emit({
+            "type": "phase_change",
+            "row": effective_row,
+            "date": item["date"],
+            "platform": item["platform"],
+            "phase": phase,
+        })
+
+    if platform == "YouTube Video":
+        emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting YouTube video upload..."})
+        return yt_upload_video(entry, is_short=False, elements=elements,
+                               progress_callback=_yt_progress_cb, event_callback=_yt_event_cb)
+    if platform == "YouTube Shorts":
+        emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting YouTube Shorts upload..."})
+        return yt_upload_video(entry, is_short=True, elements=elements,
+                               progress_callback=_yt_progress_cb, event_callback=_yt_event_cb)
+    if platform == "SimpleCast":
+        emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting SimpleCast upload..."})
+        return sc_upload_episode(entry, elements=elements)
+    if platform == "Rock":
+        emit({"type": "progress", "row": effective_row, "percent": 0,
+              "message": "Starting Rock Daily Experience build..."})
+        return rock_upload_de(entry, elements=elements, progress_callback=_phase)
+    if platform == "Rock Email":
+        emit({"type": "progress", "row": effective_row, "percent": 0,
+              "message": "Preparing Daily Life email..."})
+        # Resolve the horizontal YouTube watch link. If a YouTube Video upload
+        # is part of this run for the date, wait for it; otherwise
+        # schedule_email falls back to entry.youtube_watch_url.
+        watch_url = ""
+        if yt_video_expected.get(iso_date):
+            watch_url, yt_err = _resolve_youtube_watch_url(iso_date, _phase)
+            if not watch_url:
+                return {"success": False, "skipped": False, "url": "",
+                        "scheduled_time": "", "error": yt_err}
+        return rock_schedule_email(entry, youtube_watch_url=watch_url,
+                                   elements=elements, progress_callback=_phase)
+    if platform == "Vista Social":
+        emit({"type": "progress", "row": effective_row, "percent": 0,
+              "message": "Starting Vista Social schedule..."})
+        return vs_upload_post(entry, elements=elements, progress_callback=_phase)
+    # H2: unknown platform — surface explicitly instead of silently dropping.
+    return {"success": False, "error": f"Unknown platform {platform!r}"}
+
+
+def _build_yt_video_expected(summary, skip_set):
+    """Which dates have a (non-skipped) YouTube Video upload in this run.
+
+    The Rock Email row for such a date waits for that upload's watch link.
+    Dates without a YouTube Video row fall back to entry.youtube_watch_url.
+    """
+    expected: dict[str, bool] = {}
+    for it in summary:
+        if it.get("platform") == "YouTube Video":
+            rid = f"{it['date']}_YouTube Video"
+            iso = it.get("iso_date", it["date"])
+            expected[iso] = rid not in skip_set
+    return expected
+
+
 def run_upload_job(
     job_id: str,
     skip_set: set,
@@ -179,43 +295,10 @@ def run_upload_job(
         else:
             q.put(msg)
 
-    # Which dates have a YouTube Video upload in *this* run (and not skipped)?
-    # The Rock Email row for such a date waits for that upload's watch link
-    # before it builds — enforcing "emails are scheduled after YouTube videos
-    # within a flow". Dates without a YouTube Video row fall back to a
-    # per-date provided link (entry.youtube_watch_url).
-    yt_video_expected: dict[str, bool] = {}
-    for _it in summary:
-        if _it.get("platform") == "YouTube Video":
-            _rid = f"{_it['date']}_YouTube Video"
-            _iso = _it.get("iso_date", _it["date"])
-            yt_video_expected[_iso] = _rid not in skip_set
-
-    # How long the Rock Email row will wait for its YouTube Video sibling to
-    # finish before giving up. Generous: a large video upload + processing.
-    _YT_WAIT_TIMEOUT_S = 30 * 60
-    _YT_POLL_INTERVAL_S = 1.0
-
-    def _resolve_youtube_watch_url(iso_date, emit_phase):
-        """Block until this date's YouTube Video upload result is available,
-        then return (watch_url, error). Only called when a YT Video upload is
-        expected for the date. Returns ("", reason) if it failed/timed out.
-        """
-        deadline = time.time() + _YT_WAIT_TIMEOUT_S
-        emit_phase("waiting_for_youtube")
-        while time.time() < deadline:
-            res = session.upload_results.get(iso_date, {}).get("YouTube Video")
-            if res is not None:
-                if res.get("skipped"):
-                    return "", "YouTube Video was skipped for this date."
-                if res.get("success") and res.get("url"):
-                    return res["url"], ""
-                return "", (
-                    "YouTube Video upload did not succeed for this date "
-                    f"({res.get('error') or 'unknown error'}); cannot schedule email."
-                )
-            time.sleep(_YT_POLL_INTERVAL_S)
-        return "", "Timed out waiting for the YouTube Video upload to finish."
+    # Which dates have a (non-skipped) YouTube Video upload in this run — the
+    # Rock Email row for such a date waits for that upload's watch link before
+    # it builds ("emails are scheduled after YouTube videos within a flow").
+    yt_video_expected = _build_yt_video_expected(summary, skip_set)
 
     def _upload_one(idx, item):
         """Upload a single platform item. Returns (idx, item, result)."""
@@ -234,100 +317,8 @@ def run_upload_job(
             emit({"type": "error", "row": effective_row, "date": item["date"], "platform": item["platform"], "message": "Entry not found"})
             return idx, item, None
 
-        elements = entry.elements
-
-        def _yt_progress_cb(percent, bytes_sent, bytes_total, eta_seconds, _row=effective_row, _item=item):
-            emit({
-                "type": "upload_progress",
-                "row": _row,
-                "date": _item["date"],
-                "platform": _item["platform"],
-                "percent": percent,
-                "bytes_sent": bytes_sent,
-                "bytes_total": bytes_total,
-                "eta_seconds": eta_seconds,
-            })
-
-        def _yt_event_cb(payload, _row=effective_row, _item=item):
-            payload.setdefault("row", _row)
-            payload.setdefault("date", _item["date"])
-            payload.setdefault("platform", _item["platform"])
-            emit(payload)
-
-        result = None
-        if platform == "YouTube Video":
-            emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting YouTube video upload..."})
-            result = yt_upload_video(entry, is_short=False, elements=elements,
-                                     progress_callback=_yt_progress_cb, event_callback=_yt_event_cb)
-        elif platform == "YouTube Shorts":
-            emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting YouTube Shorts upload..."})
-            result = yt_upload_video(entry, is_short=True, elements=elements,
-                                     progress_callback=_yt_progress_cb, event_callback=_yt_event_cb)
-        elif platform == "SimpleCast":
-            emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting SimpleCast upload..."})
-            result = sc_upload_episode(entry, elements=elements)
-        elif platform == "Rock":
-            emit({"type": "progress", "row": effective_row, "percent": 0,
-                  "message": "Starting Rock Daily Experience build..."})
-
-            def _rock_progress(phase, _row=effective_row, _item=item):
-                emit({
-                    "type": "phase_change",
-                    "row": _row,
-                    "date": _item["date"],
-                    "platform": _item["platform"],
-                    "phase": phase,
-                })
-
-            result = rock_upload_de(entry, elements=elements, progress_callback=_rock_progress)
-        elif platform == "Rock Email":
-            emit({"type": "progress", "row": effective_row, "percent": 0,
-                  "message": "Preparing Daily Life email..."})
-
-            def _email_progress(phase, _row=effective_row, _item=item):
-                emit({
-                    "type": "phase_change",
-                    "row": _row,
-                    "date": _item["date"],
-                    "platform": _item["platform"],
-                    "phase": phase,
-                })
-
-            # Resolve the horizontal YouTube watch link. If a YouTube Video
-            # upload is part of this run for the date, wait for it; otherwise
-            # schedule_email falls back to entry.youtube_watch_url.
-            watch_url = ""
-            if yt_video_expected.get(iso_date):
-                watch_url, yt_err = _resolve_youtube_watch_url(iso_date, _email_progress)
-                if not watch_url:
-                    result = {"success": False, "skipped": False, "url": "",
-                              "scheduled_time": "", "error": yt_err}
-            if result is None:
-                result = rock_schedule_email(
-                    entry,
-                    youtube_watch_url=watch_url,
-                    elements=elements,
-                    progress_callback=_email_progress,
-                )
-        elif platform == "Vista Social":
-            emit({"type": "progress", "row": effective_row, "percent": 0,
-                  "message": "Starting Vista Social schedule..."})
-
-            def _vs_progress(phase, _row=effective_row, _item=item):
-                emit({
-                    "type": "phase_change",
-                    "row": _row,
-                    "date": _item["date"],
-                    "platform": _item["platform"],
-                    "phase": phase,
-                })
-
-            result = vs_upload_post(entry, elements=elements, progress_callback=_vs_progress)
-        else:
-            # H2: unknown platform — surface explicitly instead of silently
-            # dropping the row.
-            result = {"success": False, "error": f"Unknown platform {platform!r}"}
-
+        result = _dispatch_upload(platform, entry, entry.elements, emit,
+                                  effective_row, item, iso_date, yt_video_expected)
         return idx, item, result
 
     # Wrap the entire executor flow in try/finally so that any
@@ -473,3 +464,166 @@ def run_upload_job(
             if existing is not None:
                 existing["done"] = True
                 existing["finished_at"] = time.time()
+
+
+# Maps a media category to the ReviewEntry path field it populates.
+_CATEGORY_FIELD = {
+    "youtube_video": "youtube_video_path",
+    "youtube_shorts": "youtube_shorts_path",
+    "podcast": "podcast_path",
+    "thumbnails": "thumbnail_path",
+    "email_thumbnails": "email_thumbnail_path",
+}
+
+
+def run_batch(
+    dates: list,
+    summary: list,
+    file_paths: dict,
+    session_id: str,
+    emit,
+    entries_snapshot: dict,
+    skip_set: set | None = None,
+    logger=None,
+    config: dict | None = None,
+) -> set:
+    """Run one batch of dates against reassembled temp file paths.
+
+    Streaming-pipeline entry point (Task 7). Differences from run_upload_job:
+      * Points each ReviewEntry's path fields at this batch's temp files
+        (``file_paths`` keyed by ``(category, iso_date)``).
+      * Idempotently skips any ``(date, platform)`` already recorded as a
+        success in ``upload_history`` for this session — re-running a partly
+        completed batch never double-uploads.
+      * Dedupes by physical file so a file shared by two platforms is counted
+        (and later deleted by the caller) exactly once.
+      * Preserves the email-waits-for-YouTube ordering within the batch.
+
+    ``emit`` is the SSE emit callback (reuse the job queue's). Returns the set
+    of distinct physical temp file paths consumed, so the caller can delete
+    each once after the batch finishes.
+    """
+    skip_set = set(skip_set or set())
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    config = config or load_config()
+    max_workers = config.get("upload", {}).get("max_workers", 4)
+
+    # Point entry path fields at this batch's temp files.
+    for (category, iso_date), path in file_paths.items():
+        entry = entries_snapshot.get(iso_date)
+        field = _CATEGORY_FIELD.get(category)
+        if entry is not None and field and path:
+            setattr(entry, field, path)
+
+    # Dedup by physical file: a file shared by two platforms is consumed —
+    # and later deleted — exactly once.
+    distinct_files = {p for p in file_paths.values() if p}
+
+    batch_dates = set(dates)
+    batch_summary = [it for it in summary
+                     if it.get("iso_date", it["date"]) in batch_dates]
+
+    # Idempotent skip: a (date, platform) already recorded success is skipped.
+    for it in batch_summary:
+        iso = it.get("iso_date", it["date"])
+        if _db.has_successful_upload(session_id, iso, it["platform"]):
+            skip_set.add(f"{it['date']}_{it['platform']}")
+
+    yt_video_expected = _build_yt_video_expected(batch_summary, skip_set)
+
+    def emit_safe(payload):
+        try:
+            emit(payload)
+        except Exception:
+            logger.exception("batch emit failed")
+
+    def _upload_one(idx, item):
+        platform = item["platform"]
+        row_id = f"{item['date']}_{platform}"
+        if row_id in skip_set:
+            emit_safe({"type": "skip", "row": idx, "platform": platform, "date": item["date"]})
+            return idx, item, None
+        emit_safe({"type": "start", "row": idx, "platform": platform,
+                   "date": item["date"], "title": item.get("title", "")})
+        iso_date = item.get("iso_date", item["date"])
+        entry = entries_snapshot.get(iso_date)
+        if entry is None:
+            emit_safe({"type": "error", "row": idx, "date": item["date"],
+                       "platform": platform, "message": "Entry not found"})
+            return idx, item, None
+        result = _dispatch_upload(platform, entry, entry.elements, emit_safe,
+                                  idx, item, iso_date, yt_video_expected)
+        return idx, item, result
+
+    future_to_item: dict = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for idx, item in enumerate(batch_summary):
+            try:
+                f = executor.submit(_upload_one, idx, item)
+            except Exception as exc:
+                emit_safe({"type": "error", "row": idx, "date": item["date"],
+                           "platform": item["platform"],
+                           "message": f"Failed to schedule upload: {exc}"})
+                continue
+            future_to_item[f] = (idx, item)
+
+        for future in as_completed(future_to_item):
+            idx, item = future_to_item[future]
+            try:
+                _, _, result = future.result()
+            except SessionExpiredError:
+                emit_safe({"type": "error", "row": idx, "date": item["date"],
+                           "platform": item["platform"],
+                           "message": (f"Session expired for {item['platform']}. Open Settings "
+                                       "and click 'Connect' to re-authenticate, then retry.")})
+                continue
+            except Exception as exc:
+                emit_safe({"type": "error", "row": idx, "date": item["date"],
+                           "platform": item["platform"], "message": str(exc)})
+                continue
+
+            iso_date = item.get("iso_date", item["date"])
+            if result is None:
+                row_id = f"{item['date']}_{item['platform']}"
+                if session_id and row_id in skip_set:
+                    try:
+                        _db.record_upload(
+                            session_id=session_id, iso_date=iso_date,
+                            platform=item["platform"], title=item.get("title", ""),
+                            file_path=item.get("file", ""), success=False, url="",
+                            scheduled_time=item.get("scheduled_time", ""),
+                            error="skipped", external_id=None,
+                        )
+                    except Exception as e:
+                        logger.warning("DB record_upload (skip) failed: %s", e)
+                continue
+
+            session.record_result(iso_date, item["platform"], result)
+            if result.get("skipped"):
+                emit_safe({"type": "skip", "row": idx, "date": item["date"], "platform": item["platform"]})
+            elif result.get("success"):
+                emit_safe({"type": "success", "row": idx, "date": item["date"],
+                           "platform": item["platform"], "url": result.get("url", ""),
+                           "scheduled_time": result.get("scheduled_time", "")})
+            else:
+                ev_type = "needs_manual" if result.get("needs_manual") else "error"
+                emit_safe({"type": ev_type, "row": idx, "date": item["date"],
+                           "platform": item["platform"], "url": result.get("url", ""),
+                           "message": result.get("error") or "Unknown error"})
+
+            if session_id:
+                try:
+                    _db.record_upload(
+                        session_id=session_id, iso_date=iso_date,
+                        platform=item["platform"], title=item.get("title", ""),
+                        file_path=item.get("file", ""), success=bool(result.get("success")),
+                        url=result.get("url", ""), scheduled_time=item.get("scheduled_time", ""),
+                        error=result.get("error", ""), external_id=result.get("external_id"),
+                    )
+                except Exception as e:
+                    logger.warning("DB record_upload failed: %s", e)
+                    emit_safe({"type": "db_error", "row": idx, "date": item["date"],
+                               "platform": item["platform"], "message": f"Persistence failed: {e}"})
+
+    return distinct_files

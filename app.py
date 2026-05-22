@@ -275,6 +275,7 @@ def create_app() -> Flask:
     from blueprints.settings import bp as settings_bp
     from blueprints.upload import bp as upload_bp
     from blueprints.remote_login import bp as remote_login_bp
+    from blueprints.media import bp as media_bp
 
     app.register_blueprint(scan_bp)
     app.register_blueprint(review_bp)
@@ -283,6 +284,17 @@ def create_app() -> Flask:
     app.register_blueprint(calendar_bp)
     app.register_blueprint(history_bp)
     app.register_blueprint(remote_login_bp)
+    app.register_blueprint(media_bp)
+
+    # Startup orphan sweep: clear any media-upload temp dirs left behind by a
+    # previous process (crash / restart). No run is active yet, so pass empty.
+    try:
+        from core import media_session as _media_session
+        removed = _media_session.sweep_orphans(active_run_ids=set())
+        if removed:
+            app.logger.info("media: swept %d orphaned upload temp dir(s)", removed)
+    except Exception:  # noqa: BLE001
+        app.logger.warning("media: startup orphan sweep failed", exc_info=True)
 
     return app
 

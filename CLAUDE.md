@@ -98,8 +98,18 @@ to a `media_sid` minted into the Flask session cookie. **Per process:** a single
 batch's temp files, dedupes by physical file, **idempotently skips** any
 `(date, platform)` already recorded `success` in `upload_history`
 (`db.has_successful_upload`), and preserves the email-waits-for-YouTube ordering.
-Shared `_dispatch_upload` / `_resolve_youtube_watch_url` helpers are reused by
-the legacy whole-session `run_upload_job`.
+Dispatch goes through `_dispatch_upload` / `_resolve_youtube_watch_url`.
+
+**Per-platform circuit breaker** (`core/circuit_breaker.py`) — `_dispatch_upload`
+guards each platform with a name-keyed breaker (`upload:<platform>`). After
+`upload.circuit_breaker.failure_threshold` consecutive **infra** failures
+(`SessionExpiredError`, Playwright `TimeoutError`, network/`OSError`) the
+platform fails fast for the rest of the run instead of relaunching Chrome and
+burning the login timeout on every remaining date — then re-probes after
+`recovery_timeout_seconds`. Per-row data failures (result dict with
+`success: False`, no exception) are neutral and never trip it. The local LLM
+(`core/llm_title_gen.py`) uses the same breaker (`llm:title`) plus one
+transient-retry on the completion POST.
 
 **Disk guarantee** = per-batch delete + run-level `finally` cleanup + an orphan
 sweep (`media_session.sweep_orphans`) wired into `create_app()` startup and the
@@ -197,7 +207,8 @@ Element toggles: `rock_email_enabled`, `rock_email_thumbnail`.
 | `simplecast_session.json` | Saved SimpleCast browser session (cookies + local storage); written by Playwright on first successful login |
 | `state.db` | SQLite database — `sessions` and `upload_history` tables |
 | `core/db.py` | SQLite wrapper used for resume + History page + `has_successful_upload` idempotency |
-| `core/upload_jobs.py` | `run_upload_job` (legacy) + `run_batch` (streaming) parallel runners, SSE events, idempotent skip |
+| `core/upload_jobs.py` | `run_batch` parallel runner, SSE events, idempotent skip, per-platform circuit breaker around `_dispatch_upload` |
+| `core/circuit_breaker.py` | Thread-safe CLOSED/OPEN/HALF_OPEN breaker + name-keyed registry; used by the upload dispatch and the LLM title generator |
 | `uploaders/simplecast_uploader.py` | Playwright-based SimpleCast automation (no REST API) |
 | `uploaders/rock/email.py` | `schedule_email` — Daily Life email content-channel item (the "Rock Email" platform) |
 | `scripts/rock_email_recon.py` | Read-only recon of the email channel's Add form (dumps field ids/selectors) |

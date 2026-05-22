@@ -389,33 +389,6 @@
 </div>
 </div>
 
-<!-- ⚙️ Whisper -->
-<div class="settings-section">
-<div class="section-card">
-    <div class="section-card-header" data-section="whisper">
-        <span class="sec-icon">⚙️</span>
-        <span class="sec-title">Whisper (Transcription)</span>
-        <span class="sec-dot ok"></span>
-        <span class="sec-chevron">▼</span>
-    </div>
-    <div class="section-card-body" data-body="whisper">
-        <div class="form-group">
-            <label for="whisper_model">Model size</label>
-            <select id="whisper_model" name="whisper_model">
-                {% set cw = config.get('whisper', {}).get('model', 'base') %}
-                {% for val, lbl in [('tiny','tiny — fast'),('base','base — recommended'),('small','small — better'),('medium','medium — near human-level')] %}
-                <option value="{{ val }}" {% if val == cw %}selected{% endif %}>{{ lbl }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="inline-actions">
-            <a href="{{ url_for('settings.download_whisper_model') }}" class="btn btn-sm btn-primary">⬇ Download Model</a>
-            <span class="text-sm text-dim">Transcribes the first 30s of video for title generation</span>
-        </div>
-    </div>
-</div>
-</div>
-
 </form>
 
 <!-- 🔐 Secrets -->

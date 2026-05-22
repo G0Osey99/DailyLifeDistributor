@@ -573,7 +573,7 @@ function populateSuggestions(date,target,suggestions,transcriptSource,genBtn){
     if(transcriptSource){
         const badge=document.createElement('span');
         badge.className='transcript-source-badge';
-        badge.textContent=transcriptSource==='excel'?'Transcript: Excel':'Transcript: Whisper';
+        badge.textContent='Transcript: Spreadsheet';
         badge.style.cssText='font-size:0.72em;color:#888;background:rgba(255,255,255,0.07);border-radius:4px;padding:1px 7px;margin-bottom:4px;align-self:flex-start;';
         container.appendChild(badge);
     }

@@ -1,4 +1,4 @@
-"""Settings page, OAuth, llamafile/whisper status, Excel mapping, env-file editing."""
+"""Settings page, OAuth, llamafile status, Excel mapping, env-file editing."""
 from __future__ import annotations
 
 import json
@@ -141,9 +141,6 @@ def settings():
             config["llm"]["num_title_suggestions"] = int(request.form.get("llm_num_titles", 5))
         except (ValueError, TypeError):
             config["llm"]["num_title_suggestions"] = 5
-
-        config.setdefault("whisper", {})
-        config["whisper"]["model"] = request.form.get("whisper_model", "base")
 
         config.setdefault("description_footers", {})
         config["description_footers"]["youtube_video"] = request.form.get("footer_youtube_video", "")
@@ -442,70 +439,6 @@ def youtube_status():
             "note": "Persistent daily counter; resets at midnight Pacific.",
         }
     )
-
-
-# Whisper download status: model_name -> {"status": "running"|"done"|"error", "error": str}
-_whisper_download_status: dict[str, dict] = {}
-_whisper_download_lock = threading.Lock()
-
-
-def _download_whisper_model_worker(model_name: str, cache_dir: str | None) -> None:
-    try:
-        from faster_whisper import WhisperModel
-        if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-        WhisperModel(model_name, device="cpu", compute_type="int8", download_root=cache_dir)
-        with _whisper_download_lock:
-            _whisper_download_status[model_name] = {"status": "done", "error": ""}
-    except Exception as e:
-        with _whisper_download_lock:
-            _whisper_download_status[model_name] = {"status": "error", "error": str(e)}
-
-
-@bp.route("/settings/download-whisper-model")
-def download_whisper_model():
-    """Kick off Whisper model download in the background.
-
-    The medium/large models can take many minutes to fetch; running that
-    inside the request thread caused the browser to time out. Now we
-    return immediately and the user can poll /settings/whisper-status.
-    """
-    try:
-        import faster_whisper  # noqa: F401
-    except ImportError:
-        flash("faster-whisper is not installed. Run: pip install faster-whisper", "danger")
-        return redirect(url_for("settings.settings"))
-
-    config = load_config()
-    model_name = config.get("whisper", {}).get("model", "base")
-    cache_dir = os.environ.get("WHISPER_DOWNLOAD_ROOT", None)
-
-    with _whisper_download_lock:
-        current = _whisper_download_status.get(model_name)
-        if current and current.get("status") == "running":
-            flash(f"Whisper model '{model_name}' is already downloading…", "info")
-            return redirect(url_for("settings.settings"))
-        _whisper_download_status[model_name] = {"status": "running", "error": ""}
-
-    threading.Thread(
-        target=_download_whisper_model_worker,
-        args=(model_name, cache_dir),
-        daemon=True,
-    ).start()
-    flash(
-        f"Whisper model '{model_name}' download started in the background. "
-        "Check the Settings page in a few minutes.",
-        "info",
-    )
-    return redirect(url_for("settings.settings"))
-
-
-@bp.route("/settings/whisper-status")
-def whisper_download_status():
-    """Return current download status for the configured Whisper model."""
-    model_name = load_config().get("whisper", {}).get("model", "base")
-    with _whisper_download_lock:
-        return jsonify({"model": model_name, **(_whisper_download_status.get(model_name) or {"status": "idle", "error": ""})})
 
 
 @bp.route("/llamafile/status")

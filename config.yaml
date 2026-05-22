@@ -36,9 +36,6 @@ llm:
   num_title_suggestions: 3
   backend: llamafile
   port: 8081
-whisper:
-  model: base
-  auto_transcribe: true
 defaults:
   elements:
     yt_video_enabled: true

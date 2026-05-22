@@ -19,7 +19,6 @@ from core import db as _db
 from core.config import is_path_allowed, load_config, resolved_dirs
 from core.file_scanner import FileScanner
 from core.session_state import session
-from core.transcriber import is_whisper_available
 from uploaders.youtube_uploader import is_authenticated as yt_is_authenticated
 
 bp = Blueprint("scan", __name__)
@@ -75,7 +74,6 @@ def index():
         platforms=platforms,
         scheduling=scheduling,
         youtube_authenticated=yt_is_authenticated(),
-        whisper_available=is_whisper_available(),
         resume_session=resume_session_row,
     )
 

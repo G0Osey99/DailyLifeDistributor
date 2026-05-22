@@ -44,7 +44,6 @@ def test_client_secrets_upload_persists_to_store(logged_in_client, tmp_path, mon
         "yt_category_id": "22",
         "llm_model": "llama3.2",
         "llm_num_titles": "5",
-        "whisper_model": "base",
         "dir_base": "",
         "dir_youtube_video": "",
         "dir_youtube_shorts": "",

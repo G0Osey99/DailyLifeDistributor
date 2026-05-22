@@ -37,8 +37,8 @@ _MAX_CHUNK = 95 * 1024 * 1024
 
 # Hard ceiling on total bytes reassembled within one run, independent of the
 # free-space check — bounds disk use on the tight VPS even if df is momentarily
-# generous. ~20 GB matches the streaming design's transient-disk budget.
-_MAX_RUN_BYTES = int(os.environ.get("DLD_MAX_RUN_BYTES", str(20 * 1024 * 1024 * 1024)))
+# generous. Overridable via DLD_MAX_RUN_BYTES.
+_MAX_RUN_BYTES = int(os.environ.get("DLD_MAX_RUN_BYTES", str(40 * 1024 * 1024 * 1024)))
 
 # One upload run at a time across the process. The lock holder is the run_id;
 # `_runs` maps an active run_id to its RunDir + per-file reassembly state.

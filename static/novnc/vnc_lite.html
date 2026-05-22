@@ -165,6 +165,54 @@
         // Set parameters that can be changed on an active connection
         rfb.viewOnly = readQueryVariable('view_only', false);
         rfb.scaleViewport = readQueryVariable('scale', false);
+
+        // ── Seamless clipboard paste (local → remote) ──────────────────────
+        // A paste gesture — Ctrl/Cmd+V, right-click → Paste, or a mobile
+        // long-press → Paste — all fire a browser 'paste' event. We sync the
+        // local clipboard onto the remote VNC clipboard, then issue the remote
+        // paste shortcut. The remote is Linux/Chrome, so paste there is always
+        // Ctrl+V regardless of the local OS. No buttons, works on touch too.
+        let _lastPaste = 0;
+        function remotePaste(text) {
+            if (!text || !rfb) return;
+            if (Date.now() - _lastPaste < 300) return;   // dedupe paste-event vs keydown fallback
+            _lastPaste = Date.now();
+            rfb.clipboardPasteFrom(text);
+            // Let the ClientCutText land (x11vnc takes the X selection) before
+            // the paste keystroke.
+            setTimeout(() => {
+                const CTRL = 0xffe3, V = 0x0076;          // XK_Control_L, XK_v
+                rfb.sendKey(CTRL, "ControlLeft", true);
+                rfb.sendKey(V, "KeyV", true);
+                rfb.sendKey(V, "KeyV", false);
+                rfb.sendKey(CTRL, "ControlLeft", false);
+            }, 80);
+        }
+
+        // Universal hook: fires for Cmd/Ctrl+V, right-click paste, and mobile
+        // paste, with the data available synchronously (no permission prompt).
+        document.addEventListener('paste', (e) => {
+            const cd = e.clipboardData || window.clipboardData;
+            const text = cd ? cd.getData('text') : '';
+            if (text) { e.preventDefault(); e.stopImmediatePropagation(); remotePaste(text); }
+        }, true);
+
+        // Stop noVNC forwarding the raw Ctrl/Cmd+V (which would paste the stale
+        // remote clipboard and double up), and cover browsers that don't emit a
+        // 'paste' event here by reading the clipboard via the async API.
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    setTimeout(() => {
+                        if (Date.now() - _lastPaste > 250) {   // 'paste' event didn't handle it
+                            navigator.clipboard.readText().then(remotePaste).catch(() => {});
+                        }
+                    }, 100);
+                }
+            }
+        }, true);
     </script>
 </head>
 

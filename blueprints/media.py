@@ -35,6 +35,11 @@ _MAX_SPREADSHEET_BYTES = 5 * 1024 * 1024  # 5 MB
 # ~95 MB keeps each chunk POST under Cloudflare's ~100 MB proxied-body cap.
 _MAX_CHUNK = 95 * 1024 * 1024
 
+# Hard ceiling on total bytes reassembled within one run, independent of the
+# free-space check — bounds disk use on the tight VPS even if df is momentarily
+# generous. ~20 GB matches the streaming design's transient-disk budget.
+_MAX_RUN_BYTES = int(os.environ.get("DLD_MAX_RUN_BYTES", str(20 * 1024 * 1024 * 1024)))
+
 # One upload run at a time across the process. The lock holder is the run_id;
 # `_runs` maps an active run_id to its RunDir + per-file reassembly state.
 _run_lock = ms.RunLock()
@@ -148,7 +153,7 @@ def run_init():
         run.cleanup()
         return jsonify({"error": "An upload is already running"}), 409
     with _runs_guard:
-        _runs[run.run_id] = {"dir": run, "files": {}}
+        _runs[run.run_id] = {"dir": run, "files": {}, "bytes_total": 0}
     return jsonify({"run_id": run.run_id})
 
 
@@ -203,8 +208,17 @@ def upload_chunk():
             return jsonify({"ok": True, "duplicate": True})
         return jsonify({"error": "out-of-order chunk"}), 409
 
+    # Disk-fill guards (defense in depth — these endpoints are auth-gated, but
+    # the VPS volume is small). Reject before writing if this chunk would
+    # breach the per-run ceiling or leave too little free space.
+    if rec.get("bytes_total", 0) + len(payload) > _MAX_RUN_BYTES:
+        return jsonify({"error": "Per-run upload size limit exceeded"}), 413
+    if not ms.has_free_space(len(payload)):
+        return jsonify({"error": "Not enough free disk space"}), 507
+
     with open(path, "wb" if chunk_index == 0 else "ab") as fh:
         fh.write(payload)
+    rec["bytes_total"] = rec.get("bytes_total", 0) + len(payload)
     fstate["next"] = chunk_index + 1
     fstate["total"] = total_chunks
     fstate["bytes"] += len(payload)

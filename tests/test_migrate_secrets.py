@@ -25,6 +25,26 @@ def test_imports_token_file(monkeypatch, tmp_path):
     assert secrets_store.get_secret("youtube.token") == '{"refresh_token": "r"}'
 
 
+def test_shreds_plaintext_after_import(monkeypatch, tmp_path):
+    """The plaintext credential file must not survive the import."""
+    monkeypatch.setattr(migrate_secrets, "PROJECT_ROOT", str(tmp_path))
+    token = tmp_path / "token.json"
+    token.write_text('{"refresh_token": "r"}')
+    migrate_secrets.run()
+    assert not token.exists()  # plaintext removed; only the encrypted copy remains
+    assert secrets_store.get_secret("youtube.token") == '{"refresh_token": "r"}'
+
+
+def test_shreds_lingering_plaintext_even_when_already_stored(monkeypatch, tmp_path):
+    """A leftover plaintext copy is removed even on an idempotent re-run."""
+    monkeypatch.setattr(migrate_secrets, "PROJECT_ROOT", str(tmp_path))
+    secrets_store.set_secret("youtube.token", '{"refresh_token": "already"}')
+    token = tmp_path / "token.json"
+    token.write_text('{"refresh_token": "stale-plaintext"}')
+    migrate_secrets.run()
+    assert not token.exists()
+
+
 def test_idempotent(monkeypatch):
     monkeypatch.setenv("PEXELS_API_KEY", "p-key")
     first = migrate_secrets.run()

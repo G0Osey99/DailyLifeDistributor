@@ -115,6 +115,12 @@ def create_app() -> Flask:
             os.environ.get("SESSION_COOKIE_SECURE", "true").lower()
             in ("1", "true", "yes")
         ),
+        # Bound request bodies so a single multipart can't spool unbounded
+        # bytes to disk. The chunk endpoint caps each chunk at 95 MB; allow
+        # headroom for multipart overhead. Overridable for unusual setups.
+        MAX_CONTENT_LENGTH=int(
+            os.environ.get("MAX_CONTENT_LENGTH_BYTES", str(110 * 1024 * 1024))
+        ),
     )
 
     # M25: a corrupt state.db (USB unplug mid-write, stray SIGKILL) used to
@@ -217,6 +223,46 @@ def create_app() -> Flask:
         if origin.startswith(host_url):
             return
         abort(403)
+
+    _hsts_enabled = app.config["SESSION_COOKIE_SECURE"]
+
+    @app.after_request
+    def _security_headers(resp):
+        """Defense-in-depth response headers.
+
+        CSP confines script/connect/frame to same-origin: even if markup were
+        injected, it can't load attacker scripts or exfiltrate to another
+        origin, and the app can't be framed (clickjacking). 'unsafe-inline'
+        is required because the templates use inline <script>/handlers; the
+        same-origin connect/frame/form restrictions are the load-bearing part.
+        The noVNC iframe + its WebSocket are same-origin, so 'self' covers them.
+        """
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        resp.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            # Google Fonts stylesheet + font files are the only third-party
+            # origins the UI uses; everything else stays same-origin.
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'; "
+            "frame-src 'self'; "
+            "frame-ancestors 'self'; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
+            "object-src 'none'",
+        )
+        # Only assert HSTS when we believe we're behind HTTPS, so a plain-http
+        # local/dev run doesn't pin an unreachable https upgrade in the browser.
+        if _hsts_enabled:
+            resp.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return resp
 
     @app.context_processor
     def inject_global_context():

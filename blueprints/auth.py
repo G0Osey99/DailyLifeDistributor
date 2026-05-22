@@ -1,6 +1,7 @@
 """Login/logout routes and the login_required decorator."""
 from __future__ import annotations
 
+import os
 import urllib.parse
 from functools import wraps
 
@@ -13,6 +14,22 @@ from core import auth
 bp = Blueprint("auth", __name__)
 
 _SESSION_KEY = "authenticated"
+
+# When deployed behind the Cloudflare Tunnel, request.remote_addr is the
+# Caddy container — so a remote_addr-keyed lockout would be a single global
+# bucket: any attacker could lock the one shared account for everyone (DoS),
+# and per-attacker isolation is lost. Cloudflare sets CF-Connecting-IP to the
+# real client and strips any client-supplied copy, so it's safe to trust when
+# we know we're behind it (HOSTED). Local/dev (no proxy) uses remote_addr.
+_HOSTED = (os.environ.get("HOSTED", "") or "").lower() in ("1", "true", "yes")
+
+
+def _client_ip() -> str:
+    if _HOSTED:
+        cf = (request.headers.get("CF-Connecting-IP") or "").strip()
+        if cf:
+            return cf
+    return request.remote_addr or "unknown"
 
 
 def _safe_next(nxt: str) -> str:
@@ -52,7 +69,7 @@ def login():
 
 @bp.route("/login", methods=["POST"])
 def login_submit():
-    ip = request.remote_addr or "unknown"
+    ip = _client_ip()
     if auth.is_locked(ip):
         return render_template(
             "login.html",

@@ -62,6 +62,9 @@ class _FakeYouTube:
 @pytest.fixture(autouse=True)
 def _no_quota_writes(monkeypatch):
     monkeypatch.setattr(youtube_source, "track_quota_usage", lambda *a, **k: None)
+    # Never hit the network for the /shorts/ probe in unit tests; default to
+    # "unknown" so classification falls back to the duration heuristic.
+    monkeypatch.setattr(youtube_source, "_probe_shorts", lambda ids: {})
 
 
 def _video(vid, *, privacy, published_at=None, publish_at=None, duration="PT2M0S", title="t"):
@@ -109,6 +112,41 @@ def test_fetch_emits_published_and_scheduled(monkeypatch):
     assert by_id["sched1"].status == "scheduled"
     assert by_id["sched1"].platform == "youtube_shorts"
     assert by_id["sched1"].iso_date == future.date().isoformat()
+
+
+def test_classify_prefers_probe_over_duration():
+    # A 120s video the probe says IS a Short -> youtube_shorts (duration alone
+    # would call it a video). And a 30s clip the probe says is NOT a Short ->
+    # youtube_video (duration alone would call it a Short).
+    assert youtube_source._classify(120, is_short=True) == "youtube_shorts"
+    assert youtube_source._classify(30, is_short=False) == "youtube_video"
+    # Unknown probe -> duration fallback.
+    assert youtube_source._classify(30, is_short=None) == "youtube_shorts"
+    assert youtube_source._classify(120, is_short=None) == "youtube_video"
+
+
+def test_fetch_uses_probe_for_long_short(monkeypatch):
+    """A 150s vertical Short must classify as youtube_shorts via the probe,
+    even though its duration exceeds the legacy 60s threshold."""
+    now = datetime.now(timezone.utc)
+    past = now - timedelta(days=2)
+    videos = {
+        "shortvid": _video("shortvid", privacy="public", published_at=_iso(past),
+                            duration="PT2M30S"),  # 150s
+    }
+    fake = _FakeYouTube(
+        uploads_items=[{"contentDetails": {"videoId": "shortvid", "videoPublishedAt": _iso(past)},
+                        "snippet": {"publishedAt": _iso(past)}}],
+        search_items=[],
+        videos=videos,
+    )
+    monkeypatch.setattr(youtube_source, "_build_client", lambda: fake)
+    monkeypatch.setattr(youtube_source, "_probe_shorts", lambda ids: {"shortvid": True})
+
+    today = date.today()
+    items = youtube_source.fetch(today - timedelta(days=30), today + timedelta(days=180))
+    assert len(items) == 1
+    assert items[0].platform == "youtube_shorts"
 
 
 def test_fetch_filters_outside_window(monkeypatch):

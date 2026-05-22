@@ -74,13 +74,23 @@ class RunLock:
             return self._holder
 
 
+def _is_run_id(name: str) -> bool:
+    """A run id is a uuid4 hex (32 lowercase hex chars). Only these are swept,
+    so sibling state under _TEMP_ROOT (e.g. the per-session spreadsheet cache)
+    is never collaterally deleted."""
+    return len(name) == 32 and all(c in "0123456789abcdef" for c in name)
+
+
 def sweep_orphans(active_run_ids: set[str]) -> int:
-    """Remove any temp run dir not in active_run_ids. Returns count removed."""
+    """Remove any temp *run* dir not in active_run_ids. Returns count removed.
+
+    Scoped to run-id-named directories so the sweep can't wipe other state
+    living under the temp root (the spreadsheet cache, etc.)."""
     removed = 0
     if not os.path.isdir(_TEMP_ROOT):
         return 0
     for name in os.listdir(_TEMP_ROOT):
-        if name in active_run_ids:
+        if name in active_run_ids or not _is_run_id(name):
             continue
         full = os.path.join(_TEMP_ROOT, name)
         if os.path.isdir(full):

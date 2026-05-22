@@ -37,24 +37,55 @@ def _import_kv_from_env(name: str) -> bool:
     return True
 
 
-def _import_blob_from_file(name: str, path: str) -> bool:
-    if secrets_store.has_secret(name):
-        return False
-    if not os.path.exists(path):
-        return False
-    with open(path, "rb") as f:
-        secrets_store.set_blob(name, f.read())
-    return True
+def _shred(path: str) -> None:
+    """Best-effort secure-ish delete of a plaintext secret file.
+
+    Overwrite the contents before unlinking so the bytes aren't trivially
+    recoverable from the same inode, then remove it. Errors are swallowed —
+    failing to delete must never block boot, but we try hard because leaving
+    a plaintext credential (a YouTube refresh token, OAuth client secret, or
+    browser session cookies) next to the app defeats the encrypted store.
+    """
+    try:
+        size = os.path.getsize(path)
+        with open(path, "r+b", buffering=0) as f:
+            f.write(b"\x00" * size)
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError:
+        pass
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
-def _import_kv_from_file(name: str, path: str) -> bool:
-    if secrets_store.has_secret(name):
-        return False
-    if not os.path.exists(path):
-        return False
-    with open(path, "r", encoding="utf-8") as f:
-        secrets_store.set_secret(name, f.read())
-    return True
+def _ensure_blob_and_shred(name: str, path: str) -> bool:
+    """Import a file-backed blob secret if missing, then shred the plaintext.
+
+    Shreds whenever the store holds the secret and a plaintext copy lingers —
+    including idempotent re-runs where the import itself is skipped — so a
+    leftover plaintext credential never survives a boot.
+    """
+    imported = False
+    if not secrets_store.has_secret(name) and os.path.exists(path):
+        with open(path, "rb") as f:
+            secrets_store.set_blob(name, f.read())
+        imported = True
+    if secrets_store.has_secret(name) and os.path.exists(path):
+        _shred(path)
+    return imported
+
+
+def _ensure_kv_and_shred(name: str, path: str) -> bool:
+    imported = False
+    if not secrets_store.has_secret(name) and os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            secrets_store.set_secret(name, f.read())
+        imported = True
+    if secrets_store.has_secret(name) and os.path.exists(path):
+        _shred(path)
+    return imported
 
 
 def run() -> list[str]:
@@ -65,18 +96,18 @@ def run() -> list[str]:
         if _import_kv_from_env(key):
             imported.append(key)
 
-    if _import_blob_from_file(
+    if _ensure_blob_and_shred(
         "youtube.client_secrets", os.path.join(PROJECT_ROOT, "client_secrets.json")
     ):
         imported.append("youtube.client_secrets")
-    if _import_kv_from_file(
+    if _ensure_kv_and_shred(
         "youtube.token", os.path.join(PROJECT_ROOT, "token.json")
     ):
         imported.append("youtube.token")
 
     for fname in _SESSION_FILES:
         base = os.path.splitext(fname)[0]
-        if _import_blob_from_file(
+        if _ensure_blob_and_shred(
             f"playwright.{base}", os.path.join(PROJECT_ROOT, fname)
         ):
             imported.append(f"playwright.{base}")

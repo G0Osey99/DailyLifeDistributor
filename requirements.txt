@@ -12,3 +12,5 @@ requests>=2.32.2,<3
 # name checks). Keep the upper bound so a major bump is a deliberate change.
 cryptography>=43.0.1,<46
 playwright>=1.40.0,<2
+# Server-side WebSocket for the hybrid-agent relay (pulls in simple-websocket).
+flask-sock>=0.7,<1

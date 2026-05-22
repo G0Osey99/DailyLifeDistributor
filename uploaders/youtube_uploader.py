@@ -12,7 +12,7 @@ try:
     import httplib2
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google_auth_oauthlib.flow import Flow, InstalledAppFlow
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
     from googleapiclient.errors import HttpError
@@ -20,6 +20,7 @@ except ImportError:
     httplib2 = None
     Request = None
     Credentials = None
+    Flow = None
     InstalledAppFlow = None
     build = None
     MediaFileUpload = None
@@ -232,6 +233,84 @@ def get_authenticated_service():
             # Sets a process-wide default socket timeout as a backstop.
             socket.setdefaulttimeout(_HTTP_TIMEOUT_SECONDS)
     return build(API_SERVICE_NAME, API_VERSION, credentials=creds, cache_discovery=False)
+
+
+# ---------------------------------------------------------------------------
+# Web (redirect-based) OAuth — used by the hosted deploy.
+#
+# The desktop `run_local_server` flow above opens a browser ON the machine and
+# waits for a redirect to loopback; that's impossible for a remote user on the
+# headless VPS. The web flow instead sends the user's OWN browser to Google's
+# consent screen and Google redirects back to a public callback URL on the app,
+# which exchanges the code for a token. This requires a "Web application" OAuth
+# client whose authorized redirect URIs include the callback.
+# ---------------------------------------------------------------------------
+
+
+def _load_client_config() -> dict:
+    """Return the OAuth client config dict from the encrypted store, falling
+    back to the on-disk client_secrets.json."""
+    from core import secrets_store
+    raw = secrets_store.get_secret(_YT_CLIENT_SECRETS_NAME)
+    if raw:
+        return json.loads(raw)
+    path = _resolve_secrets_path()
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Client secrets file not found: {path}. Download it from Google "
+            "Cloud Console."
+        )
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def build_web_flow(redirect_uri: str, state: str | None = None):
+    """Build a google-auth-oauthlib web `Flow` for redirect-based OAuth.
+
+    Raises a clear error if the configured client is a Desktop ("installed")
+    client, which Google will not let complete a public-redirect sign-in.
+    """
+    if Flow is None:
+        raise ImportError("google-auth-oauthlib is required but not installed")
+    cfg = _load_client_config()
+    if "web" not in cfg:
+        raise RuntimeError(
+            "The uploaded client_secrets.json is a Desktop ('installed') OAuth "
+            "client, which can't complete sign-in on the hosted server. In "
+            "Google Cloud Console create an OAuth client of type 'Web "
+            f"application', add the redirect URI {redirect_uri!r}, download it, "
+            "and upload it under Settings → YouTube Client Secrets."
+        )
+    flow = Flow.from_client_config(cfg, scopes=SCOPES, state=state)
+    flow.redirect_uri = redirect_uri
+    return flow
+
+
+def start_web_authorization(redirect_uri: str) -> tuple[str, str]:
+    """Return (authorization_url, state) to send the user's browser to Google's
+    consent screen. `state` must be stashed (e.g. in the session) and checked
+    on the callback."""
+    flow = build_web_flow(redirect_uri)
+    auth_url, state = flow.authorization_url(
+        access_type="offline",            # issue a refresh token
+        include_granted_scopes="true",
+        prompt="consent",                 # force a refresh token even on re-auth
+    )
+    return auth_url, state
+
+
+def finish_web_authorization(redirect_uri: str, state: str,
+                             authorization_response: str) -> None:
+    """Exchange the authorization-response URL for credentials and persist the
+    token. `authorization_response` must be an https URL (reconstruct it from
+    the public callback so a Cloudflare-terminated http hop doesn't trip
+    oauthlib's transport check)."""
+    # We request a single scope; Google may echo it with extra granted scopes
+    # (e.g. openid), which oauthlib would otherwise reject as a scope change.
+    os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+    flow = build_web_flow(redirect_uri, state=state)
+    flow.fetch_token(authorization_response=authorization_response)
+    _save_token_json(flow.credentials.to_json())
 
 
 def is_authenticated() -> bool:

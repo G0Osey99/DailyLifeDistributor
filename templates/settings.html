@@ -65,7 +65,7 @@
             <span class="badge badge-error">✗ Not authenticated</span>
             {% endif %}
             <div class="inline-actions">
-                <button type="submit" form="form-yt-reauth" class="btn btn-sm btn-primary">Re-authenticate</button>
+                <button type="submit" form="form-yt-reauth" class="btn btn-sm btn-primary">{% if youtube_authenticated %}Re-authenticate{% else %}Connect YouTube{% endif %}</button>
                 <button type="submit" form="form-yt-clear" class="btn btn-sm btn-destructive">Clear Token</button>
             </div>
         </div>

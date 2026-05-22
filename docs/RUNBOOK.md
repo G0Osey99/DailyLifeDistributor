@@ -44,6 +44,26 @@ Recovery is built in and safe:
 
 Keep the tab open for the duration of a run — that's why the dashboard warns you.
 
+## Connecting YouTube (hosted instance)
+
+YouTube uses Google OAuth, which on the headless server needs the **web
+redirect** flow (the desktop "open a browser on this machine" flow can't work
+on the VPS). One-time Google Cloud setup:
+
+1. Google Cloud Console → **APIs & Services → Credentials → Create credentials
+   → OAuth client ID**, application type **Web application**.
+2. Under **Authorized redirect URIs** add exactly:
+   `https://autoalert.pro/oauth/youtube/callback`
+3. Download the JSON and upload it under **Settings → YouTube Client Secrets**
+   (it replaces the old Desktop client_secrets).
+4. Click **Connect YouTube** → consent in your own browser → you're redirected
+   back and the token is stored (encrypted) in `state.db`.
+
+If the client is still a Desktop ("installed") client, Connect YouTube returns a
+clear error telling you to create the Web client. The SimpleCast/Vista/Rock
+"Connect" buttons are unrelated — those use the streamed browser, not Google
+OAuth.
+
 ## Deploy
 
 ```bash

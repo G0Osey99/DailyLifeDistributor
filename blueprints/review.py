@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 import uuid
@@ -29,7 +28,6 @@ from core.llm_title_gen import (
     is_llamafile_running,
 )
 from core.session_state import ReviewEntry, session
-from core.transcriber import LocalTranscriber, _find_ffmpeg
 
 bp = Blueprint("review", __name__)
 
@@ -171,11 +169,12 @@ def rescan_date():
 # ---------------------------------------------------------------------------
 # Async title-generation jobs.
 #
-# Whisper transcription takes 30-60s and the LLM call is another 5-15s; if we
-# do that work on the request thread the browser sees a long-pending POST and
-# the Flask threadpool gets pinned. Instead /generate-titles spawns a worker
-# thread, returns a job_id immediately, and the JS polls
-# /generate-titles/status/<job_id> until the result is ready.
+# The LLM call takes 5-15s; if we do that work on the request thread the
+# browser sees a long-pending POST and the Flask threadpool gets pinned.
+# Instead /generate-titles spawns a worker thread, returns a job_id
+# immediately, and the JS polls /generate-titles/status/<job_id> until the
+# result is ready. The transcript text comes from the mapped spreadsheet
+# column (no on-the-fly transcription).
 #
 # Same single-process caveat as core.upload_jobs: this dict is per-worker and
 # will not work behind a multi-worker WSGI server. The launch script runs
@@ -205,7 +204,12 @@ def _set_title_job(job_id: str, **fields) -> None:
 
 
 def _run_title_generation(job_id: str, iso_date: str, app) -> None:
-    """Worker: transcribe + generate suggestions, then store the result."""
+    """Worker: read the mapped transcript text + generate suggestions.
+
+    The transcript comes from the spreadsheet's mapped transcript column
+    (stored on the ReviewEntry, with a fallback to a freshly-parsed cached
+    sheet). No audio transcription happens — Whisper was removed.
+    """
     try:
         with app.app_context():
             entry = session.entries.get(iso_date)
@@ -219,51 +223,23 @@ def _run_title_generation(job_id: str, iso_date: str, app) -> None:
                 )
                 return
 
-            config = load_config()
-            meta = ExcelParser(config).get_metadata_for_date(iso_date) or {}
-            excel_transcript = (meta.get("transcript") or "").strip()
-
-            if excel_transcript:
-                transcript_text = excel_transcript
-                transcript_source = "excel"
-                _log.info("Using Excel transcript for title generation (date: %s)", iso_date)
-            else:
-                media_path = None
-                for path in [entry.youtube_shorts_path, entry.youtube_video_path, entry.podcast_path]:
-                    if path and os.path.isfile(path):
-                        media_path = path
-                        break
-
-                if not media_path:
-                    _set_title_job(
-                        job_id,
-                        status="error",
-                        http_status=404,
-                        error="No media file found for this date",
-                        finished_at=time.time(),
-                    )
-                    return
-
-                transcriber = LocalTranscriber(config)
-                _log.info(
-                    "Transcribing %s for title generation (date: %s)",
-                    media_path, iso_date,
-                )
-                transcript_text = transcriber.transcribe(media_path)
-                transcript_source = "whisper"
+            transcript_text = (getattr(entry, "transcript", "") or "").strip()
+            if not transcript_text:
+                # Fall back to the cached/configured sheet in case the entry
+                # predates transcript population.
+                config = load_config()
+                meta = ExcelParser(config).get_metadata_for_date(iso_date) or {}
+                transcript_text = (meta.get("transcript") or "").strip()
+            transcript_source = "excel"
 
             if not transcript_text:
-                if _find_ffmpeg() is None:
-                    err = (
-                        "ffmpeg is not installed or not found. "
-                        "Windows: download from ffmpeg.org and add to PATH. "
-                        "macOS: run 'brew install ffmpeg'"
-                    )
-                else:
-                    err = "Transcription failed — check server logs"
                 _set_title_job(
                     job_id, status="error", http_status=422,
-                    error=err, finished_at=time.time(),
+                    error=(
+                        "No transcript for this date. Map a transcript column "
+                        "on the dashboard so titles can be suggested."
+                    ),
+                    finished_at=time.time(),
                 )
                 return
 
@@ -305,7 +281,7 @@ def _run_title_generation(job_id: str, iso_date: str, app) -> None:
 
 @bp.route("/generate-titles", methods=["POST"])
 def generate_titles():
-    """Kick off async transcription + LLM title generation. Returns {job_id}."""
+    """Kick off async LLM title generation from the transcript. Returns {job_id}."""
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400

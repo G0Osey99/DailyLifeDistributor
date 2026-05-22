@@ -6,7 +6,7 @@ FROM python:3.12-slim
 # sandbox by default, so running headed inside the container works.
 # Plus the virtual display (Xvfb), VNC server (x11vnc), and the WS bridge.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates ffmpeg fonts-liberation \
+      ca-certificates fonts-liberation \
       xvfb x11vnc novnc websockify \
       chromium \
  && rm -rf /var/lib/apt/lists/*

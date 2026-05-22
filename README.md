@@ -1,24 +1,27 @@
 # DailyLifeDistributor
 
-A local, single-operator Flask app that takes **one day's worth of media** —
-sitting in a folder, described by an Excel planning sheet — and publishes it to
-every platform a daily-devotional ("Daily Life") program needs, in one guided
-workflow. You pick the dates, review the titles/descriptions/schedules it
-pre-fills, confirm, and it uploads to all enabled platforms in parallel while
-streaming live progress.
+A Flask app that takes **one day's worth of media** — described by an Excel
+planning sheet — and publishes it to every platform a daily-devotional
+("Daily Life") program needs, in one guided workflow. You pick the media
+folders and spreadsheet **in your browser**, match dates, then it uploads to
+all enabled platforms in parallel while streaming live progress.
 
-Everything runs on the operator's machine. There is **no server-side
-component**, no account, and nothing leaves the machine except the uploads
-themselves. State lives in a SQLite file next to the app (designed to travel on
-the same USB drive as the media).
+**Browser-streaming pipeline.** Media lives on your own computer — nothing is
+installed there. You pick per-category folders with the browser's directory
+picker; the browser matches filenames to dates against the server, then uploads
+each batch of dates (chunked) to the hosted app just-in-time, which consumes
+the files for every platform that needs them and deletes them before the next
+batch. A small VPS never holds more than a few dates' files at once. State
+(sessions, upload history) lives in a SQLite file on the server's data volume.
 
 ---
 
 ## What it can do (capabilities)
 
 For each calendar **date** you select, it can publish to any combination of
-these six destinations. Each is independently toggleable, both globally
-(`config.yaml → platforms`) and per-element on the Review page:
+these six destinations. Each is toggleable globally (`config.yaml → platforms`)
+and per-run on the dashboard; per-element defaults live in
+`config.yaml → defaults.elements`:
 
 | Platform | What gets published | How it uploads |
 |---|---|---|
@@ -31,16 +34,16 @@ these six destinations. Each is independently toggleable, both globally
 
 Additional capabilities:
 
-- **Automatic file discovery.** Scans your media folders and matches files to
-  dates by parsing many filename date formats (YYMMDD, DDMMYY, DDMMYYYY,
-  YYYYMMDD, MMDD). Ambiguous 6-digit dates are surfaced so you can pick the
-  right interpretation.
-- **Excel-driven metadata.** Reads titles, descriptions, tags, scripture,
-  prayer, etc. from a planning spreadsheet using a column mapping you configure
-  in the UI.
-- **AI title suggestions for Shorts.** Transcribes the first ~30 s of the
-  media (faster-whisper) and asks a locally-running LLM (llamafile / llama3.2)
-  to suggest titles. Fully offline — no cloud LLM.
+- **Browser folder pickers + filename date matching.** You pick a folder per
+  media category in the browser; the server matches filenames to dates by
+  parsing many formats (YYMMDD, DDMMYY, DDMMYYYY, YYYYMMDD, MMDD). Ambiguous
+  6-digit dates surface under both candidate dates.
+- **Excel-driven metadata.** You upload your planning spreadsheet once per
+  browser session and map its columns (incl. a transcript column) on the
+  dashboard; titles, descriptions, tags, scripture, prayer, etc. come from it.
+- **AI title suggestions.** Feeds the spreadsheet's mapped **transcript column**
+  to a locally-running LLM (Ollama / llama3.2) to suggest titles — no audio
+  transcription, no extra upload.
 - **Parallel uploads with live progress.** All platforms for all selected
   dates run on a thread pool; per-row progress (bytes, processing phase,
   success/error) streams to the browser via Server-Sent Events.
@@ -59,9 +62,11 @@ Additional capabilities:
 |---|---|
 | Python **3.11+** | Bundled Python in `bin/python_arm/` or `bin/python_intel/` |
 | `pip install -r requirements.txt` | Same, installed into the bundled Python |
-| **ffmpeg** on PATH (for transcription) | Bundled `bin/ffmpeg` (falls back to system) |
 | **Google Chrome** (for SimpleCast / Vista / Rock) | Same |
-| *Optional:* a local LLM for Shorts title ideas | Bundled `bin/llamafile` (auto-started) |
+| *Optional:* a local LLM for title ideas | Bundled `bin/llamafile` (auto-started) |
+
+> A modern desktop browser is required for the folder pickers
+> (`webkitdirectory`); mobile folder-picking is out of scope.
 
 > The bundled `bin/` directory (~3 GB of binaries, runtimes, and model weights)
 > is **not** in git — see `bin/README.md` for exactly what to put there. You
@@ -96,25 +101,18 @@ port 8080. (Access is gated by a shared-password login — see [Security model](
 
 Do these once. **2–4 are only needed for the platforms you actually enable.**
 
-### 1. Point the app at your files
+### 1. Pick your files on the dashboard
 
-Edit `config.yaml` (or use the **Settings** page in the running app — see
-below) so it knows where your media and planning sheet live:
+There is **no directory config** — everything is per browser session. On the
+Setup page (`/`):
 
-```yaml
-directories:
-  base:            /path/to/DailyLife
-  youtube_video:   /path/to/DailyLife/YouTube
-  youtube_shorts:  /path/to/DailyLife/Shorts
-  podcast:         /path/to/DailyLife/Podcast
-  thumbnails:      /path/to/DailyLife/Thumbnails
-  email_thumbnails: /path/to/DailyLife/EmailThumbnails   # play-button variant
-sharepoint_docx:   /path/to/DailyLife/Daily Life Content Publication.xlsx
-```
-
-Then map your spreadsheet's columns to metadata fields. The easiest way is the
-**Settings → Excel mapping** UI, which lets you pick the sheet and preview
-columns; it writes the `excel_mapping` block of `config.yaml` for you.
+1. Pick a folder for each media category (Horizontal Video, Vertical Video,
+   Podcast, Thumbnails, Email Thumbnails) with the folder pickers.
+2. Upload your planning `.xlsx` and map its columns to the metadata fields
+   (date, titles, description, tags, scripture, prayer, topic, **transcript**).
+   The mapping persists for your browser session.
+3. Click **Match dates from folders** to see which dates have media + metadata,
+   then select dates + platforms and upload.
 
 ### 2. YouTube OAuth credentials *(YouTube Video / Shorts)*
 
@@ -147,17 +145,15 @@ equivalent) to the binary.
 | Page | Route | What you do there |
 |---|---|---|
 | **Login** | `/login` | Enter the shared password to begin a session. |
-| **Index** | `/` | Scans the media folders, lists available dates; pick dates + platforms to publish. |
+| **Setup** | `/` | Pick media folders + spreadsheet, map columns, match dates, select dates + platforms, and run the batched upload (progress streams over SSE). Keep the tab open while it runs. |
 | **Calendar** | `/calendar` | Calendar view of what's already scheduled/published across sources; refresh from YouTube/Rock. |
-| **Review** | `/review` | Per-date editing: titles, descriptions, tags, schedules. Generate AI Shorts-title suggestions here. Toggle individual elements (thumbnail, description, schedule…) per platform. |
-| **Confirm** | `/confirm` | Final summary of exactly what will be uploaded where. |
-| **Upload** | `/upload` | Kicks off parallel uploads; a live progress view streams over SSE. |
-| **History** | `/history` | Past sessions and per-platform outcomes (success/URL/error); resume an interrupted session. |
-| **Settings** | `/settings` | Override directory paths at runtime, run/clear each service login, authorize YouTube, configure the Excel column mapping, download the Whisper model, check llamafile status, manage encrypted secrets. |
+| **History** | `/history` | Past sessions and per-platform outcomes (success/URL/error). |
+| **Settings** | `/settings` | Run/clear each service login, authorize YouTube, check the LLM (title) backend status, manage encrypted secrets, change the shared password. |
 
-**Typical run:** open `/` → select dates and platforms → **Review** each date
-and tidy the metadata → **Confirm** → **Upload** and watch progress → check
-**History** if anything failed and retry.
+**Typical run:** open `/` → pick folders + spreadsheet → map columns →
+**Match dates** → select dates + platforms → **Upload** and watch progress.
+The upload runs in batches of 4 dates; already-succeeded dates are skipped on a
+re-run, so an interrupted run is safe to resume by re-selecting the rest.
 
 ---
 
@@ -165,7 +161,7 @@ and tidy the metadata → **Confirm** → **Upload** and watch progress → chec
 
 | File | Purpose | In git? |
 |------|---------|---------|
-| `config.yaml` | Directory paths, per-platform schedules + on/off toggles, default element toggles, Excel column mapping, LLM/Whisper settings, `upload.max_workers` | yes |
+| `config.yaml` | Per-platform schedules + on/off toggles, default element toggles, LLM settings, `upload.max_workers` | yes |
 | `.env` | Secrets and Playwright/runtime knobs (see below) | no (gitignored) |
 | `client_secrets.json` | Google OAuth client you provide | no (migrated to encrypted store on first boot) |
 | `token.json` | YouTube refresh token (auto-generated) | no (migrated to encrypted store) |
@@ -180,17 +176,19 @@ and tidy the metadata → **Confirm** → **Upload** and watch progress → chec
 - `scheduling` — default publish time per platform and the `timezone` used for
   scheduling and YouTube quota reset.
 - `defaults.elements` — which sub-elements (thumbnail / title / description /
-  tags / schedule, plus Rock children) are active by default; overridable
-  per-date on the Review page.
+  tags / schedule, plus Rock children) are active.
 - `description_footers` — text appended to descriptions per platform.
-- `excel_mapping` — sheet name + which spreadsheet column feeds each field.
 - `upload.max_workers` — parallel upload thread-pool size (default 4).
+
+Media folders, the spreadsheet, and the column mapping are **not** in
+`config.yaml` anymore — they're picked per browser session on the dashboard.
 
 ### Env var reference (`.env`)
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `FLASK_SECRET_KEY` | random per process | Signs the Flask session cookie. **Set this** or sessions reset on every restart. |
+| `DLD_UPLOAD_TMP` | `/data/uploads` if `/data` exists, else `./.uploads` | Where transiently-uploaded media is reassembled per run. On the VPS this is on the `dld-data` volume. |
 | `FLASK_PORT` | `8080` | Override the bind port. |
 | `FLASK_DEBUG` | `false` | Enable Flask's debug reloader. |
 | `YOUTUBE_CLIENT_SECRETS_PATH` | `./client_secrets.json` | Path override for the OAuth client JSON. |
@@ -212,11 +210,13 @@ and tidy the metadata → **Confirm** → **Upload** and watch progress → chec
 
 The bundled `bin/` runtimes and `launch_mac.command` are **Mac-only and not
 needed on a VPS** — you don't ship `bin/python_arm|intel`, `bin/node_arm|intel`,
-`bin/ffmpeg`, or `bin/llamafile`. Install the equivalents from the OS instead.
+or `bin/llamafile`. Install the equivalents from the OS instead. The simplest
+path is Docker Compose (`deploy/docker-compose.yml`), which builds the app,
+Ollama, Caddy, and a Cloudflare Tunnel; `cd deploy && docker compose up -d --build`.
 
 **1. App + dependencies**
 ```bash
-sudo apt install -y python3 python3-venv ffmpeg   # ffmpeg only needed for AI titles
+sudo apt install -y python3 python3-venv
 git clone <this repo> && cd DailyLifeDistributor
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
@@ -231,7 +231,7 @@ ALLOWED_HOSTS=uploader.example.com   # your VPS hostname(s)
 SESSION_COOKIE_SECURE=true    # you are behind HTTPS (see step 4)
 ```
 
-**3. LLM for Shorts title suggestions (optional, via Ollama)**
+**3. LLM for title suggestions (optional, via Ollama)**
 ```bash
 ollama serve &           # or run as a service
 ollama pull llama3.2
@@ -239,9 +239,9 @@ ollama pull llama3.2
 LLM_BASE_URL=http://localhost:11434
 LLM_MODEL=llama3.2
 ```
-If you skip this, the app runs fine — Shorts titles just won't be auto-suggested
-(and you won't need `ffmpeg`/Whisper either). The faster-whisper model
-auto-downloads on first transcription when titles *are* enabled.
+If you skip this, the app runs fine — titles just won't be auto-suggested.
+Title suggestions read the spreadsheet's mapped transcript column (no audio
+transcription).
 
 **4. TLS + reverse proxy**
 Put the app behind nginx or Caddy terminating HTTPS, proxying to the Flask port.
@@ -283,7 +283,8 @@ from the **Settings** page; everything is encrypted at rest with `SECRET_ENC_KEY
 | SimpleCast/Vista/Rock: "still on a login page after login" | Saved session is broken | Delete the matching `*_session.json` and retry — first-run login fires again |
 | Headless run hangs and eventually errors | Saved Playwright session expired; uploader relaunched headed but no human typed | Re-run interactively and complete the login prompt |
 | YouTube upload says "needs re-auth" | Refresh token revoked | Delete `token.json` and retry; consent flow opens in browser |
-| Transcription / title gen errors about a missing model | Whisper model not downloaded, or ffmpeg missing | Download the Whisper model from Settings; ensure ffmpeg is on PATH |
+| Title suggestions say "no transcript" | The transcript column isn't mapped for that date | Map a transcript column on the dashboard before requesting suggestions |
+| Batch upload rejected "not enough free disk space" | The data volume is low on space for the declared batch | Free space on the VPS data volume, or upload fewer dates per run |
 
 ### `state.db` schema
 

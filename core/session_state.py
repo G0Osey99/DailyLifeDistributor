@@ -119,6 +119,7 @@ class ReviewEntry:
     episode_title: str = ""    # Spotlight title (Excel "Episode Title")
     prayer: str = ""           # Reflection content (Excel "Prayer")
     topic_hint: str = ""       # Excel "Topic" — fed to image gatherer
+    transcript: str = ""       # Excel "Transcript" — fed to LLM title suggestions
     wistia_ref: str = ""       # Spotlight Media dropdown label (e.g. "app 260510")
     # Horizontal (non-Shorts) YouTube watch link for the Daily Life email.
     # Normally captured from this run's YouTube Video upload; this field is
@@ -291,6 +292,7 @@ class SessionState:
             episode_title=meta.get("episode_title", "") or youtube_title,
             prayer=meta.get("prayer", ""),
             topic_hint=meta.get("topic", ""),
+            transcript=meta.get("transcript", ""),
             wistia_ref=infer_wistia_ref(shorts_path),
             youtube_schedule_dt=self._default_schedule(iso_date, yt_video_time),
             shorts_schedule_dt=self._default_schedule(iso_date, yt_shorts_time),

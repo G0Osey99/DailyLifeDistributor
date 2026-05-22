@@ -243,6 +243,24 @@ def record_upload(
         conn.commit()
 
 
+def has_successful_upload(session_id: str, iso_date: str, platform: str) -> bool:
+    """True if a prior *successful* upload exists for this (session, date, platform).
+
+    Powers the idempotent re-run guard: a batch re-run skips any (date,
+    platform) already recorded as a success, so a re-run after a mid-run tab
+    close never double-uploads a YouTube video / SimpleCast draft.
+    """
+    if not session_id:
+        return False
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM upload_history "
+            "WHERE session_id=? AND iso_date=? AND platform=? AND success=1 LIMIT 1",
+            (session_id, iso_date, platform),
+        ).fetchone()
+        return row is not None
+
+
 def backfill_external_ids() -> int:
     """Populate upload_history.external_id for legacy rows that lack it.
 

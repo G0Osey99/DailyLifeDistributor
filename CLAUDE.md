@@ -18,25 +18,28 @@ python app.py
 The app opens at `http://localhost:8080` with a login gate (session cookie, HttpOnly/SameSite=Lax). Access is controlled by a shared password set via `INITIAL_ADMIN_PASSWORD` on first boot.
 
 **Dependencies:**
-- `bin/ffmpeg` — bundled binary used by Whisper for audio extraction; falls back to system ffmpeg
-- `bin/llamafile` — bundled LLM server (llama3.2) for YouTube Shorts title suggestions; started by the launch script, listens on port 8081
+- `bin/llamafile` — bundled LLM server (llama3.2) for title suggestions; started by the launch script, listens on port 8081 (the hosted deploy uses Ollama instead via `LLM_BASE_URL`)
 - `bin/python_arm/` / `bin/python_intel/` — bundled Python environments (not tracked in git)
 - **Playwright + Google Chrome** — required for the SimpleCast uploader. The `playwright` pip package is enough; we drive the system Chrome via `channel=''chrome''`, so `playwright install` is NOT needed.
+- Whisper/ffmpeg are **gone** — title suggestions read a mapped transcript column from the spreadsheet (see the browser-streaming pipeline below), not transcribed audio.
 
 ## Configuration
 
 `config.yaml` is the central config file. Key sections:
-- `directories.base` — root path to the network/USB drive containing media folders
-- `excel_mapping` — maps sheet name + column names to metadata fields (date, title, description, tags)
 - `scheduling` — default publish times per platform, timezone
-- `platforms` — enable/disable YouTube Video, YouTube Shorts, Simplecast globally
+- `platforms` — enable/disable YouTube Video, YouTube Shorts, Simplecast, Rock, Rock Email, Vista Social globally
 - `defaults.elements` — per-element upload toggles (thumbnail, title, description, tags, schedule)
 - `description_footers` — appended to descriptions per platform
-- `llm` — model, number of title suggestions, backend (llamafile), port
+- `llm` — model, number of title suggestions, backend, port
 - `upload.max_workers` — thread-pool size for parallel platform uploads (default 4)
+
+Media folders, the planning spreadsheet, and the column mapping are **not** in
+`config.yaml` — they are picked per browser session on the dashboard and the
+mapping lives in the Flask session (see the browser-streaming pipeline below).
 
 `.env` holds secrets and runtime knobs:
 - `FLASK_SECRET_KEY`
+- `DLD_UPLOAD_TMP` — where per-run media temp dirs are reassembled (defaults to `/data/uploads` when `/data` exists, else a repo-local `.uploads`)
 - `YOUTUBE_CLIENT_SECRETS_PATH` (optional override)
 - SimpleCast (all optional — see `uploaders/simplecast_uploader.py` docstring):
   - `SIMPLECAST_UPLOAD_URL` — override the show-scoped new-episode URL
@@ -50,20 +53,20 @@ The legacy `SIMPLECAST_API_KEY` / `SIMPLECAST_SHOW_ID` variables are no longer u
 
 This is a single-file Flask app (`app.py`) backed by `core/` modules and two uploaders, with a small SQLite database for session/history persistence.
 
-**User workflow:**
-1. **Index** (`/`) — FileScanner scans media directories, user selects dates and platforms
-2. **Review** (`/review`) — per-date review page; user edits titles, descriptions, schedules; LLM suggestions generated here
-3. **Confirm** (`/confirm`) — summary before upload
-4. **Upload** (`/upload` → `/upload/stream`) — background thread runs uploads in parallel; progress streamed via Server-Sent Events
-5. **History** (`/history`) — past sessions and per-row upload outcomes loaded from SQLite
+**User workflow (browser-streaming pipeline — see its own section below):**
+1. **Setup** (`/`) — pick per-category media folders + spreadsheet in the browser, map columns, match dates (`/media/scan`), select dates + platforms
+2. **Upload** — the browser orchestrates a batched, chunked upload to `/media/*`; per-batch progress streams via SSE at `/upload/stream`
+3. **History** (`/history`) — past sessions and per-row upload outcomes loaded from SQLite
+
+(The legacy `/review` and `/confirm` blueprints still exist but the dashboard is the primary path.)
 
 **Core modules (`core/`):**
-- `file_scanner.py` — scans configured directories for video/audio/thumbnail files; parses dates from filenames using multi-format digit extraction (YYMMDD, DDMMYY, DDMMYYYY, YYYYMMDD, MMDD); handles 6-digit ambiguity by offering both interpretations to the user
-- `excel_parser.py` — reads the `.xlsx` planning spreadsheet; maps configurable columns to metadata (title, description, tags); caches the parsed sheet
-- `session_state.py` — in-memory singleton (`session`) holding the active workflow state; `ReviewEntry` dataclass holds all per-date fields; `UploadElements` controls which upload components are active per platform
-- `llm_title_gen.py` — calls llamafile''s OpenAI-compatible API (`/v1/chat/completions`) to generate YouTube Shorts title suggestions from a transcript; results cached by transcript hash
-- `transcriber.py` — uses `faster-whisper` to transcribe the first 30 seconds of a media file for LLM input; extracts a clip via ffmpeg before passing to Whisper
-- `db.py` — thin SQLite wrapper (`state.db`). Two tables: `sessions` (workflow state JSON + label + status) and `upload_history` (one row per platform attempt with success flag, URL, scheduled time, error). Used to resume in-progress sessions and to power the History page.
+- `media_session.py` — per-run temp dir lifecycle (`RunDir`), the single-active `RunLock`, the orphan sweep, and the free-space precheck for the streaming pipeline
+- `file_scanner.py` — `parse_names(filenames)` matches dates from a list of filenames (no filesystem) using multi-format digit extraction (YYMMDD, DDMMYY, DDMMYYYY, YYYYMMDD, MMDD); 6-digit ambiguity surfaces the file under both candidate dates. (The legacy `FileScanner` directory-scan class remains but is no longer the primary path.)
+- `excel_parser.py` — `parse_spreadsheet(path, mapping)` reads an uploaded `.xlsx` at an arbitrary path with a per-session column mapping (incl. `transcript_column`)
+- `session_state.py` — in-memory singleton (`session`); `ReviewEntry` dataclass holds all per-date fields (incl. `transcript`); `UploadElements` controls which upload components are active per platform
+- `llm_title_gen.py` — calls the LLM''s OpenAI-compatible API to generate title suggestions from the mapped transcript text; results cached by text hash
+- `db.py` — thin SQLite wrapper (`state.db`). Tables incl. `sessions` and `upload_history`; `has_successful_upload()` powers the idempotent re-run skip.
 
 **Uploaders (`uploaders/`):**
 - `youtube_uploader.py` — YouTube Data API v3; OAuth2 via `client_secrets.json` / `token.json`; resumable upload in 5MB chunks; sets thumbnail after upload; emits both byte-level progress and processing-phase events; respects `UploadElements` flags for each component
@@ -75,8 +78,34 @@ This is a single-file Flask app (`app.py`) backed by `core/` modules and two upl
 **YouTube quota tracking:**
 `QUOTA_COSTS` in `app.py` tracks estimated API units per operation (video upload=100, thumbnail=50, etc.) against a `DAILY_QUOTA` of 10,000 units, stored in the Flask session.
 
-**Path overrides:**
-The Settings page allows the user to override directory paths at runtime without editing `config.yaml`. Overrides are stored on the `SessionState` singleton (`session.path_overrides`) and passed to `FileScanner.scan_custom_paths()`.
+## Browser-streaming media pipeline (`blueprints/media.py`, `static/js/dld_pipeline.js`)
+
+Replaces the old server-side directory-scan model. Media lives on the user's
+computer; the browser streams it to the VPS just-in-time, in batches, so the
+~80 GB box holds at most a few dates' files at once.
+
+**Per browser session:** the column mapping + the cached spreadsheet are keyed
+to a `media_sid` minted into the Flask session cookie. **Per process:** a single
+`RunLock` (one upload run at a time) and per-run temp dirs under
+`DLD_UPLOAD_TMP` (`/data/uploads` on the VPS).
+
+**Flow (all routes auth-gated):**
+1. `POST /media/spreadsheet` (multipart) caches the `.xlsx` per session → returns sheet names; `GET /media/spreadsheet/columns?sheet=` lists columns; `POST /media/mapping` stores the column mapping in `flask.session["excel_mapping"]`.
+2. `POST /media/scan` (`{categories: {cat: [filenames]}}`) → `parse_names` groups by date + attaches `parse_spreadsheet` metadata per matched date.
+3. Upload: `POST /media/run/init` acquires the run lock + a `RunDir` (409 if busy). The browser chunks the selected dates into batches of 4. Per batch: `POST /media/file/new` issues an opaque server uuid `file_id` per distinct physical file, then `File.slice()` → ≤95 MB chunks → sequential `POST /media/upload/chunk` (append-in-order, per-chunk + free-space caps). Once every file is `complete`, `POST /media/batch/run` (reassembly handshake; 409 otherwise) runs `core.upload_jobs.run_batch` against the temp paths, streams progress over the existing `/upload/stream` SSE, and **deletes the batch's temp files** on completion. `POST /media/run/finish` releases the lock + cleans the run dir.
+
+**`core.upload_jobs.run_batch`** points each `ReviewEntry`'s path fields at the
+batch's temp files, dedupes by physical file, **idempotently skips** any
+`(date, platform)` already recorded `success` in `upload_history`
+(`db.has_successful_upload`), and preserves the email-waits-for-YouTube ordering.
+Shared `_dispatch_upload` / `_resolve_youtube_watch_url` helpers are reused by
+the legacy whole-session `run_upload_job`.
+
+**Disk guarantee** = per-batch delete + run-level `finally` cleanup + an orphan
+sweep (`media_session.sweep_orphans`) wired into `create_app()` startup and the
+remote-login idle reaper + the free-space precheck. **Idempotent skip** is what
+makes the no-resume / re-run model safe — the dashboard re-renders completed
+dates as done so a re-run only sends the rest.
 
 ## SimpleCast uploader (Playwright rewrite)
 
@@ -156,14 +185,19 @@ Element toggles: `rock_email_enabled`, `rock_email_thumbnail`.
 
 | File | Purpose |
 |------|---------|
-| `app.py` | All Flask routes, parallel upload orchestration, SSE streaming |
-| `config.yaml` | Runtime configuration (paths, schedules, platforms, `upload.max_workers`) |
-| `.env` | Secrets and SimpleCast/Playwright env knobs |
+| `app.py` | App factory, blueprint registration, parallel upload orchestration, SSE streaming, startup orphan sweep |
+| `blueprints/media.py` | Browser-streaming pipeline endpoints (`/media/spreadsheet`, `/media/mapping`, `/media/scan`, `/media/run/init`, `/media/file/new`, `/media/upload/chunk`, `/media/batch/run`, `/media/run/finish`) |
+| `core/media_session.py` | `RunDir` temp-dir lifecycle, single-active `RunLock`, orphan sweep, free-space precheck |
+| `static/js/dld_pipeline.js` | Dashboard client: folder pickers, spreadsheet+mapping, scan, browser-orchestrated chunked batch upload + SSE |
+| `templates/index.html` | Setup dashboard (folder pickers, spreadsheet, column mapping, matched dates, upload) |
+| `config.yaml` | Runtime configuration (schedules, platforms, `upload.max_workers`) — no directories/spreadsheet/mapping |
+| `.env` | Secrets, `DLD_UPLOAD_TMP`, and SimpleCast/Playwright env knobs |
 | `client_secrets.json` | Google OAuth2 credentials (download from GCP Console) |
 | `token.json` | Auto-generated YouTube OAuth token |
 | `simplecast_session.json` | Saved SimpleCast browser session (cookies + local storage); written by Playwright on first successful login |
 | `state.db` | SQLite database — `sessions` and `upload_history` tables |
-| `core/db.py` | SQLite wrapper used for resume + History page |
+| `core/db.py` | SQLite wrapper used for resume + History page + `has_successful_upload` idempotency |
+| `core/upload_jobs.py` | `run_upload_job` (legacy) + `run_batch` (streaming) parallel runners, SSE events, idempotent skip |
 | `uploaders/simplecast_uploader.py` | Playwright-based SimpleCast automation (no REST API) |
 | `uploaders/rock/email.py` | `schedule_email` — Daily Life email content-channel item (the "Rock Email" platform) |
 | `scripts/rock_email_recon.py` | Read-only recon of the email channel's Add form (dumps field ids/selectors) |

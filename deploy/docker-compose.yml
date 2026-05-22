@@ -36,6 +36,9 @@ services:
       HOSTED: "true"
       DISPLAY: ":99"
       DLD_STATE_DB: /data/state.db
+      # Transient media-upload temp dirs share the dld-data volume so the
+      # free-space precheck is meaningful and orphans are swept on the volume.
+      DLD_UPLOAD_TMP: /data/uploads
       LLM_BASE_URL: http://ollama:11434
       LLM_MODEL: llama3.2
     volumes:

@@ -220,6 +220,45 @@ def _parse_date_from_filename(filename: str) -> Optional[datetime]:
     return _parse_date_from_stem(stem)
 
 
+_MEDIA_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | THUMBNAIL_EXTENSIONS
+
+
+def parse_names(names: list) -> dict:
+    """Group a list of *filenames* by ISO date, no filesystem access.
+
+    The browser reports the filenames inside each picked folder; this returns
+    ``{iso_date: [filename, ...]}`` reusing the same per-stem date parsing as
+    the directory scanner. Non-media files (extension not in the media
+    allowlist) and undated names are ignored — this covers the ``.DS_Store``
+    and ``.txt`` junk that ``webkitdirectory`` includes.
+
+    Ambiguous 6-digit dates (both YYMMDD and DDMMYY plausible) surface the
+    file under *each* candidate date so the user can pick the right one,
+    mirroring the directory scanner's ``alternatives`` behaviour.
+    """
+    out: dict = {}
+    for name in names:
+        if not name:
+            continue
+        base = os.path.basename(name)
+        ext = os.path.splitext(base)[1].lower()
+        if ext not in _MEDIA_EXTENSIONS:
+            continue
+        stem = os.path.splitext(base)[0]
+        primary_dt, alts, ambiguous = _parse_date_entry_from_stem(stem)
+        if primary_dt is None:
+            continue
+        if ambiguous and alts:
+            iso_dates = [a["date"] for a in alts]
+        else:
+            iso_dates = [primary_dt.strftime("%Y-%m-%d")]
+        for iso in iso_dates:
+            out.setdefault(iso, [])
+            if base not in out[iso]:
+                out[iso].append(base)
+    return out
+
+
 def _scan_directory(directory: str, extensions: set) -> dict:
     """Scan a directory for files with given extensions.
 
@@ -309,12 +348,15 @@ class FileScanner:
 
     def __init__(self, config: Optional[dict] = None):
         self.config = config or _load_config()
-        dirs = self.config["directories"]
-        self.base = dirs["base"]
-        self.youtube_video_dir = os.path.join(self.base, dirs["youtube_video"])
-        self.youtube_shorts_dir = os.path.join(self.base, dirs["youtube_shorts"])
-        self.podcast_dir = os.path.join(self.base, dirs["podcast"])
-        self.thumbnails_dir = os.path.join(self.base, dirs["thumbnails"])
+        # The browser-streaming pipeline removed server-side directory config;
+        # default to empty so a residual FileScanner caller degrades to "no
+        # files" instead of crashing on a missing `directories` block.
+        dirs = self.config.get("directories", {}) or {}
+        self.base = dirs.get("base", "")
+        self.youtube_video_dir = os.path.join(self.base, dirs.get("youtube_video", ""))
+        self.youtube_shorts_dir = os.path.join(self.base, dirs.get("youtube_shorts", ""))
+        self.podcast_dir = os.path.join(self.base, dirs.get("podcast", ""))
+        self.thumbnails_dir = os.path.join(self.base, dirs.get("thumbnails", ""))
         # Optional: email-specific thumbnails (YouTube-play-button overlay).
         # Older configs won't have this key; treat it as "not configured".
         _email_thumbs = dirs.get("email_thumbnails")

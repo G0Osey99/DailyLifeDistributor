@@ -23,26 +23,9 @@
     .form-row { display:flex; gap:16px; flex-wrap:wrap; }
     .form-row .form-group { flex:1; min-width:180px; }
     .inline-actions { display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap; }
-    .browse-row { display:flex; gap:8px; }
-    .browse-row input { flex:1; }
-    .mapping-table { width:100%; border-collapse:collapse; margin:12px 0; }
-    .mapping-table th, .mapping-table td { padding:8px 10px; border-bottom:1px solid var(--color-border-subtle); font-size:.85rem; }
-    .mapping-table th { font-weight:600; font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; color:var(--color-text-muted); }
-    .preview-table { width:100%; border-collapse:collapse; margin-top:12px; font-size:.8rem; }
-    .preview-table th, .preview-table td { padding:6px 8px; border-bottom:1px solid var(--color-border-subtle); }
-    .preview-table th { font-weight:600; font-size:.72rem; text-transform:uppercase; color:var(--color-text-muted); }
-    .preview-table td { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .preview-table tr:nth-child(even) td { background:rgba(255,255,255,0.02); }
     .llamafile-box { padding:12px 16px; border-radius:var(--radius-md); margin-bottom:12px; font-size:.88rem; }
     .llamafile-box.running { background:var(--color-success-bg); border:1px solid rgba(74,222,128,0.2); color:var(--color-success); }
     .llamafile-box.stopped { background:var(--color-error-bg); border:1px solid rgba(248,113,113,0.2); color:var(--color-error); }
-    .settings-browse-panel { background:var(--color-elevated); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:10px; max-height:250px; overflow-y:auto; display:none; margin-top:4px; }
-    .settings-browse-panel .browse-path { font-family:var(--font-mono); font-size:.78rem; color:var(--color-text-muted); margin-bottom:6px; word-break:break-all; }
-    .settings-browse-panel .browse-item { cursor:pointer; padding:3px 6px; border-radius:var(--radius-sm); font-size:.85rem; }
-    .settings-browse-panel .browse-item:hover { background:rgba(255,255,255,0.06); }
-    .settings-browse-panel .browse-dir { color:var(--color-text); font-weight:500; }
-    .settings-browse-panel .browse-file { color:var(--color-text-dim); }
-    .settings-browse-panel .browse-clickable-file { color:var(--color-accent); font-weight:500; }
     .char-count { font-size:.72rem; color:var(--color-text-dim); margin-top:2px; }
 {% endblock %}
 
@@ -180,92 +163,8 @@
 </div>
 </div>
 
-<!-- 📁 Media Directories -->
-<div class="settings-section">
-<div class="section-card">
-    <div class="section-card-header" data-section="dirs">
-        <span class="sec-icon">📁</span>
-        <span class="sec-title">Media Directories</span>
-        <span class="sec-dot ok"></span>
-        <span class="sec-chevron">▼</span>
-    </div>
-    <div class="section-card-body" data-body="dirs">
-        {% set dirs = config.get('directories', {}) %}
-        {% set dir_fields = [
-            ('dir_base', 'Base path', 'base'),
-            ('dir_youtube_video', 'Horizontal Video subfolder', 'youtube_video'),
-            ('dir_youtube_shorts', 'Vertical Video subfolder', 'youtube_shorts'),
-            ('dir_podcast', 'Podcast subfolder', 'podcast'),
-            ('dir_thumbnails', 'Thumbnails subfolder', 'thumbnails'),
-            ('dir_email_thumbnails', 'Email thumbnails subfolder (Daily Life email)', 'email_thumbnails'),
-        ] %}
-        {% for field_name, label, key in dir_fields %}
-        <div class="form-group">
-            <label for="{{ field_name }}">{{ label }}</label>
-            <div class="browse-row">
-                <input type="text" id="{{ field_name }}" name="{{ field_name }}" value="{{ dirs.get(key, '') }}" class="input-mono" oninput="debouncedValidateSettings('{{ field_name }}')">
-                <button type="button" class="btn btn-sm btn-secondary" onclick="browseFor('{{ field_name }}')">Browse</button>
-            </div>
-            <span id="status-{{ field_name }}" class="text-sm"></span>
-            <div class="settings-browse-panel" id="browse-panel-{{ field_name }}"></div>
-        </div>
-        {% endfor %}
-    </div>
-</div>
-</div>
-
-<!-- 📊 Metadata Spreadsheet -->
-<div class="settings-section">
-<div class="section-card">
-    <div class="section-card-header" data-section="excel">
-        <span class="sec-icon">📊</span>
-        <span class="sec-title">Metadata Spreadsheet</span>
-        <span class="sec-dot {% if config.get('sharepoint_docx') %}ok{% else %}warn{% endif %}"></span>
-        <span class="sec-chevron">▼</span>
-    </div>
-    <div class="section-card-body" data-body="excel">
-        <div class="form-group">
-            <label for="sharepoint_docx">Excel File (.xlsx)</label>
-            <div class="browse-row">
-                <input type="text" id="sharepoint_docx" name="sharepoint_docx" value="{{ config.get('sharepoint_docx', '') }}" class="input-mono" onchange="onExcelPathChange()">
-                <button type="button" class="btn btn-sm btn-secondary" onclick="browseFor('sharepoint_docx')">Browse</button>
-            </div>
-            <div id="excel-file-status" class="text-sm mt-sm"></div>
-            <div class="settings-browse-panel" id="browse-panel-sharepoint_docx"></div>
-        </div>
-        <div class="form-group">
-            <label for="excel-sheet-select">Sheet</label>
-            <select id="excel-sheet-select" onchange="onSheetChange()"><option value="">— Select a sheet —</option></select>
-        </div>
-        <div id="column-mapping-section" style="display:none;">
-            <h3 class="section-header" style="font-size:.95rem;">Column Mapping</h3>
-            <table class="mapping-table">
-                <thead><tr><th>Field</th><th>Excel Column</th><th>Required</th></tr></thead>
-                <tbody>
-                    <tr><td>Date</td><td><select id="map-date_column" class="col-map-select"></select></td><td>✓</td></tr>
-                    <tr><td>Shorts Title</td><td><select id="map-shorts_title_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td>Description</td><td><select id="map-description_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td>Instagram / Facebook Caption</td><td><select id="map-vista_caption_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td>Tags</td><td><select id="map-tags_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td>YouTube Title</td><td><select id="map-youtube_title_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td>Podcast Title</td><td><select id="map-podcast_title_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td colspan="3" style="padding-top:10px; font-size:.78rem; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:.04em;">Rock RMS — Daily Experience</td></tr>
-                    <tr><td>Episode Title (Spotlight)</td><td><select id="map-episode_title_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td>Passage (Vista title)</td><td><select id="map-passage_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td>Scripture (Vista content)</td><td><select id="map-scripture_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td>Prayer (Reflection)</td><td><select id="map-prayer_column" class="col-map-select"></select></td><td>—</td></tr>
-                    <tr><td>Topic (image hint)</td><td><select id="map-topic_column" class="col-map-select"></select></td><td>—</td></tr>
-                </tbody>
-            </table>
-            <div id="sheet-preview-section"></div>
-            <div class="inline-actions">
-                <button type="button" class="btn btn-sm btn-primary" onclick="saveExcelMapping()">💾 Save Mapping</button>
-                <span id="mapping-save-status" class="text-sm"></span>
-            </div>
-        </div>
-    </div>
-</div>
-</div>
+<!-- Media folders and the planning spreadsheet are now picked per browser
+     session on the dashboard (Setup page), not configured here. -->
 
 <!-- 📅 Default Schedule -->
 <div class="settings-section">
@@ -385,33 +284,6 @@
             </div>
         </div>
         <button type="button" class="btn btn-sm btn-secondary" onclick="checkLlamafileStatus()">🔄 Check Status</button>
-    </div>
-</div>
-</div>
-
-<!-- ⚙️ Whisper -->
-<div class="settings-section">
-<div class="section-card">
-    <div class="section-card-header" data-section="whisper">
-        <span class="sec-icon">⚙️</span>
-        <span class="sec-title">Whisper (Transcription)</span>
-        <span class="sec-dot ok"></span>
-        <span class="sec-chevron">▼</span>
-    </div>
-    <div class="section-card-body" data-body="whisper">
-        <div class="form-group">
-            <label for="whisper_model">Model size</label>
-            <select id="whisper_model" name="whisper_model">
-                {% set cw = config.get('whisper', {}).get('model', 'base') %}
-                {% for val, lbl in [('tiny','tiny — fast'),('base','base — recommended'),('small','small — better'),('medium','medium — near human-level')] %}
-                <option value="{{ val }}" {% if val == cw %}selected{% endif %}>{{ lbl }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="inline-actions">
-            <a href="{{ url_for('settings.download_whisper_model') }}" class="btn btn-sm btn-primary">⬇ Download Model</a>
-            <span class="text-sm text-dim">Transcribes the first 30s of video for title generation</span>
-        </div>
     </div>
 </div>
 </div>
@@ -538,58 +410,6 @@ document.querySelectorAll('.section-card-header[data-section]').forEach(hdr=>{
     });
 });
 
-// Browse
-function browseFor(fieldId){
-    const panel=document.getElementById('browse-panel-'+fieldId);
-    if(!panel)return;
-    if(panel.style.display==='block'){panel.style.display='none';return;}
-    panel.style.display='block';
-    const input=document.getElementById(fieldId);
-    loadSettingsBrowse(fieldId,input?input.value.trim():'');
-}
-async function loadSettingsBrowse(fieldId,path){
-    const panel=document.getElementById('browse-panel-'+fieldId);
-    if(!panel)return;
-    panel.innerHTML='<span class="text-dim text-sm">Loading...</span>';
-    try{
-        const url='/browse'+(path?'?path='+encodeURIComponent(path):'');
-        const resp=await fetch(url);const data=await resp.json();
-        if(data.error){panel.innerHTML=`<span class="text-error text-sm">${escapeHtml(data.error)}</span>`;return;}
-        let html=`<div class="browse-path">${escapeHtml(data.current)}</div>`;
-        if(data.parent&&data.parent!==data.current)html+=`<div class="browse-item browse-dir" data-field="${escapeAttr(fieldId)}" data-path="${escapeAttr(data.parent)}">📁 ..</div>`;
-        for(const dir of(data.dirs||[])){const sep=(data.current.endsWith('/')||data.current.endsWith('\\'))?'':'/';html+=`<div class="browse-item browse-dir" data-field="${escapeAttr(fieldId)}" data-path="${escapeAttr(data.current+sep+dir)}">📁 ${escapeHtml(dir)}</div>`;}
-        for(const file of(data.files||[])){if(file.toLowerCase().endsWith('.xlsx')){const sep=(data.current.endsWith('/')||data.current.endsWith('\\'))?'':'/';html+=`<div class="browse-item browse-clickable-file" data-field="${escapeAttr(fieldId)}" data-path="${escapeAttr(data.current+sep+file)}">📊 ${escapeHtml(file)}</div>`;}}
-        if(fieldId==='sharepoint_docx')html+=`<div class="text-dim text-xs" style="margin-top:6px;">Select a .xlsx file above</div>`;
-        else html+=`<div style="margin-top:6px;"><button type="button" class="btn btn-sm btn-primary settings-select-folder-btn" data-field="${escapeAttr(fieldId)}" data-path="${escapeAttr(data.current)}">Select This Folder</button></div>`;
-        panel.innerHTML=html;
-    }catch(e){panel.innerHTML='<span class="text-error text-sm">Failed to load.</span>';}
-}
-
-// Validate
-async function validateSettingsPath(fieldId){
-    const input=document.getElementById(fieldId);const status=document.getElementById('status-'+fieldId);
-    if(!input||!status)return;const path=input.value.trim();
-    if(!path){status.textContent='';return;}
-    try{const resp=await fetch('/validate-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:fieldId,path})});const data=await resp.json();
-    if(!data.exists){status.textContent='✗ Not found';status.style.color='var(--color-error)';}
-    else if(!data.readable){status.textContent='✗ Not readable';status.style.color='var(--color-error)';}
-    else if(data.file_count===0){status.textContent='⚠ Empty';status.style.color='var(--color-warning)';}
-    else{status.textContent=`✓ ${data.file_count} files`;status.style.color='var(--color-success)';}
-    }catch(e){status.textContent='✗ Error';status.style.color='var(--color-error)';}
-}
-const _sd={};function debouncedValidateSettings(f){clearTimeout(_sd[f]);_sd[f]=setTimeout(()=>validateSettingsPath(f),400);}
-
-// Click delegation
-document.addEventListener('click',e=>{
-    const d=e.target.closest('.settings-browse-panel .browse-dir[data-path]');
-    if(d){loadSettingsBrowse(d.dataset.field,d.dataset.path);return;}
-    const f=e.target.closest('.settings-browse-panel .browse-clickable-file[data-path]');
-    if(f){const fid=f.dataset.field;const inp=document.getElementById(fid);if(inp){inp.value=f.dataset.path;validateSettingsPath(fid);if(fid==='sharepoint_docx')onExcelPathChange();}const p=document.getElementById('browse-panel-'+fid);if(p)p.style.display='none';return;}
-    const sb=e.target.closest('.settings-select-folder-btn');
-    if(sb){const fid=sb.dataset.field;const inp=document.getElementById(fid);if(inp){inp.value=sb.dataset.path;validateSettingsPath(fid);}const p=document.getElementById('browse-panel-'+fid);if(p)p.style.display='none';return;}
-    if(!e.target.closest('.settings-browse-panel')&&!e.target.closest('.btn'))document.querySelectorAll('.settings-browse-panel').forEach(p=>p.style.display='none');
-});
-
 // AI title-generation backend (Ollama / any OpenAI-compatible endpoint)
 async function checkLlamafileStatus(){
     const box=document.getElementById('llamafile-status-box');box.textContent='Checking…';
@@ -597,79 +417,6 @@ async function checkLlamafileStatus(){
     if(d.running){box.className='llamafile-box running';box.textContent=`✓ Running — ${d.model} @ ${d.url}`;}
     else{box.className='llamafile-box stopped';box.textContent=`✗ Not reachable at ${d.url||'the configured LLM endpoint'}`;}
     }catch(e){box.className='llamafile-box stopped';box.textContent='✗ Could not check status';}
-}
-
-// Excel
-async function onExcelPathChange(){
-    const path=document.getElementById('sharepoint_docx').value;const st=document.getElementById('excel-file-status');const sel=document.getElementById('excel-sheet-select');
-    if(!path){st.textContent='';return;}
-    try{const r=await fetch('/settings/excel-sheets?path='+encodeURIComponent(path));const d=await r.json();
-    if(d.sheets&&d.sheets.length){st.innerHTML='<span class="badge badge-ok">✓ '+d.sheets.length+' sheet(s)</span>';sel.innerHTML='<option value="">— Select —</option>';d.sheets.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;sel.appendChild(o);});
-    const saved='{{ config.get("excel_mapping", {}).get("sheet_name", "") }}';if(saved&&d.sheets.includes(saved)){sel.value=saved;onSheetChange();}}
-    else{st.innerHTML='<span class="badge badge-error">✗ No sheets</span>';sel.innerHTML='<option value="">—</option>';document.getElementById('column-mapping-section').style.display='none';}
-    }catch(e){st.innerHTML='<span class="badge badge-error">✗ Error</span>';}
-}
-async function onSheetChange(){
-    const path=document.getElementById('sharepoint_docx').value;const sheet=document.getElementById('excel-sheet-select').value;const sec=document.getElementById('column-mapping-section');
-    if(!sheet){sec.style.display='none';return;}sec.style.display='block';
-    try{const r=await fetch(`/settings/excel-columns?path=${encodeURIComponent(path)}&sheet=${encodeURIComponent(sheet)}`);const d=await r.json();const cols=d.columns||[];
-    document.querySelectorAll('.col-map-select').forEach(sel=>{const field=sel.id.replace('map-','');
-    const saved={date_column:'{{ config.get("excel_mapping", {}).get("date_column", "") }}',shorts_title_column:'{{ config.get("excel_mapping", {}).get("shorts_title_column", "") }}',description_column:'{{ config.get("excel_mapping", {}).get("description_column", "") }}',vista_caption_column:'{{ config.get("excel_mapping", {}).get("vista_caption_column", "") }}',tags_column:'{{ config.get("excel_mapping", {}).get("tags_column", "") }}',youtube_title_column:'{{ config.get("excel_mapping", {}).get("youtube_title_column", "") }}',podcast_title_column:'{{ config.get("excel_mapping", {}).get("podcast_title_column", "") }}',episode_title_column:'{{ config.get("excel_mapping", {}).get("episode_title_column", "") }}',passage_column:'{{ config.get("excel_mapping", {}).get("passage_column", "") }}',scripture_column:'{{ config.get("excel_mapping", {}).get("scripture_column", "") }}',prayer_column:'{{ config.get("excel_mapping", {}).get("prayer_column", "") }}',topic_column:'{{ config.get("excel_mapping", {}).get("topic_column", "") }}'};
-    sel.innerHTML='<option value="">(none)</option>';cols.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;if(saved[field]===c)o.selected=true;sel.appendChild(o);});});
-    loadSheetPreview(path,sheet);
-    }catch(e){}
-}
-async function loadSheetPreview(path,sheet){
-    const c=document.getElementById('sheet-preview-section');
-    try{const r=await fetch(`/settings/excel-preview?path=${encodeURIComponent(path)}&sheet=${encodeURIComponent(sheet)}`);const d=await r.json();
-    if(!d.rows||!d.rows.length){c.innerHTML='<p class="text-dim text-sm">No data</p>';return;}
-    const cols=Object.keys(d.rows[0]);let tbl='<table class="preview-table"><thead><tr>';
-    cols.forEach(col=>tbl+=`<th>${col}</th>`);tbl+='</tr></thead><tbody>';
-    d.rows.forEach(row=>{tbl+='<tr>';cols.forEach(col=>tbl+=`<td>${row[col]||''}</td>`);tbl+='</tr>';});
-    tbl+='</tbody></table>';
-    c.innerHTML=`<h4 style="margin:12px 0 6px;font-size:.88rem;">Preview</h4>`+
-        `<div id="preview-viewport" style="position:relative;width:100%;height:200px;overflow:hidden;cursor:grab;box-shadow:inset 0 0 10px rgba(0,0,0,0.18);border-radius:4px;">` +
-        `<div id="preview-canvas" style="position:absolute;top:0;left:0;transform-origin:top left;will-change:transform;">${tbl}</div>`+
-        `<button type="button" id="preview-reset-btn" style="position:absolute;top:6px;right:6px;z-index:10;padding:2px 8px;font-size:.75rem;cursor:pointer;background:var(--color-surface,#fff);border:1px solid var(--color-border,#ccc);border-radius:3px;opacity:.85;" onclick="resetPreviewView()">Reset View</button>`+
-        `</div>`;
-    initPreviewPanZoom();
-    }catch(e){c.innerHTML='<p class="text-error text-sm">Failed</p>';}
-}
-function resetPreviewView(){
-    const vp=document.getElementById('preview-viewport');if(!vp)return;
-    vp._px=0;vp._py=0;vp._scale=1;
-    document.getElementById('preview-canvas').style.transform='translate(0px,0px) scale(1)';
-}
-function initPreviewPanZoom(){
-    const vp=document.getElementById('preview-viewport');if(!vp)return;
-    vp._px=0;vp._py=0;vp._scale=1;vp._dragging=false;vp._sx=0;vp._sy=0;
-    function applyTransform(){
-        document.getElementById('preview-canvas').style.transform=`translate(${vp._px}px,${vp._py}px) scale(${vp._scale})`;
-    }
-    vp.addEventListener('mousedown',e=>{
-        if(e.target.closest('#preview-reset-btn'))return;
-        vp._dragging=true;vp._sx=e.clientX-vp._px;vp._sy=e.clientY-vp._py;
-        vp.style.cursor='grabbing';e.preventDefault();
-    });
-    window.addEventListener('mousemove',e=>{
-        if(!vp._dragging)return;
-        vp._px=e.clientX-vp._sx;vp._py=e.clientY-vp._sy;applyTransform();
-    });
-    window.addEventListener('mouseup',()=>{if(vp._dragging){vp._dragging=false;vp.style.cursor='grab';}});
-    vp.addEventListener('wheel',e=>{
-        e.preventDefault();
-        const delta=e.deltaY>0?-0.08:0.08;
-        vp._scale=Math.min(1.5,Math.max(0.6,vp._scale+delta));applyTransform();
-    },{passive:false});
-}
-async function saveExcelMapping(){
-    const m={sheet_name:document.getElementById('excel-sheet-select').value,date_column:document.getElementById('map-date_column').value,shorts_title_column:document.getElementById('map-shorts_title_column').value,description_column:document.getElementById('map-description_column').value,vista_caption_column:document.getElementById('map-vista_caption_column').value,tags_column:document.getElementById('map-tags_column').value,youtube_title_column:document.getElementById('map-youtube_title_column').value,podcast_title_column:document.getElementById('map-podcast_title_column').value,episode_title_column:document.getElementById('map-episode_title_column').value,passage_column:document.getElementById('map-passage_column').value,scripture_column:document.getElementById('map-scripture_column').value,prayer_column:document.getElementById('map-prayer_column').value,topic_column:document.getElementById('map-topic_column').value};
-    const st=document.getElementById('mapping-save-status');
-    try{const r=await fetch('/settings/save-excel-mapping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(m)});const d=await r.json();
-    if(d.success){st.innerHTML='<span class="text-success">✓ Saved</span>';showToast('Mapping saved','success');}
-    else st.innerHTML='<span class="text-error">✗ '+(d.error||'Failed')+'</span>';
-    }catch(e){st.innerHTML='<span class="text-error">✗ Error</span>';}
-    setTimeout(()=>{st.textContent='';},3000);
 }
 
 // Quota
@@ -683,8 +430,6 @@ async function loadYouTubeQuotaStatus(){
 // Init
 document.addEventListener('DOMContentLoaded',()=>{
     checkLlamafileStatus();loadYouTubeQuotaStatus();
-    const xl=document.getElementById('sharepoint_docx').value;if(xl)onExcelPathChange();
-    ['dir_base','dir_youtube_video','dir_youtube_shorts','dir_podcast','dir_thumbnails','dir_email_thumbnails'].forEach(f=>{const i=document.getElementById(f);if(i&&i.value.trim())validateSettingsPath(f);});
     initRemoteLogin();
 });
 

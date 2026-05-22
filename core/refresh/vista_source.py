@@ -68,8 +68,16 @@ _TIME_RE = re.compile(r"^(\d{1,2})(?::(\d{2}))?\s*([ap])", re.I)
 # stories and posts in the live dashboard.
 _STORY_ICON_SIGNATURE = "M9.19 12.003h2.784M11.974"
 
+# The same Vista account hosts non-Daily-Life Facebook posts (images/links,
+# scheduled at odd times) that we don't want on the calendar. The Daily Life
+# posts are videos, whose post-type icon is a film frame + play arrow. We keep
+# only Facebook events carrying this video-icon signature. Verified live
+# 2026-05-22: 36 video (7a, Daily Life) vs 3 non-video (odd times, noise).
+_VIDEO_ICON_SIGNATURE = "M3.163 7.349h17.674"
+
 _PAGE_DUMP_JS = r"""
-(storySig) => {
+(sigs) => {
+  const storySig = sigs[0], videoSig = sigs[1];
   const events = Array.from(document.querySelectorAll('a.fc-daygrid-event'));
   const out = [];
   for (const ev of events) {
@@ -97,14 +105,16 @@ _PAGE_DUMP_JS = r"""
       }
     }
 
-    // Detect Instagram Stories by their post-type icon's SVG path.
+    // Inspect the post-type icon's SVG paths: detect Stories and videos.
     let isStory = false;
+    let isVideo = false;
     for (const svg of ev.querySelectorAll('svg path')) {
       const d = svg.getAttribute('d') || '';
-      if (d.startsWith(storySig)) { isStory = true; break; }
+      if (d.startsWith(storySig)) { isStory = true; }
+      if (d.startsWith(videoSig)) { isVideo = true; }
     }
 
-    out.push({ isoDate, postId, network, text, isStory });
+    out.push({ isoDate, postId, network, text, isStory, isVideo });
   }
   return out;
 }
@@ -236,7 +246,7 @@ def _capture_events_in_window(page, start: date, end: date) -> list[dict]:
     aggregate: dict[tuple, dict] = {}
 
     # Always include events from the initially-rendered month too.
-    for ev in (page.evaluate(_PAGE_DUMP_JS, _STORY_ICON_SIGNATURE) or []):
+    for ev in (page.evaluate(_PAGE_DUMP_JS, [_STORY_ICON_SIGNATURE, _VIDEO_ICON_SIGNATURE]) or []):
         key = (ev.get("postId") or "", ev.get("network") or "", ev.get("isoDate") or "")
         aggregate[key] = ev
 
@@ -270,7 +280,7 @@ def _capture_events_in_window(page, start: date, end: date) -> list[dict]:
         except Exception:
             logger.warning("vista_source: day grid for %s never rendered", target)
 
-        for ev in (page.evaluate(_PAGE_DUMP_JS, _STORY_ICON_SIGNATURE) or []):
+        for ev in (page.evaluate(_PAGE_DUMP_JS, [_STORY_ICON_SIGNATURE, _VIDEO_ICON_SIGNATURE]) or []):
             key = (ev.get("postId") or "",
                    ev.get("network") or "",
                    ev.get("isoDate") or "")
@@ -355,6 +365,12 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
             # managed manually outside this app, so surfacing them
             # would just create dedup noise on the calendar.
             if ev.get("isStory"):
+                continue
+
+            # The Vista account also hosts non-Daily-Life Facebook posts
+            # (images/links at odd times). Daily Life FB posts are videos, so
+            # keep only Facebook events whose post-type icon is the video icon.
+            if network == "facebook" and not ev.get("isVideo"):
                 continue
 
             text = ev.get("text") or ""

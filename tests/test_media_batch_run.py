@@ -137,6 +137,41 @@ def test_batch_entries_carry_spreadsheet_metadata(client, monkeypatch):
     assert entry.platforms_enabled.get("youtube_video") is True
 
 
+def test_batch_overrides_win_over_spreadsheet(client, monkeypatch):
+    """A per-date customize override replaces the spreadsheet value."""
+    import io
+    import openpyxl
+
+    captured = {}
+    monkeypatch.setattr(upload_jobs, "run_batch",
+                        lambda **k: (captured.update(entries=k["entries_snapshot"]) or
+                                     set(k["file_paths"].values())))
+
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Plan"
+    ws.append(["Date", "Title"]); ws.append(["2025-05-21", "Sheet Title"])
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    client.post("/media/spreadsheet", data={"file": (buf, "p.xlsx")},
+                content_type="multipart/form-data")
+    client.post("/media/mapping", json={
+        "sheet_name": "Plan", "date_column": "Date", "youtube_title_column": "Title",
+    })
+
+    run_id = _init(client)
+    file_id = _new_file(client, run_id)
+    _complete_file(client, run_id, file_id)
+    resp = client.post("/media/batch/run", json={
+        "run_id": run_id, "dates": ["2025-05-21"], "platforms": ["youtube_video"],
+        "files": {file_id: {"category": "youtube_video", "date": "2025-05-21"}},
+        "overrides": {"2025-05-21": {"youtube_title": "Edited Title"}},
+    })
+    assert resp.status_code == 200
+    job_id = resp.get_json()["job_id"]
+    deadline = time.time() + 10
+    while time.time() < deadline and not (upload_jobs.get_job(job_id) or {}).get("done"):
+        time.sleep(0.05)
+    assert captured["entries"]["2025-05-21"].youtube_title == "Edited Title"
+
+
 def test_run_finish_releases_lock(client):
     run_id = _init(client)
     # Busy while active.

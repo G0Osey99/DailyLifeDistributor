@@ -21,11 +21,14 @@ else 'youtube_video'.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import date, datetime, timezone
 
 from core.calendar_refresh import ExternalItem
 from core.quota import track_quota_usage
+
+log = logging.getLogger(__name__)
 
 NAME = "youtube"
 PLATFORMS = ["youtube_video", "youtube_shorts"]
@@ -88,6 +91,34 @@ def _walk_uploads(yt, playlist_id: str, oldest_allowed: date, max_items: int = 2
             return
 
 
+def _search_owned_video_ids(yt, max_items: int = 100):
+    """Discover owned video IDs (incl. private) via ``search.list(forMine=True)``.
+
+    The uploads playlist omits *private* videos for the owner, so scheduled
+    videos — which YouTube keeps ``private`` until their ``publishAt`` — never
+    surface through :func:`_walk_uploads`. ``search.list`` with ``forMine=True``
+    is the only API path that returns the owner's videos regardless of privacy,
+    so it's how we pick up scheduled drafts. It costs 100 units/call, so we cap
+    the walk; ``order=date`` surfaces freshly-created scheduled items first.
+    """
+    ids: list[str] = []
+    page_token = None
+    while len(ids) < max_items:
+        resp = yt.search().list(
+            part="id", forMine=True, type="video",
+            order="date", maxResults=50, pageToken=page_token,
+        ).execute()
+        track_quota_usage("refresh_search_list")
+        for it in resp.get("items", []):
+            vid = (it.get("id") or {}).get("videoId")
+            if vid:
+                ids.append(vid)
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return ids
+
+
 def _classify(duration_seconds: int) -> str:
     return "youtube_shorts" if 0 < duration_seconds <= 60 else "youtube_video"
 
@@ -124,7 +155,25 @@ def _resolve_date_and_status(status_obj: dict, snippet: dict) -> tuple[str, str,
 def fetch(window_start: date, window_end: date, max_items: int = 200) -> list[ExternalItem]:
     yt = _build_client()
     playlist_id = _uploads_playlist_id(yt)
-    video_ids = list(_walk_uploads(yt, playlist_id, oldest_allowed=window_start, max_items=max_items))
+    walk_ids = list(_walk_uploads(yt, playlist_id, oldest_allowed=window_start, max_items=max_items))
+
+    # The uploads playlist can't see private/scheduled videos, so do a second
+    # forMine search pass to pick those up. Keep it best-effort: a search
+    # failure must not lose the published items we already have.
+    try:
+        search_ids = _search_owned_video_ids(yt, max_items=max_items)
+    except Exception as e:  # noqa: BLE001
+        log.warning("youtube refresh: forMine search failed (%s); "
+                    "scheduled videos may be missing this run", e, exc_info=True)
+        search_ids = []
+
+    seen: set[str] = set()
+    video_ids: list[str] = []
+    for vid in walk_ids + search_ids:
+        if vid not in seen:
+            seen.add(vid)
+            video_ids.append(vid)
+
     out: list[ExternalItem] = []
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i + 50]

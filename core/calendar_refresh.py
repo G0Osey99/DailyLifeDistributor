@@ -148,6 +148,7 @@ def get_configured_sources() -> list:
         youtube_source,
         simplecast_source,
         rock_source,
+        rock_email_source,
         vista_source,
     )
-    return [youtube_source, simplecast_source, rock_source, vista_source]
+    return [youtube_source, simplecast_source, rock_source, rock_email_source, vista_source]

@@ -14,7 +14,7 @@ bp = Blueprint("calendar", __name__)
 
 
 # Canonicalize raw platform labels into the chip ids the template uses
-# (yt_video / yt_shorts / podcast / rock / wistia / instagram / facebook).
+# (yt_video / yt_shorts / podcast / rock / rock_email / instagram / facebook).
 # upload_history stores display strings ("YouTube Video"); external_calendar_items
 # stores slugs ("youtube_video"). Without this, filter chips show 0,
 # pills get no color, and dedup misses across the two tables.
@@ -26,7 +26,8 @@ _CHIP_KEY = {
     "simplecast": "podcast",
     "podcast": "podcast",
     "rock": "rock",
-    "wistia": "wistia",
+    "rock_email": "rock_email",
+    "rock email": "rock_email",
     "instagram": "instagram",
     "facebook": "facebook",
     # Vista Social uploads are scheduled to IG+FB. The upload_history row

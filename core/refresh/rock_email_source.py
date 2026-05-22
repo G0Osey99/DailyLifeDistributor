@@ -1,0 +1,168 @@
+"""Scrape the Rock "Daily Life" *email* content channel for the calendar.
+
+This is the calendar-refresh counterpart to the Rock Email uploader
+(`uploaders/rock/email.py`). It surfaces the scheduled/sent email items so
+the calendar can differentiate the Daily Experience (in-app) Rock posts
+(`rock` chip) from the email broadcasts (`rock_email` chip).
+
+Unlike the Daily Experience listing (Title@0, Date@2), the email channel's
+grid has a different column layout — verified live 2026-05-22:
+
+    ['Title', 'Thumbnail', 'YouTube Link', 'Sent',
+     'Youtube Daily Life Media Sync', 'Start', '', 'Expire', ...]
+
+so the date ("Start") sits at index 5, not 2. We therefore locate the date
+and title columns by **header name** rather than a fixed index, which keeps
+this robust if Rock's channel columns are reordered.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+from datetime import date
+
+from playwright.sync_api import sync_playwright
+
+from core.calendar_refresh import ExternalItem, SessionExpiredError
+from core.playwright_session import chromium_launch_kwargs, _persist_session_blob
+from core.refresh.rock_source import (
+    _BASE_URL,
+    _HEADED,
+    _SESSION_FILE,
+    _channel_list_url,
+    _expand_page_size,
+    _looks_like_login,
+    _parse_date,
+)
+
+log = logging.getLogger(__name__)
+
+NAME = "rock_email"
+PLATFORMS = ["rock_email"]
+
+# Default to the live email channel guid; overridable via config so the grab
+# isn't hard-coded to one show.
+try:
+    from uploaders.rock.constants import _CHANNEL_GUID_EMAIL as _DEFAULT_EMAIL_GUID
+except Exception:  # pragma: no cover - constants always present in practice
+    _DEFAULT_EMAIL_GUID = "2182c1f3-8f8c-44f3-987f-75a698fe44a7"
+
+# Header labels we accept for the date / title columns, in priority order.
+_DATE_HEADERS = ("start", "date")
+_TITLE_HEADERS = ("title",)
+
+
+def _email_channel_guids() -> list[str]:
+    """Read configured email-channel guids from config.yaml; fall back to the
+    known production channel so the grab works out of the box."""
+    from core.refresh.rock_source import _CONFIG_FILE
+    if _CONFIG_FILE.exists():
+        import yaml
+        with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        guids = (cfg.get("calendar_refresh") or {}).get("rock_email_channel_guids")
+        if guids:
+            return list(guids)
+    return [_DEFAULT_EMAIL_GUID]
+
+
+def _col_index(headers: list[str], wanted: tuple[str, ...]) -> int | None:
+    lowered = [(h or "").strip().lower() for h in headers]
+    for w in wanted:
+        if w in lowered:
+            return lowered.index(w)
+    return None
+
+
+def _rows_to_items(headers, rows, window_start: date, window_end: date,
+                   today: date, guid: str = "") -> list[ExternalItem]:
+    """Pure transform: scraped grid (headers + rows) -> windowed ExternalItems.
+
+    Kept Playwright-free so the header-based column detection and the
+    date/status logic are unit-testable against captured grid shapes.
+    """
+    date_idx = _col_index(headers, _DATE_HEADERS)
+    title_idx = _col_index(headers, _TITLE_HEADERS)
+    if title_idx is None:
+        title_idx = 0
+    if date_idx is None:
+        log.warning("Rock email refresh: no Start/Date column in headers %s", headers)
+        return []
+
+    out: list[ExternalItem] = []
+    for r in rows:
+        cells = r.get("cells") or []
+        if len(cells) <= date_idx:
+            continue
+        d = _parse_date(cells[date_idx])
+        if not d:
+            continue
+        if not (window_start <= d <= window_end):
+            continue
+        title = cells[title_idx] if len(cells) > title_idx else ""
+        out.append(ExternalItem(
+            platform="rock_email",
+            external_id=str(r.get("id", "")),
+            iso_date=d.isoformat(),
+            scheduled_time="",
+            title=title,
+            url=f"{_BASE_URL}/ContentChannelItem/{r.get('id', '')}",
+            status="published" if d <= today else "scheduled",
+            raw_json=json.dumps({"channel_guid": guid}),
+        ))
+    return out
+
+
+def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
+    if not _SESSION_FILE.exists():
+        raise SessionExpiredError("rock_session.json missing")
+
+    guids = _email_channel_guids()
+    if not guids:
+        return []
+
+    today = date.today()
+    out: list[ExternalItem] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            **chromium_launch_kwargs("ROCK_CHROME_PATH", headless=not _HEADED))
+        ctx = browser.new_context(storage_state=str(_SESSION_FILE))
+        page = ctx.new_page()
+        try:
+            for guid in guids:
+                page.goto(_channel_list_url(guid), wait_until="domcontentloaded", timeout=60_000)
+                if _looks_like_login(page.url):
+                    raise SessionExpiredError("redirected to login")
+                try:
+                    page.wait_for_selector(".grid-table tbody tr", timeout=20_000)
+                except Exception:
+                    log.warning("Rock email refresh: no rows for channel %s", guid)
+                    continue
+                _expand_page_size(page)
+                page.wait_for_timeout(500)
+
+                data = page.evaluate("""
+                    () => {
+                      const heads = Array.from(
+                        document.querySelectorAll('.grid-table thead th')
+                      ).map(t => t.innerText.trim());
+                      const rows = Array.from(document.querySelectorAll('.grid-table tbody tr'))
+                        .map(tr => ({
+                            id: tr.getAttribute('datakey') || '',
+                            cells: Array.from(tr.cells).map(c => c.innerText.trim()),
+                        }))
+                        .filter(r => r.id);
+                      return {heads, rows};
+                    }
+                """)
+                headers = data.get("heads") or []
+                rows = data.get("rows") or []
+                log.info("Rock email refresh: channel %s yielded %d rows", guid, len(rows))
+                out.extend(_rows_to_items(
+                    headers, rows, window_start, window_end, today, guid=guid))
+            ctx.storage_state(path=str(_SESSION_FILE))
+            _persist_session_blob(str(_SESSION_FILE))
+        finally:
+            browser.close()
+    return out

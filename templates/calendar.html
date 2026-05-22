@@ -27,7 +27,7 @@
         --p-yt-video:   oklch(0.62 0.20 25);
         --p-yt-shorts:  oklch(0.65 0.21 0);
         --p-podcast:    oklch(0.72 0.16 70);
-        --p-wistia:     oklch(0.58 0.18 305);
+        --p-rock-email: oklch(0.58 0.18 305);
         --p-rock:       oklch(0.62 0.13 195);
         --p-instagram:  oklch(0.66 0.20 350);
         --p-facebook:   oklch(0.55 0.18 265);
@@ -256,7 +256,7 @@
                     ('yt_video',  'Video',     '--p-yt-video'),
                     ('yt_shorts', 'Shorts',    '--p-yt-shorts'),
                     ('podcast',   'Podcast',   '--p-podcast'),
-                    ('wistia',    'Wistia',    '--p-wistia'),
+                    ('rock_email','Rock Email','--p-rock-email'),
                     ('rock',      'Rock',      '--p-rock'),
                     ('instagram', 'Instagram', '--p-instagram'),
                     ('facebook',  'Facebook',  '--p-facebook')
@@ -304,7 +304,7 @@
                             {% for post in cell.posts %}
                             {% set pvar = {
                                 'yt_video':'--p-yt-video','yt_shorts':'--p-yt-shorts','podcast':'--p-podcast',
-                                'wistia':'--p-wistia','rock':'--p-rock','instagram':'--p-instagram','facebook':'--p-facebook'
+                                'rock_email':'--p-rock-email','rock':'--p-rock','instagram':'--p-instagram','facebook':'--p-facebook'
                             }.get(post.platform, '--accent') %}
                             <button type="button" class="cal-pill"
                                 data-platform="{{ post.platform }}"
@@ -385,11 +385,11 @@
 (function(){
     const PLATFORM_LABELS = {
         yt_video: "YouTube Video", yt_shorts: "YouTube Shorts", podcast: "Podcast",
-        wistia: "Wistia", rock: "Rock RMS", instagram: "Instagram", facebook: "Facebook"
+        rock_email: "Rock Email", rock: "Rock RMS", instagram: "Instagram", facebook: "Facebook"
     };
     const PLATFORM_VARS = {
         yt_video: "--p-yt-video", yt_shorts: "--p-yt-shorts", podcast: "--p-podcast",
-        wistia: "--p-wistia", rock: "--p-rock", instagram: "--p-instagram", facebook: "--p-facebook"
+        rock_email: "--p-rock-email", rock: "--p-rock", instagram: "--p-instagram", facebook: "--p-facebook"
     };
 
     const enabledP = new Set(Object.keys(PLATFORM_LABELS));

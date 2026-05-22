@@ -6,11 +6,14 @@ First run prompts for a pairing code (generated in the web UI).
 from __future__ import annotations
 
 import argparse
+import logging
 import socket
 import time
 
 from agent import config, pair
 from agent.transport import AgentConnection
+
+log = logging.getLogger(__name__)
 
 
 def _device_name() -> str:
@@ -38,10 +41,12 @@ def run(server_url: str) -> None:
         conn = AgentConnection(server_url, token)
         try:
             conn.connect()
-            while conn.run_once(lambda m: _on_message(conn, m)):
+            # Bind conn into the callback's default arg so the closure can't
+            # accidentally pick up a later iteration's connection.
+            while conn.run_once(lambda m, c=conn: _on_message(c, m)):
                 pass
         except Exception:  # noqa: BLE001 — reconnect on any drop
-            pass
+            log.debug("agent connection dropped; reconnecting", exc_info=True)
         finally:
             conn.close()
         time.sleep(3)  # backoff before reconnect

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from typing import Callable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import simple_websocket
 
@@ -20,7 +20,8 @@ def _connect(url: str):
 def _to_ws_url(server_url: str, token: str) -> str:
     parts = urlsplit(server_url.rstrip("/"))
     scheme = "wss" if parts.scheme == "https" else "ws"
-    return urlunsplit((scheme, parts.netloc, "/agent/socket", f"token={token}", ""))
+    return urlunsplit((scheme, parts.netloc, "/agent/socket",
+                       urlencode({"token": token}), ""))
 
 
 class AgentConnection:

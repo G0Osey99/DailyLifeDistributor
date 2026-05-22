@@ -51,6 +51,8 @@ def test_agent_main_pong(live, monkeypatch):
         first = json.loads(browser.receive(timeout=5))
         if first.get("type") == "presence" and first["payload"]["online"] is True:
             break
+    else:
+        pytest.fail("agent never reported presence=online within 5 messages")
     browser.send(json.dumps({"v": 1, "type": "ping", "payload": {"n": 42}}))
     pong = json.loads(browser.receive(timeout=5))
     assert pong["type"] == "pong" and pong["payload"]["n"] == 42

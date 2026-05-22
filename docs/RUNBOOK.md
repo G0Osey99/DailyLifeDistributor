@@ -55,9 +55,20 @@ cd ~/DailyLifeDistributor && git pull && cd deploy && docker compose up -d --bui
 
 - `GET /health` (needs the `autoalert.pro` Host header) reports the SQLite file,
   the title LLM (Ollama) reachability, and Chrome availability.
-- App logs: `docker logs dld --tail 50`.
+- `docker ps` shows the app container's health (`healthy` / `unhealthy`) — the
+  compose `healthcheck` polls `/health` every 60s. **Unhealthy does not restart
+  the app** (compose has no `on-failure` for healthchecks); it's a signal to
+  curl `/health` for the failing subsystem. An LLM (Ollama) blip alone will flip
+  it unhealthy even though uploads/login still work — check the JSON.
+- App logs: `docker logs dld --tail 50` (also persisted to `logs/daily_life.log`,
+  rotating at 5 MB × 5 backups).
 - A platform login that silently expired surfaces as a per-row upload error;
   fix it under **Settings → Connect** (re-auth via the streamed browser).
+- If a platform fails repeatedly inside one run (e.g. a broken session), its
+  **circuit breaker opens** and the remaining dates for that platform are
+  skipped fast (per-row "temporarily disabled" error) instead of relaunching
+  Chrome each time. Re-Connect the platform in Settings, then re-run — completed
+  rows are skipped idempotently and the breaker re-probes after a short cooldown.
 
 ## Known limitations
 

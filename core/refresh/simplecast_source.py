@@ -42,6 +42,56 @@ _ROW_DT_RE = re.compile(
 )
 
 
+def _classify_status(badge: str) -> str | None:
+    """Map a SimpleCast episode-list badge to a calendar status.
+
+    Published episodes render with **no** badge in the dashboard table;
+    Scheduled (future) episodes carry a "Scheduled" badge. Anything else
+    (Draft / Private) isn't a calendar item, so it's skipped.
+    """
+    b = (badge or "").strip().lower()
+    if b == "scheduled":
+        return "scheduled"
+    if b in ("", "published"):
+        return "published"
+    return None
+
+
+def _rows_to_items(rows, window_start: date, window_end: date) -> list[ExternalItem]:
+    """Pure transform: scraped DOM rows -> windowed ExternalItems.
+
+    Kept Playwright-free so the status/date/title parsing is unit-testable
+    against captured row shapes.
+    """
+    out: list[ExternalItem] = []
+    for r in rows:
+        status = _classify_status(r.get("badge", ""))
+        if status is None:
+            continue
+        dt = _parse_row_datetime(r.get("rowText") or "")
+        if not dt:
+            continue
+        d = dt.date()
+        if not (window_start <= d <= window_end):
+            continue
+        lines = [ln.strip() for ln in (r.get("rowText") or "").splitlines() if ln.strip()]
+        lines = [ln for ln in lines if "scheduled" not in ln.lower()
+                 and "published" not in ln.lower()
+                 and not _ROW_DT_RE.search(ln)]
+        title = max(lines, key=len) if lines else ""
+        out.append(ExternalItem(
+            platform="simplecast",
+            external_id=r["id"],
+            iso_date=d.isoformat(),
+            scheduled_time=dt.isoformat(),
+            title=title,
+            url=r["href"],
+            status=status,
+            raw_json=json.dumps({"badge": r.get("badge", "")}),
+        ))
+    return out
+
+
 def _list_url() -> str:
     explicit = os.environ.get("SIMPLECAST_UPLOAD_URL", "").strip()
     if explicit:
@@ -142,33 +192,5 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
             }
         """)
         # storage_state is auto-saved by PlaywrightSession on exit.
-        for r in rows:
-            badge = (r["badge"] or "").strip().lower()
-            if badge == "scheduled":
-                status = "scheduled"
-            elif badge == "published":
-                status = "published"
-            else:
-                continue
-            dt = _parse_row_datetime(r["rowText"] or "")
-            if not dt:
-                continue
-            d = dt.date()
-            if not (window_start <= d <= window_end):
-                continue
-            lines = [ln.strip() for ln in (r["rowText"] or "").splitlines() if ln.strip()]
-            lines = [ln for ln in lines if "scheduled" not in ln.lower()
-                     and "published" not in ln.lower()
-                     and not _ROW_DT_RE.search(ln)]
-            title = max(lines, key=len) if lines else ""
-            out.append(ExternalItem(
-                platform="simplecast",
-                external_id=r["id"],
-                iso_date=d.isoformat(),
-                scheduled_time=dt.isoformat(),
-                title=title,
-                url=r["href"],
-                status=status,
-                raw_json=json.dumps({"badge": r["badge"]}),
-            ))
+        out = _rows_to_items(rows, window_start, window_end)
     return out

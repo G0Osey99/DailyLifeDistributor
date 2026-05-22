@@ -37,6 +37,7 @@ from core.calendar_refresh import ExternalItem, SessionExpiredError
 from core.playwright_session import (
     PlaywrightSession,
     SessionConfig,
+    has_session,
     url_marker_login_check,
 )
 
@@ -315,7 +316,10 @@ _SESSION_CFG = SessionConfig(
 
 
 def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
-    if not _SESSION_FILE.exists():
+    # Guard on the encrypted store, not the on-disk file: PlaywrightSession
+    # removes the materialized file on exit and re-creates it from the store
+    # on enter, so a prior run leaves no file even though the session is fine.
+    if not has_session(str(_SESSION_FILE)):
         raise SessionExpiredError("vista_social_session.json missing")
 
     out: list[ExternalItem] = []

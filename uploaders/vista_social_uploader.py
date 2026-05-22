@@ -303,8 +303,8 @@ def _set_schedule_datetime(page, schedule_dt: datetime) -> None:
         from zoneinfo import ZoneInfo
         if target.tzinfo is not None:
             target = target.astimezone(ZoneInfo("America/New_York"))
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — fall back to the original datetime
+        logger.debug("vista: tz conversion to America/New_York failed: %s", e)
 
     # Build platform-portable "Apr 29, 2026" without %-d (Linux-only).
     month_abbr = target.strftime("%b")

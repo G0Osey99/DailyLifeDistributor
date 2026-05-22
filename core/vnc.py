@@ -85,15 +85,16 @@ def _stop_locked() -> None:
         try:
             _proc.terminate()
             _proc.wait(timeout=5)
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — escalate to kill
+            log.debug("x11vnc terminate failed, killing: %s", e)
             try:
                 _proc.kill()
-            except Exception:
-                pass
+            except Exception as ke:  # noqa: BLE001 — best-effort
+                log.debug("x11vnc kill failed: %s", ke)
         _proc = None
     # Belt-and-suspenders: clear any stray x11vnc bound to our port.
     try:
         subprocess.run(["pkill", "-f", f"x11vnc.*-rfbport {_RFB_PORT}"],
                        capture_output=True, timeout=5)
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — pkill may be absent / nothing to kill
+        log.debug("x11vnc pkill sweep failed: %s", e)

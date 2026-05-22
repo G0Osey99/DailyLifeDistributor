@@ -7,11 +7,14 @@ On the VPS, Chrome is launched headed inside Xvfb (DISPLAY must be set, e.g.
 """
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import threading
 
 from core.playwright_session import SessionConfig
+
+_log = logging.getLogger(__name__)
 
 
 class PlaywrightBrowserHandle:
@@ -85,8 +88,8 @@ class PlaywrightBrowserHandle:
             ):
                 try:
                     closer.close() if hasattr(closer, "close") else closer.stop()
-                except Exception:
-                    pass
+                except Exception as e:  # noqa: BLE001 — teardown is best-effort
+                    _log.debug("remote-login playwright teardown failed: %s", e)
 
 
 def default_browser_launcher(config: SessionConfig) -> PlaywrightBrowserHandle:

@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import yaml
 from flask import (
     Blueprint,
-    current_app,
     flash,
     jsonify,
     redirect,
@@ -18,6 +18,8 @@ from flask import (
 
 import core.config as core_config
 from core.hosted import is_hosted
+
+_log = logging.getLogger(__name__)
 
 # Canonical secret slots surfaced on the Settings → Secrets panel. Values are
 # never shown; "text" secrets get an overwrite-only input, "managed" secrets are
@@ -66,10 +68,9 @@ def _read_env_file() -> dict:
                     key, _, val = line.partition("=")
                     values[key.strip()] = val.strip()
     except OSError as e:
-        try:
-            current_app.logger.warning("Failed to read .env at %s: %s", ENV_PATH, e)
-        except Exception:
-            pass
+        # Module logger (not current_app.logger) so this works outside a
+        # request context and never needs its own swallow guard.
+        _log.warning("Failed to read .env at %s: %s", ENV_PATH, e)
     return values
 
 

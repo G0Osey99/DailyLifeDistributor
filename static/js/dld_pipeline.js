@@ -292,7 +292,9 @@
         buildCustomizeCards(dates);
         $("#select-area").style.display = "none";
         $("#customize-area").style.display = "block";
-        autofillTitles(dates, platforms);  // fire-and-forget; fills blanks as they return
+        // Fire-and-forget; fills blanks as suggestions return. Guard the
+        // rejection so an unawaited failure can't become an unhandled rejection.
+        autofillTitles(dates, platforms).catch((e) => console.error("autofill titles failed:", e));
     });
 
     // ── Upload orchestration (batched, chunked, SSE) ─────────────────────

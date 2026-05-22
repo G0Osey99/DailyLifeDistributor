@@ -90,6 +90,36 @@ def _persist_session_blob(session_file: str) -> None:
         secrets_store.set_blob(_session_secret_name(session_file), f.read())
 
 
+# Session files the hosted instance restores from the encrypted store on boot.
+# A container rebuild runs `COPY . .`, which wipes /app (including any
+# materialized *_session.json), so without this restore the box looks logged
+# out after every redeploy even though the encrypted blobs persist on the
+# dld-data volume. _persist_session_blob() keeps the store side up to date.
+_KNOWN_SESSION_BASENAMES = (
+    "simplecast_session.json",
+    "vista_social_session.json",
+    "rock_session.json",
+)
+
+
+def materialize_known_sessions() -> int:
+    """Restore each known session blob from the encrypted store to its file at
+    the project root. No-op for a blob that isn't stored or whose file already
+    exists. Returns how many files were restored. Safe to call at startup."""
+    from core.config import PROJECT_ROOT
+    restored = 0
+    for name in _KNOWN_SESSION_BASENAMES:
+        path = os.path.join(PROJECT_ROOT, name)
+        if os.path.exists(path):
+            continue
+        try:
+            if _load_session_blob_to(path):
+                restored += 1
+        except Exception:
+            log.warning("could not restore session %s from store", name, exc_info=True)
+    return restored
+
+
 def has_session(session_file: str) -> bool:
     """True if a saved session exists in the store or on disk."""
     from core import secrets_store

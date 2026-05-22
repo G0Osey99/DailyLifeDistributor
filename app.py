@@ -360,6 +360,18 @@ def create_app() -> Flask:
     app.register_blueprint(remote_login_bp)
     app.register_blueprint(media_bp)
 
+    if os.environ.get("HYBRID_AGENT_ENABLED", "").lower() in ("1", "true", "yes"):
+        from flask_sock import Sock
+        from blueprints.agent import bp as agent_bp, register_sockets
+        app.register_blueprint(agent_bp)
+        sock = Sock(app)
+        register_sockets(sock)
+        # Public (no-session) agent endpoints: the agent redeems a pairing code
+        # and connects its token-authed socket before it has any session. Gated
+        # with the feature so the exemptions only exist when the feature does.
+        # _require_auth closes over this set, so mutating it here is seen there.
+        _PUBLIC_ENDPOINTS.update({"agent.pair_redeem", "agent_socket"})
+
     # Startup orphan sweep: clear any media-upload temp dirs left behind by a
     # previous process (crash / restart). No run is active yet, so pass empty.
     try:

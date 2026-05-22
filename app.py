@@ -370,7 +370,10 @@ def create_app() -> Flask:
         # and connects its token-authed socket before it has any session. Gated
         # with the feature so the exemptions only exist when the feature does.
         # _require_auth closes over this set, so mutating it here is seen there.
-        _PUBLIC_ENDPOINTS.update({"agent.pair_redeem", "agent_socket"})
+        _PUBLIC_ENDPOINTS.update({
+            "agent.pair_redeem", "agent_socket",
+            "agent.release_manifest", "agent.release_binary",
+        })
 
     # Startup orphan sweep: clear any media-upload temp dirs left behind by a
     # previous process (crash / restart). No run is active yet, so pass empty.

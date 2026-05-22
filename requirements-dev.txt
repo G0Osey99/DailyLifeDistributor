@@ -1,2 +1,6 @@
 -r requirements.txt
 pytest>=8.0.0,<9
+# Hybrid-agent (client) deps, needed so the agent/ tests run in CI. They are
+# intentionally NOT in requirements.txt — the server Docker image doesn't need
+# them. simple-websocket already comes transitively via flask-sock.
+keyring>=24,<26

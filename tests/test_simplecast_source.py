@@ -6,8 +6,18 @@ episodes render with an *empty* badge, scheduled (future) episodes carry a
 """
 from datetime import date
 
-from core.calendar_refresh import ExternalItem
+import pytest
+
+from core.calendar_refresh import ExternalItem, SessionExpiredError
 from core.refresh import simplecast_source as s
+
+
+def test_fetch_guard_checks_store_not_file(monkeypatch):
+    # The guard must consult the encrypted store (has_session), not the
+    # transient on-disk file PlaywrightSession deletes after each run.
+    monkeypatch.setattr(s, "has_session", lambda *a, **k: False)
+    with pytest.raises(SessionExpiredError):
+        s.fetch(date(2026, 1, 1), date(2026, 12, 31))
 
 
 def test_classify_status():

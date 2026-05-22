@@ -174,6 +174,25 @@ class SessionExpiredError(RuntimeError):
     """Saved Playwright session is no longer valid and headless cannot recover."""
 
 
+def chromium_launch_kwargs(chrome_path_env: str = "", *, headless: bool) -> dict:
+    """Build ``chromium.launch`` kwargs that respect a per-service Chrome path.
+
+    If ``chrome_path_env`` names an env var that's set (e.g. the VPS points
+    ROCK_CHROME_PATH at /usr/bin/chromium because arm64 has no Google Chrome),
+    launch that binary via ``executable_path``; otherwise fall back to the
+    system Google Chrome via ``channel='chrome'``. Shared by
+    ``PlaywrightSession._launch`` and the calendar-refresh sources so neither
+    path can drift back to a hardcoded ``channel='chrome'``.
+    """
+    kwargs: dict = {"headless": headless}
+    path = (os.environ.get(chrome_path_env, "") or "").strip() if chrome_path_env else ""
+    if path:
+        kwargs["executable_path"] = path
+    else:
+        kwargs["channel"] = "chrome"
+    return kwargs
+
+
 def _atomic_save_storage_state(context, target_path: str) -> None:
     """Save Playwright storage_state to ``target_path`` atomically.
 
@@ -306,14 +325,7 @@ class PlaywrightSession:
 
     def _launch(self, *, headless: bool) -> "Browser":
         assert self._pw is not None
-        kwargs: dict = {"headless": headless}
-        chrome_path = ""
-        if self.config.chrome_path_env:
-            chrome_path = (os.environ.get(self.config.chrome_path_env, "") or "").strip()
-        if chrome_path:
-            kwargs["executable_path"] = chrome_path
-        else:
-            kwargs["channel"] = "chrome"
+        kwargs = chromium_launch_kwargs(self.config.chrome_path_env, headless=headless)
         try:
             return self._pw.chromium.launch(**kwargs)
         except Exception as exc:  # noqa: BLE001

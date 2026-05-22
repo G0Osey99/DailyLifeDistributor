@@ -372,9 +372,28 @@ def clear_rock_session():
     return redirect(url_for("settings.settings"))
 
 
+def _hosted_youtube_oauth_redirect():
+    """Hosted mode: send the user's own browser to Google's consent screen and
+    stash a CSRF state for the callback. The desktop loopback flow can't run on
+    a headless server, so this is the only path that works there."""
+    from flask import session as flask_session
+    from uploaders.youtube_uploader import start_web_authorization
+    redirect_uri = url_for("settings.oauth_youtube_callback",
+                           _external=True, _scheme="https")
+    try:
+        auth_url, state = start_web_authorization(redirect_uri)
+    except Exception as e:
+        flash(f"YouTube authentication failed: {e}", "danger")
+        return redirect(url_for("settings.settings"))
+    flask_session["yt_oauth_state"] = state
+    return redirect(auth_url)
+
+
 @bp.route("/oauth/youtube", methods=["POST"])
 def oauth_youtube():
     """Trigger YouTube OAuth2 flow."""
+    if is_hosted():
+        return _hosted_youtube_oauth_redirect()
     try:
         get_authenticated_service()
         flash("YouTube authentication successful!", "success")
@@ -388,6 +407,8 @@ def oauth_youtube():
 @bp.route("/oauth/youtube/settings", methods=["POST"])
 def oauth_youtube_settings():
     """Trigger YouTube OAuth2 flow and redirect back to settings."""
+    if is_hosted():
+        return _hosted_youtube_oauth_redirect()
     try:
         get_authenticated_service()
         flash("YouTube authentication successful!", "success")
@@ -395,6 +416,42 @@ def oauth_youtube_settings():
         flash(str(e), "danger")
     except Exception as e:
         flash(f"YouTube authentication failed: {str(e)}", "danger")
+    return redirect(url_for("settings.settings"))
+
+
+@bp.route("/oauth/youtube/callback")
+def oauth_youtube_callback():
+    """Google redirects the user's browser here after consent (hosted web
+    flow). Verify the CSRF state, exchange the code for a token, and store it.
+    """
+    from flask import session as flask_session
+    from uploaders.youtube_uploader import finish_web_authorization
+
+    err = request.args.get("error")
+    if err:
+        flash(f"YouTube sign-in was cancelled or failed: {err}", "danger")
+        return redirect(url_for("settings.settings"))
+
+    expected_state = flask_session.pop("yt_oauth_state", None)
+    if not expected_state or expected_state != request.args.get("state"):
+        flash("YouTube sign-in could not be verified (state mismatch). "
+              "Please click Connect YouTube and try again.", "danger")
+        return redirect(url_for("settings.settings"))
+
+    # Rebuild the authorization-response URL from the public https callback so
+    # the internal http hop behind Cloudflare doesn't trip oauthlib's transport
+    # check, and so it matches the registered redirect URI exactly.
+    redirect_uri = url_for("settings.oauth_youtube_callback",
+                           _external=True, _scheme="https")
+    auth_response = redirect_uri
+    if request.query_string:
+        auth_response += "?" + request.query_string.decode("utf-8")
+
+    try:
+        finish_web_authorization(redirect_uri, expected_state, auth_response)
+        flash("YouTube authentication successful!", "success")
+    except Exception as e:
+        flash(f"YouTube authentication failed: {e}", "danger")
     return redirect(url_for("settings.settings"))
 
 

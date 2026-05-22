@@ -24,8 +24,20 @@ def test_agent_pong_routed_to_browsers():
     agent, browser = _Sink(), _Sink()
     r.register_agent("acct", "dev1", agent)
     r.register_browser("acct", "sess1", browser)
+    browser.sent.clear()  # drop the on-connect presence snapshot
     r.route_from_agent("acct", '{"v":1,"type":"pong"}')
     assert browser.sent == ['{"v":1,"type":"pong"}']
+
+
+def test_browser_gets_presence_on_connect_when_agent_online():
+    # A browser connecting while an agent is already online must immediately
+    # receive presence:online (Task 4's WS round-trip depends on this).
+    r = Relay()
+    r.register_agent("acct", "dev1", _Sink())
+    browser = _Sink()
+    r.register_browser("acct", "sess1", browser)
+    assert any('"type": "presence"' in m and '"online": true' in m
+               for m in browser.sent)
 
 
 def test_presence_notifies_browsers_on_agent_connect():
@@ -52,5 +64,6 @@ def test_unregister_browser_stops_delivery():
     r.register_agent("acct", "dev1", agent)
     r.register_browser("acct", "sess1", browser)
     r.unregister_browser("acct", "sess1")
+    browser.sent.clear()  # ignore the on-connect presence snapshot
     r.route_from_agent("acct", '{"v":1,"type":"pong"}')
     assert browser.sent == []

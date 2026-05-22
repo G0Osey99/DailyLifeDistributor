@@ -42,6 +42,11 @@ class Relay:
     def register_browser(self, account: str, session_id: str, sink: Sink) -> None:
         with self._lock:
             self._room(account).browsers[session_id] = sink
+        # Tell the freshly-connected browser the current agent status, so a
+        # browser that connects while an agent is already online learns it
+        # immediately (not only on the next agent connect/disconnect).
+        online = self.agent_online(account)
+        sink(json.dumps({"v": 1, "type": "presence", "payload": {"online": online}}))
 
     def unregister_browser(self, account: str, session_id: str) -> None:
         with self._lock:

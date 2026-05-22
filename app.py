@@ -86,6 +86,16 @@ def _cached_yt_authenticated() -> bool:
     return val
 
 
+def invalidate_yt_auth_cache() -> None:
+    """Drop the cached YouTube-auth state so the next read re-checks the store.
+
+    Called right after the token changes (OAuth success, Clear Token) so the
+    Settings badge flips immediately instead of lagging up to the TTL.
+    """
+    _YT_AUTH_CACHE["value"] = None
+    _YT_AUTH_CACHE["checked_at"] = 0.0
+
+
 def create_app() -> Flask:
     _configure_file_logging()
     validate_env()

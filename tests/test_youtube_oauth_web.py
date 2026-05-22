@@ -98,6 +98,15 @@ def logged_in_client(temp_db):
         yield c
 
 
+def test_invalidate_yt_auth_cache_forces_recheck():
+    import app as a
+    a._YT_AUTH_CACHE["value"] = True
+    a._YT_AUTH_CACHE["checked_at"] = 10_000_000.0
+    a.invalidate_yt_auth_cache()
+    assert a._YT_AUTH_CACHE["value"] is None
+    assert a._YT_AUTH_CACHE["checked_at"] == 0.0
+
+
 def test_callback_rejects_state_mismatch(logged_in_client):
     # No yt_oauth_state was stashed → the CSRF check must fail and bounce the
     # user back to settings rather than exchange the code.

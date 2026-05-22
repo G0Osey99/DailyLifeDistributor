@@ -60,65 +60,6 @@ def default_platforms(config: dict) -> dict:
     }
 
 
-def resolved_dirs(config: dict) -> dict:
-    """Return resolved directory paths from config.yaml."""
-    dirs = config.get("directories", {})
-    base = dirs.get("base", "")
-    return {
-        "youtube_video": os.path.join(base, dirs.get("youtube_video", "")),
-        "youtube_shorts": os.path.join(base, dirs.get("youtube_shorts", "")),
-        "podcast": os.path.join(base, dirs.get("podcast", "")),
-        "thumbnails": os.path.join(base, dirs.get("thumbnails", "")),
-    }
-
-
-def allowed_path_roots(config: dict | None = None) -> list[str]:
-    """Roots that client-supplied paths may live under.
-
-    Used by /browse, /scan, /validate-path, and the /settings/excel-* endpoints
-    to keep someone "fooling around" from listing or reading arbitrary parts
-    of the filesystem (e.g. C:\\Windows, /etc, ~/.ssh). The user's own home
-    directory and the configured media root are always allowed; the project
-    root is allowed so the user can browse the USB drive itself.
-    """
-    if config is None:
-        try:
-            config = load_config()
-        except Exception:
-            config = {}
-    roots: list[str] = []
-
-    def _add(p: str | None) -> None:
-        if not p:
-            return
-        try:
-            real = os.path.realpath(p)
-        except OSError:
-            return
-        if real and real not in roots:
-            roots.append(real)
-
-    _add(os.path.expanduser("~"))
-    _add(PROJECT_ROOT)
-    dirs = (config or {}).get("directories", {}) or {}
-    _add(dirs.get("base"))
-    return roots
-
-
-def is_path_allowed(path: str, config: dict | None = None) -> bool:
-    """Return True iff *path* resolves under one of the allowed roots."""
-    if not path or not isinstance(path, str):
-        return False
-    try:
-        real = os.path.realpath(path)
-    except (OSError, ValueError):
-        return False
-    for root in allowed_path_roots(config):
-        try:
-            common = os.path.commonpath([real, root])
-        except ValueError:
-            # Different drives on Windows raise ValueError.
-            continue
-        if common == root:
-            return True
-    return False
+# Server-side directory resolution + path-allowlist helpers were removed with
+# the browser-streaming pipeline: media now lives on the user's machine and is
+# streamed up per run, so there are no server directories to resolve or gate.

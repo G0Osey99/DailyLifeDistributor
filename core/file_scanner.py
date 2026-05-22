@@ -348,12 +348,15 @@ class FileScanner:
 
     def __init__(self, config: Optional[dict] = None):
         self.config = config or _load_config()
-        dirs = self.config["directories"]
-        self.base = dirs["base"]
-        self.youtube_video_dir = os.path.join(self.base, dirs["youtube_video"])
-        self.youtube_shorts_dir = os.path.join(self.base, dirs["youtube_shorts"])
-        self.podcast_dir = os.path.join(self.base, dirs["podcast"])
-        self.thumbnails_dir = os.path.join(self.base, dirs["thumbnails"])
+        # The browser-streaming pipeline removed server-side directory config;
+        # default to empty so a residual FileScanner caller degrades to "no
+        # files" instead of crashing on a missing `directories` block.
+        dirs = self.config.get("directories", {}) or {}
+        self.base = dirs.get("base", "")
+        self.youtube_video_dir = os.path.join(self.base, dirs.get("youtube_video", ""))
+        self.youtube_shorts_dir = os.path.join(self.base, dirs.get("youtube_shorts", ""))
+        self.podcast_dir = os.path.join(self.base, dirs.get("podcast", ""))
+        self.thumbnails_dir = os.path.join(self.base, dirs.get("thumbnails", ""))
         # Optional: email-specific thumbnails (YouTube-play-button overlay).
         # Older configs won't have this key; treat it as "not configured".
         _email_thumbs = dirs.get("email_thumbnails")

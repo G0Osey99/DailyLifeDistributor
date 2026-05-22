@@ -1,13 +1,6 @@
-directories:
-  base: /Users/marketingserve/Downloads/DailyLife
-  youtube_video: /Users/marketingserve/Downloads/DailyLife/YouTube
-  youtube_shorts: /Users/marketingserve/Downloads/DailyLife/Shorts
-  podcast: /Users/marketingserve/Downloads/DailyLife/Podcast
-  thumbnails: /Users/marketingserve/Downloads/DailyLife/Thumbnails
-  # Email thumbnails are the YouTube-play-button-overlay variant used only by
-  # the Daily Life email channel — kept separate from the YouTube thumbnails.
-  email_thumbnails: /Users/marketingserve/Downloads/DailyLife/EmailThumbnails
-sharepoint_docx: /Users/marketingserve/Downloads/DailyLife/Daily Life Content Publication.xlsx
+# Media folders and the planning spreadsheet are picked per browser session on
+# the dashboard now (browser-streaming pipeline) — no server-side directories
+# or spreadsheet path, and the column mapping lives in the Flask session.
 scheduling:
   timezone: America/New_York
   youtube_video: 03:00
@@ -80,20 +73,6 @@ description_footers:
   podcast: ''
   vista_social: Share this daily devotional with someone to encourage and give them
     hope today!
-excel_mapping:
-  sheet_name: May 26
-  date_column: 'Daily Life Production Publication Master Document '
-  shorts_title_column: ''
-  description_column: 'Unnamed: 12'
-  vista_caption_column: 'Unnamed: 12'
-  tags_column: ''
-  youtube_title_column: 'Unnamed: 10'
-  podcast_title_column: 'Unnamed: 10'
-  passage_column: 'Unnamed: 4'
-  scripture_column: 'Unnamed: 5'
-  episode_title_column: 'Unnamed: 10'
-  prayer_column: 'Unnamed: 14'
-  topic_column: ''
 calendar_refresh:
   window_days_back: 30
   window_days_forward: 180

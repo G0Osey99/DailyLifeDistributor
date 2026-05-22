@@ -39,7 +39,6 @@ from core.config import (
     ENV_PATH,
     PROJECT_ROOT,
     invalidate_config_cache,
-    is_path_allowed,
     load_config,
 )
 from core.excel_parser import ExcelParser
@@ -148,17 +147,8 @@ def settings():
         config["description_footers"]["podcast"] = request.form.get("footer_podcast", "")
         config["description_footers"]["vista_social"] = request.form.get("footer_vista_social", "")
 
-        config.setdefault("directories", {})
-        config["directories"]["base"] = request.form.get("dir_base", "")
-        config["directories"]["youtube_video"] = request.form.get("dir_youtube_video", "")
-        config["directories"]["youtube_shorts"] = request.form.get("dir_youtube_shorts", "")
-        config["directories"]["podcast"] = request.form.get("dir_podcast", "")
-        config["directories"]["thumbnails"] = request.form.get("dir_thumbnails", "")
-        # Only overwrite the email-thumbnail dir when the field is present, so
-        # a Settings page that predates this field can't blank an existing value.
-        if "dir_email_thumbnails" in request.form:
-            config["directories"]["email_thumbnails"] = request.form.get("dir_email_thumbnails", "")
-        config["sharepoint_docx"] = request.form.get("sharepoint_docx", "")
+        # Media folders + the planning spreadsheet are picked per browser
+        # session on the dashboard now — no server-side directory config.
 
         # M12: a full or read-only USB used to 500 the Settings POST. Catch
         # write failures and surface them as flash messages instead.
@@ -455,84 +445,6 @@ def llamafile_status():
         "model": LLM_MODEL,
         "url": LLM_BASE_URL,
     })
-
-
-@bp.route("/settings/excel-sheets")
-def excel_sheets():
-    """Return sheet names for the given Excel file."""
-    from core.excel_parser import get_sheet_names
-    path = request.args.get("path", "")
-    if not path or not os.path.isfile(path):
-        return jsonify({"sheets": [], "error": "File not found"}), 404
-    if not is_path_allowed(path):
-        return jsonify({"sheets": [], "error": "Path is outside the allowed roots."}), 403
-    sheets = get_sheet_names(path)
-    return jsonify({"sheets": sheets})
-
-
-@bp.route("/settings/excel-columns")
-def excel_columns():
-    """Return column names for a sheet in an Excel file."""
-    from core.excel_parser import get_column_names
-    path = request.args.get("path", "")
-    sheet = request.args.get("sheet", "")
-    if not path or not sheet:
-        return jsonify({"columns": []}), 400
-    if not is_path_allowed(path):
-        return jsonify({"columns": [], "error": "Path is outside the allowed roots."}), 403
-    columns = get_column_names(path, sheet)
-    return jsonify({"columns": columns})
-
-
-@bp.route("/settings/excel-preview")
-def excel_preview():
-    """Return first 5 rows of a sheet for preview."""
-    from core.excel_parser import get_sheet_preview
-    path = request.args.get("path", "")
-    sheet = request.args.get("sheet", "")
-    if not path or not sheet:
-        return jsonify({"rows": []}), 400
-    if not is_path_allowed(path):
-        return jsonify({"rows": [], "error": "Path is outside the allowed roots."}), 403
-    rows = get_sheet_preview(path, sheet)
-    return jsonify({"rows": rows})
-
-
-@bp.route("/settings/save-excel-mapping", methods=["POST"])
-def save_excel_mapping():
-    """Save Excel column mapping to config.yaml."""
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
-
-    config = load_config()
-    config["excel_mapping"] = {
-        "sheet_name": data.get("sheet_name", ""),
-        "date_column": data.get("date_column", ""),
-        "shorts_title_column": data.get("shorts_title_column", ""),
-        "description_column": data.get("description_column", ""),
-        "vista_caption_column": data.get("vista_caption_column", ""),
-        "tags_column": data.get("tags_column", ""),
-        "youtube_title_column": data.get("youtube_title_column", ""),
-        "podcast_title_column": data.get("podcast_title_column", ""),
-        "passage_column": data.get("passage_column", ""),
-        "scripture_column": data.get("scripture_column", ""),
-        "episode_title_column": data.get("episode_title_column", ""),
-        "prayer_column": data.get("prayer_column", ""),
-        "topic_column": data.get("topic_column", ""),
-    }
-
-    # M12: surface a JSON error rather than 500 on disk-full / read-only USB.
-    try:
-        with open(core_config.CONFIG_PATH, "w", encoding="utf-8") as f:
-            yaml.safe_dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    except OSError as e:
-        return jsonify({"success": False, "error": f"Could not save config.yaml: {e}"}), 500
-    invalidate_config_cache()
-    ExcelParser(load_config()).invalidate_cache()
-    session.reload_config()
-
-    return jsonify({"success": True})
 
 
 @bp.route("/settings/set-secret", methods=["POST"])

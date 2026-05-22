@@ -35,9 +35,11 @@ _MAX_SPREADSHEET_BYTES = 5 * 1024 * 1024  # 5 MB
 # ~95 MB keeps each chunk POST under Cloudflare's ~100 MB proxied-body cap.
 _MAX_CHUNK = 95 * 1024 * 1024
 
-# Hard ceiling on total bytes reassembled within one run, independent of the
-# free-space check — bounds disk use on the tight VPS even if df is momentarily
-# generous. Overridable via DLD_MAX_RUN_BYTES.
+# Hard ceiling on bytes concurrently on disk for a run, independent of the
+# free-space check — bounds transient disk on the tight VPS even if df is
+# momentarily generous. The counter is decremented as each batch's temp files
+# are deleted, so in practice this caps a single batch's footprint, not a run's
+# cumulative total. Overridable via DLD_MAX_RUN_BYTES.
 _MAX_RUN_BYTES = int(os.environ.get("DLD_MAX_RUN_BYTES", str(40 * 1024 * 1024 * 1024)))
 
 # One upload run at a time across the process. The lock holder is the run_id;
@@ -270,11 +272,22 @@ def _run_batch_worker(job_id, run_id, dates, summary, file_paths,
         emit({"type": "error", "message": f"Batch run crashed: {exc}"})
     finally:
         # Per-batch delete: every physical temp file this batch used, once.
+        # Track freed bytes so the run's byte counter reflects what's actually
+        # on disk — files are removed each batch, so the _MAX_RUN_BYTES ceiling
+        # bounds *concurrent* (per-batch) usage, not a run's cumulative total.
+        freed = 0
         for path in set(file_paths.values()) | consumed:
+            try:
+                freed += os.path.getsize(path)
+            except OSError:
+                pass
             try:
                 os.remove(path)
             except OSError:
                 pass
+        rec = _active_run(run_id)
+        if rec is not None:
+            rec["bytes_total"] = max(0, rec.get("bytes_total", 0) - freed)
         emit({"type": "batch_done", "run_id": run_id})
         emit({"type": "done"})
         if job is not None:

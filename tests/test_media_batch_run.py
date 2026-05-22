@@ -87,6 +87,10 @@ def test_batch_run_happy_path_deletes_temp_files(client, monkeypatch):
         time.sleep(0.05)
     assert captured["file_paths"][("youtube_video", "2025-05-21")] == temp_path
     assert not os.path.exists(temp_path)  # batch temp file deleted
+    # The run's byte counter dropped back to 0 once the batch was deleted, so
+    # the per-run ceiling tracks concurrent (per-batch) disk, not a cumulative
+    # total — a later batch in the same run isn't penalized for earlier ones.
+    assert media._runs[run_id]["bytes_total"] == 0
 
 
 def test_run_finish_releases_lock(client):

@@ -1,205 +1,63 @@
 {% extends "base.html" %}
 {% block title %}Setup — Daily Life Distributor{% endblock %}
 {% block topbar_title %}Setup{% endblock %}
-{% block topbar_sub %}<div class="topbar-sub">Configure media sources and select dates to upload.</div>{% endblock %}
+{% block topbar_sub %}<div class="topbar-sub">Pick your media folders and spreadsheet, match dates, then upload.</div>{% endblock %}
 
 {% block extra_css %}
     .container { max-width: none; padding: 24px 28px 48px; }
-
-    /* ── Two-column setup layout (matches design refresh) ── */
-    .setup-grid {
-        display: grid;
-        grid-template-columns: 1.4fr 1fr;
-        gap: 20px;
-    }
-    @media (max-width: 1100px) {
-        .setup-grid { grid-template-columns: 1fr; }
-    }
+    .setup-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; }
+    @media (max-width: 1100px) { .setup-grid { grid-template-columns: 1fr; } }
     .setup-grid .card { margin-bottom: 0; }
     .setup-right { display: flex; flex-direction: column; gap: 20px; }
 
-    /* ── Compact directory rows ── */
-    .dir-list { display: flex; flex-direction: column; gap: 10px; }
-    .dir-row {
-        display: grid;
-        grid-template-columns: 28px 1fr auto;
-        align-items: center;
-        column-gap: 10px;
-        row-gap: 4px;
-        padding: 10px 12px;
-        border: 1px solid var(--shell-border);
-        border-radius: 10px;
-        background: var(--shell-panel);
-        transition: border-color var(--transition-fast);
+    .picker-list { display: flex; flex-direction: column; gap: 10px; }
+    .picker-row {
+        display: grid; grid-template-columns: 28px 1fr auto; align-items: center;
+        column-gap: 10px; padding: 10px 12px; border: 1px solid var(--shell-border);
+        border-radius: 10px; background: var(--shell-panel);
     }
-    .dir-row:hover { border-color: var(--shell-border-strong); }
-    .dir-row-icon {
-        width: 28px; height: 28px;
-        border-radius: 7px;
-        background: var(--shell-sunken);
-        color: var(--shell-text-muted);
-        display: grid; place-items: center;
-        grid-row: 1 / span 2;
+    .picker-row-icon {
+        width: 28px; height: 28px; border-radius: 7px; background: var(--shell-sunken);
+        color: var(--shell-text-muted); display: grid; place-items: center;
     }
-    .dir-row-body { min-width: 0; }
-    .dir-row-label { font-size: 12.5px; font-weight: 600; color: var(--shell-text); }
-    .dir-row-input {
-        margin-top: 4px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    .dir-row-input input[type="text"] {
-        flex: 1; min-width: 0;
-        font-family: var(--font-mono);
-        font-size: 11.5px;
-        padding: 6px 10px;
-        background: var(--shell-sunken);
-        border: 1px solid var(--shell-border);
-    }
-    .dir-row-input .browse-btn { flex-shrink: 0; }
-    .dir-row-status { display: flex; align-items: center; gap: 6px; }
-    .dir-validation {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 11px;
-        min-height: 16px;
-        white-space: nowrap;
-    }
-    .dir-validation.ok   { color: var(--ok); }
-    .dir-validation.warn { color: var(--warn); }
-    .dir-validation.err  { color: var(--err); }
+    .picker-row-label { font-size: 12.5px; font-weight: 600; color: var(--shell-text); }
+    .picker-row input[type="file"] { font-size: 11.5px; margin-top: 4px; max-width: 100%; }
+    .picker-count { font-size: 11px; color: var(--shell-text-muted); min-width: 64px; text-align: right; }
+    .picker-count.ok { color: var(--ok); }
 
-    .dir-field {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        margin-bottom: 16px;
-    }
-    .dir-field-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .dir-field-row input[type="text"] {
-        flex: 1;
-        font-family: var(--font-mono);
-        font-size: 0.82rem;
-    }
-    .dir-validation-old {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 0.78rem;
-        min-height: 18px;
-    }
-    .dir-validation.ok { color: var(--color-success); }
-    .dir-validation.warn { color: var(--color-warning); }
-    .dir-validation.err { color: var(--color-error); }
-    .browse-panel {
-        background: var(--color-elevated);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        padding: 12px;
-        max-height: 280px;
-        overflow-y: auto;
-        display: none;
-        margin-top: 4px;
-    }
-    .browse-panel .browse-path {
-        font-family: var(--font-mono);
-        font-size: 0.8rem;
-        color: var(--color-text-muted);
-        margin-bottom: 8px;
-        word-break: break-all;
-    }
-    .browse-panel .browse-item {
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: var(--radius-sm);
-        font-size: 0.85rem;
-        transition: background var(--transition-fast);
-    }
-    .browse-panel .browse-item:hover { background: rgba(255,255,255,0.06); }
-    .browse-panel .browse-dir { color: var(--color-text); font-weight: 500; }
-    .browse-panel .browse-file { color: var(--color-text-dim); }
-    .browse-panel .browse-clickable-file { color: var(--color-accent); font-weight: 500; }
-    .date-quick-btns {
-        display: flex;
-        gap: 8px;
-        margin-bottom: 12px;
-    }
-    .date-quick-btns .btn { font-size: 0.78rem; padding: 5px 12px; }
-    .date-quick-btns .btn.active-range { background: var(--color-accent); color: var(--color-base); }
-    .platform-toggles {
-        display: flex;
-        gap: 24px;
-        flex-wrap: wrap;
-    }
-    .platform-toggle-item {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 12px 16px;
-        background: var(--color-elevated);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-lg);
-        min-width: 180px;
-        transition: border-color var(--transition-fast), opacity var(--transition-fast);
-    }
-    .platform-toggle-item.dimmed { opacity: 0.4; }
-    .platform-toggle-item .platform-icon { font-size: 1.3rem; }
-    .platform-toggle-item .platform-label { font-weight: 500; font-size: 0.88rem; }
+    .mapping-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+    .mapping-field { display: flex; flex-direction: column; gap: 4px; }
+    .mapping-field label { font-size: 11px; font-weight: 600; color: var(--shell-text-dim); text-transform: uppercase; letter-spacing: .04em; }
+    .mapping-field select { font-size: 12px; }
+    #mapping-section { display: none; }
+
+    .platform-toggles { display: flex; gap: 12px; flex-wrap: wrap; }
     .scan-spinner { display: none; }
     .scan-spinner.visible { display: inline-flex; align-items: center; gap: 6px; color: var(--color-accent); font-size: 0.85rem; }
     #date-results { margin-top: 24px; }
-    .empty-state {
-        text-align: center;
-        padding: 48px 24px;
-        color: var(--color-text-muted);
-    }
+    .empty-state { text-align: center; padding: 48px 24px; color: var(--color-text-muted); }
     .empty-state .empty-icon { font-size: 3rem; margin-bottom: 12px; opacity: 0.5; }
-    .empty-state p { font-size: 0.9rem; max-width: 400px; margin: 0 auto; }
+    .keep-open-warn {
+        display: none; background: var(--color-warning-bg);
+        border: 1px solid rgba(251,191,36,0.3); border-radius: 12px;
+        padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: var(--color-warning);
+    }
+    .keep-open-warn.visible { display: block; }
     .auth-banner {
-        background: var(--color-warning-bg);
-        border: 1px solid rgba(251,191,36,0.3);
-        border-radius: var(--radius-lg);
-        padding: 16px 20px;
-        margin-bottom: 20px;
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        flex-wrap: wrap;
+        background: var(--color-warning-bg); border: 1px solid rgba(251,191,36,0.3);
+        border-radius: var(--radius-lg); padding: 16px 20px; margin-bottom: 20px;
+        display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
     }
     .auth-banner-text { flex: 1; min-width: 200px; }
-    .auth-banner-text strong { color: var(--color-warning); font-size: 0.95rem; }
-    .auth-banner-text span { color: var(--color-text-muted); font-size: 0.85rem; }
 {% endblock %}
 
 {% block content %}
 {% if resume_session %}
-<div style="
-    background: var(--info-soft);
-    border: 1px solid color-mix(in oklch, var(--info) 25%, transparent);
-    border-radius: 12px;
-    padding: 14px 18px;
-    margin-bottom: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
-">
-    <div style="display:flex; gap:12px; align-items:center;">
-        <div style="width:32px; height:32px; border-radius:8px; background:var(--info-soft); color:var(--info); display:grid; place-items:center;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
-        </div>
-        <div>
-            <div style="font-size:13.5px; font-weight:600; color:var(--info);">Unfinished session detected</div>
-            <div style="font-size:12.5px; color:var(--shell-text-muted);">
-                {{ resume_session.label }} &mdash; last updated {{ resume_session.updated_at[:16].replace('T', ' ') if resume_session.updated_at else '' }}
-            </div>
+<div style="background: var(--info-soft); border: 1px solid color-mix(in oklch, var(--info) 25%, transparent); border-radius: 12px; padding: 14px 18px; margin-bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+    <div>
+        <div style="font-size:13.5px; font-weight:600; color:var(--info);">Unfinished session detected</div>
+        <div style="font-size:12.5px; color:var(--shell-text-muted);">
+            {{ resume_session.label }} &mdash; last updated {{ resume_session.updated_at[:16].replace('T', ' ') if resume_session.updated_at else '' }}
         </div>
     </div>
     <form method="post" action="{{ url_for('history.resume_session') }}" style="margin:0;">
@@ -212,102 +70,109 @@
 <div class="auth-banner">
     <div class="auth-banner-text">
         <strong>⚠ YouTube authentication required</strong><br>
-        <span>Connect your YouTube account before scanning.</span>
+        <span>Connect your YouTube account before uploading.</span>
     </div>
     <a href="{{ url_for('settings.oauth_youtube') }}" class="btn btn-primary">Connect YouTube →</a>
 </div>
 {% endif %}
 
+<div id="keep-open-warn" class="keep-open-warn">
+    ⚠ Keep this tab open until the upload finishes — your browser holds the files and drives the upload. If you close it, re-open and re-select the remaining dates (already-uploaded dates are skipped automatically).
+</div>
+
 <div class="setup-grid">
-    <!-- Directories (left, wider) -->
-    <div class="card" id="dir-panel" style="margin-bottom:0;">
+    <!-- Media folders (left) -->
+    <div class="card" style="margin-bottom:0;">
         <div style="margin-bottom:14px;">
-            <div style="font-size:13.5px; font-weight:600;">Source directories</div>
-            <div style="font-size:12px; color:var(--shell-text-muted); margin-top:2px;">Paths follow your USB drive — hot-swap safe.</div>
+            <div style="font-size:13.5px; font-weight:600;">Media folders</div>
+            <div style="font-size:12px; color:var(--shell-text-muted); margin-top:2px;">Pick the folder on your computer for each media type. Files stay on your machine until you upload.</div>
         </div>
-        <div class="dir-list">
-            {% set _dirs = [
-                ('youtube_video', 'Horizontal Video', 'folder', 'Path to video files...'),
-                ('youtube_shorts', 'Vertical Video', 'folder', 'Path to shorts files...'),
-                ('podcast', 'Podcast', 'folder', 'Path to audio files...'),
-                ('thumbnails', 'Thumbnails', 'folder', 'Path to thumbnail images...'),
-                ('sharepoint_docx', 'Metadata spreadsheet', 'doc', '/path/to/metadata.xlsx'),
+        <div class="picker-list">
+            {% set _pickers = [
+                ('youtube_video', 'Horizontal Video'),
+                ('youtube_shorts', 'Vertical Video (Shorts)'),
+                ('podcast', 'Podcast Audio'),
+                ('thumbnails', 'Thumbnails'),
+                ('email_thumbnails', 'Email Thumbnails'),
             ] %}
-            {% for type_key, label, icon_kind, ph in _dirs %}
-            <div class="dir-row" data-type="{{ type_key }}">
-                <div class="dir-row-icon" aria-hidden="true">
-                    {% if icon_kind == 'folder' %}
+            {% for cat, label in _pickers %}
+            <div class="picker-row">
+                <div class="picker-row-icon" aria-hidden="true">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-                    {% else %}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>
-                    {% endif %}
                 </div>
-                <div class="dir-row-body">
-                    <label for="dir-{{ type_key }}" class="dir-row-label" style="margin:0;">{{ label }}</label>
-                    <div class="dir-row-input">
-                        <input type="text" id="dir-{{ type_key }}" class="dir-input input-mono" data-type="{{ type_key }}" placeholder="{{ ph }}">
-                        <button type="button" class="btn btn-sm btn-secondary browse-btn" data-type="{{ type_key }}">Browse</button>
-                    </div>
+                <div style="min-width:0;">
+                    <div class="picker-row-label">{{ label }}</div>
+                    <input type="file" class="folder-picker" data-category="{{ cat }}" webkitdirectory directory multiple>
                 </div>
-                <div class="dir-row-status">
-                    <span class="status-dot neutral" data-dot="{{ type_key }}"></span>
-                    <span class="dir-validation" data-type="{{ type_key }}"></span>
-                </div>
-                <div class="browse-panel" data-type="{{ type_key }}" style="grid-column:1 / -1;"></div>
+                <div class="picker-count" data-count="{{ cat }}">—</div>
             </div>
             {% endfor %}
         </div>
     </div>
 
-    <!-- Date range + media filters (right) -->
+    <!-- Spreadsheet + mapping (right) -->
     <div class="setup-right">
         <div class="card" style="margin-bottom:0;">
             <div style="margin-bottom:14px;">
-                <div style="font-size:13.5px; font-weight:600;">Date range</div>
-                <div style="font-size:12px; color:var(--shell-text-muted); margin-top:2px;">Which days to scan for media.</div>
+                <div style="font-size:13.5px; font-weight:600;">Planning spreadsheet</div>
+                <div style="font-size:12px; color:var(--shell-text-muted); margin-top:2px;">Upload your .xlsx, then map its columns.</div>
             </div>
-            <div class="date-quick-btns">
-                <button type="button" class="btn btn-secondary btn-sm active-range" id="range-week">This week</button>
-                <button type="button" class="btn btn-secondary btn-sm" id="range-next">Next week</button>
-                <button type="button" class="btn btn-secondary btn-sm" id="range-custom">Custom</button>
-            </div>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:14px;">
-                <div>
-                    <label for="date-start" style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--shell-text-dim);">Start</label>
-                    <input type="date" id="date-start">
+            <input type="file" id="spreadsheet-picker" accept=".xlsx">
+            <div id="spreadsheet-status" style="font-size:12px; margin-top:8px; color:var(--shell-text-muted);"></div>
+
+            <div id="mapping-section" style="margin-top:14px;">
+                <div class="mapping-field" style="margin-bottom:12px;">
+                    <label for="map-sheet">Sheet</label>
+                    <select id="map-sheet"></select>
                 </div>
-                <div>
-                    <label for="date-end" style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--shell-text-dim);">End</label>
-                    <input type="date" id="date-end">
+                <div class="mapping-grid">
+                    {% set _cols = [
+                        ('date_column', 'Date'),
+                        ('youtube_title_column', 'YouTube Title'),
+                        ('shorts_title_column', 'Shorts Title'),
+                        ('podcast_title_column', 'Podcast Title'),
+                        ('episode_title_column', 'Episode Title'),
+                        ('description_column', 'Description'),
+                        ('vista_caption_column', 'Vista Caption'),
+                        ('tags_column', 'Tags'),
+                        ('passage_column', 'Passage'),
+                        ('scripture_column', 'Scripture'),
+                        ('prayer_column', 'Prayer'),
+                        ('topic_column', 'Topic'),
+                        ('transcript_column', 'Transcript'),
+                    ] %}
+                    {% for key, label in _cols %}
+                    <div class="mapping-field">
+                        <label for="map-{{ key }}">{{ label }}</label>
+                        <select id="map-{{ key }}" class="mapping-column" data-key="{{ key }}">
+                            <option value="">—</option>
+                        </select>
+                    </div>
+                    {% endfor %}
                 </div>
+                <button type="button" id="save-mapping-btn" class="btn btn-secondary btn-sm" style="margin-top:12px;">Save mapping</button>
+                <span id="mapping-saved" style="font-size:11px; color:var(--ok); margin-left:8px;"></span>
             </div>
         </div>
 
         <div class="card" style="margin-bottom:0;">
-            <div style="margin-bottom:14px;">
-                <div style="font-size:13.5px; font-weight:600;">Media filters</div>
-                <div style="font-size:12px; color:var(--shell-text-muted); margin-top:2px;">Show dates that include the selected media types.</div>
+            <div style="margin-bottom:10px;">
+                <div style="font-size:13.5px; font-weight:600;">Platforms</div>
+                <div style="font-size:12px; color:var(--shell-text-muted); margin-top:2px;">Which platforms to upload to.</div>
             </div>
-            <div style="display:flex; flex-direction:column; gap:6px;">
-                {% set _filters = [
-                    ('horizontal', 'Horizontal Video', 'video'),
-                    ('vertical',   'Vertical Video',   'play'),
-                    ('podcast',    'Podcast Audio',    'mic'),
-                    ('thumbnail',  'Thumbnail',        'image'),
+            <div class="platform-toggles">
+                {% set _plats = [
+                    ('youtube_video', 'YouTube Video', true),
+                    ('youtube_shorts', 'YouTube Shorts', true),
+                    ('simplecast', 'SimpleCast', true),
+                    ('rock', 'Rock', true),
+                    ('rock_email', 'Rock Email', platforms.get('rock_email', False)),
+                    ('vista_social', 'Vista Social', true),
                 ] %}
-                {% for fkey, flabel, ficon in _filters %}
-                <label class="platform-toggle-item" id="filter-{{ fkey }}" style="display:flex; align-items:center; gap:10px; padding:9px 11px; background:var(--shell-panel); border:1px solid var(--shell-border-strong); border-radius:8px; min-width:0;">
-                    <span style="width:26px; height:26px; border-radius:6px; background:var(--shell-sunken); color:var(--shell-text-muted); display:grid; place-items:center;">
-                        {% if ficon == 'video' %}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="14" height="12" rx="2"/><path d="M17 10l4-2v8l-4-2z"/></svg>
-                        {% elif ficon == 'play' %}<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg>
-                        {% elif ficon == 'mic' %}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-                        {% else %}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M21 16l-5-5L5 21"/></svg>{% endif %}
-                    </span>
-                    <span style="font-size:12.5px; font-weight:500; flex:1;">{{ flabel }}</span>
-                    <span class="toggle-switch">
-                        <input type="checkbox" class="media-filter" data-media="{{ fkey }}" checked>
-                        <span class="toggle-slider"></span>
-                    </span>
+                {% for key, label, on in _plats %}
+                <label class="platform-toggle-item" style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--shell-panel); border:1px solid var(--shell-border-strong); border-radius:8px;">
+                    <input type="checkbox" class="platform-toggle" data-platform="{{ key }}" {% if on %}checked{% endif %}>
+                    <span style="font-size:12.5px; font-weight:500;">{{ label }}</span>
                 </label>
                 {% endfor %}
             </div>
@@ -315,472 +180,24 @@
     </div>
 </div>
 
-<!-- Scan Button -->
 <div style="margin-top:20px;">
-    <button type="button" id="scan-btn" class="btn btn-primary btn-lg btn-full">
-        🔍 Scan for Files
-    </button>
-    <div class="scan-spinner" id="scan-spinner">
-        <span class="spinner"></span> Scanning...
+    <button type="button" id="scan-btn" class="btn btn-primary btn-lg btn-full">🔍 Match dates from folders</button>
+    <div class="scan-spinner" id="scan-spinner"><span class="spinner"></span> Matching...</div>
+</div>
+
+<div id="date-results">
+    <div class="empty-state">
+        <div class="empty-icon">📂</div>
+        <p>Pick your media folders and a spreadsheet above, then click "Match dates from folders".</p>
     </div>
 </div>
 
-<!-- Date Results -->
-<form method="post" action="{{ url_for('scan.index') }}" id="date-form">
-    <input type="hidden" name="global_time_youtube_video" value="{{ scheduling.get('youtube_video', '10:00') }}">
-    <input type="hidden" name="global_time_youtube_shorts" value="{{ scheduling.get('youtube_shorts', '12:00') }}">
-    <input type="hidden" name="global_time_simplecast" value="{{ scheduling.get('simplecast', '06:00') }}">
-    <input type="hidden" name="global_time_vista_social" value="{{ scheduling.get('vista_social', '12:00') }}">
-
-    <div id="date-results">
-    {% if dates %}
-    <div class="card">
-        <h3 class="section-header">Available Dates</h3>
-        <p class="text-muted text-sm mb-md">Select the dates you want to upload, then click Review.</p>
-        <table>
-            <thead>
-                <tr>
-                    <th style="width:40px;"><input type="checkbox" id="select-all"></th>
-                    <th>Date</th>
-                    <th>Media Found</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for entry in dates %}
-                {% set _medias = [] %}
-                {% if entry.youtube_video_path %}{% set _ = _medias.append('horizontal') %}{% endif %}
-                {% if entry.youtube_shorts_path %}{% set _ = _medias.append('vertical') %}{% endif %}
-                {% if entry.podcast_path %}{% set _ = _medias.append('podcast') %}{% endif %}
-                {% if entry.thumbnail_path %}{% set _ = _medias.append('thumbnail') %}{% endif %}
-                <tr data-row-medias="{{ _medias | join(',') }}">
-                    <td><input type="checkbox" name="dates" value="{{ entry.date }}"></td>
-                    <td>
-                        {% if entry.date_ambiguous %}
-                        <select class="date-interp-select" data-row-date="{{ entry.date }}" style="font-size:.85rem; max-width:220px;">
-                            {% for alt in entry.date_alternatives %}
-                            <option value="{{ alt.date }}" {% if alt.date == entry.date %}selected{% endif %}>
-                                {{ alt.display }} ({{ alt.interpretation }})
-                            </option>
-                            {% endfor %}
-                        </select>
-                        <span class="badge badge-warn" style="margin-left:4px;">ambiguous</span>
-                        {% else %}
-                        <strong>{{ entry.display_date }}</strong>
-                        <span class="mono text-dim" style="margin-left:6px;">{{ entry.date }}</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <span class="badge badge-{{ 'ok' if entry.youtube_video_path else 'miss' }}" data-media-badge="horizontal">📹 Horizontal</span>
-                        <span class="badge badge-{{ 'ok' if entry.youtube_shorts_path else 'miss' }}" data-media-badge="vertical">📱 Vertical</span>
-                        <span class="badge badge-{{ 'ok' if entry.podcast_path else 'miss' }}" data-media-badge="podcast">🎙️ Podcast</span>
-                        <span class="badge badge-{{ 'ok' if entry.thumbnail_path else 'miss' }}" data-media-badge="thumbnail">🖼️ Thumb</span>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    <button type="submit" class="btn btn-primary btn-lg btn-full">Review Selected Dates →</button>
-    {% else %}
-    <div class="empty-state">
-        <div class="empty-icon">📂</div>
-        <p>No media files found. Configure your directories above and click "Scan for Files".</p>
-    </div>
-    {% endif %}
-    </div>
-</form>
+<div id="upload-area" style="margin-top:20px; display:none;">
+    <button type="button" id="upload-btn" class="btn btn-primary btn-lg btn-full">⬆ Upload selected dates</button>
+    <div id="upload-progress" style="margin-top:16px;"></div>
+</div>
 {% endblock %}
 
 {% block extra_scripts %}
-<script>
-(function() {
-    const debounceTimers = {};
-    const touchedFields = new Set();
-
-    // ── Date range helpers ──
-    function setDateRange(startOffset, endOffset) {
-        const today = new Date();
-        const start = new Date(today);
-        start.setDate(today.getDate() + startOffset);
-        const end = new Date(today);
-        end.setDate(today.getDate() + endOffset);
-        document.getElementById('date-start').value = start.toISOString().slice(0,10);
-        document.getElementById('date-end').value = end.toISOString().slice(0,10);
-    }
-
-    function updateRangeButtons(active) {
-        document.querySelectorAll('.date-quick-btns .btn').forEach(b => b.classList.remove('active-range'));
-        if (active) active.classList.add('active-range');
-    }
-
-    // Default: this week (next 7 days)
-    setDateRange(0, 7);
-
-    document.getElementById('range-week')?.addEventListener('click', function() {
-        setDateRange(0, 7);
-        updateRangeButtons(this);
-    });
-    document.getElementById('range-next')?.addEventListener('click', function() {
-        setDateRange(7, 14);
-        updateRangeButtons(this);
-    });
-    document.getElementById('range-custom')?.addEventListener('click', function() {
-        updateRangeButtons(this);
-    });
-
-    // ── Media filter dimming + apply ──
-    function activeMediaFilters() {
-        const set = new Set();
-        document.querySelectorAll('.media-filter').forEach(cb => {
-            if (cb.checked) set.add(cb.dataset.media);
-        });
-        return set;
-    }
-    function applyMediaFilters() {
-        const active = activeMediaFilters();
-        // Toggle badge visibility + row visibility in any rendered date table
-        document.querySelectorAll('[data-media-badge]').forEach(el => {
-            el.style.display = active.has(el.dataset.mediaBadge) ? '' : 'none';
-        });
-        document.querySelectorAll('tr[data-row-medias]').forEach(tr => {
-            const medias = (tr.dataset.rowMedias || '').split(',').filter(Boolean);
-            const match = medias.some(m => active.has(m));
-            tr.style.display = match ? '' : 'none';
-        });
-    }
-    document.querySelectorAll('.media-filter').forEach(cb => {
-        function updateDim() {
-            cb.closest('.platform-toggle-item').classList.toggle('dimmed', !cb.checked);
-            applyMediaFilters();
-        }
-        cb.addEventListener('change', updateDim);
-        updateDim();
-    });
-
-    // ── Load config paths ──
-    async function loadScanConfig() {
-        try {
-            const resp = await fetch('/scan-config');
-            const data = await resp.json();
-            for (const [key, info] of Object.entries(data)) {
-                const input = document.querySelector(`.dir-input[data-type="${key}"]`);
-                if (input && info.path) {
-                    input.value = info.path;
-                    // Don't mark as touched on initial load
-                }
-            }
-        } catch(e) {}
-    }
-
-    // ── Validate path ──
-    async function validateInput(input) {
-        const type = input.dataset.type;
-        const path = input.value.trim();
-        const valEl = document.querySelector(`.dir-validation[data-type="${type}"]`);
-        const dot = document.querySelector(`[data-dot="${type}"]`);
-        if (!valEl) return;
-
-        if (!path) {
-            valEl.textContent = '';
-            valEl.className = 'dir-validation';
-            if (dot) { dot.className = 'status-dot neutral'; }
-            return;
-        }
-
-        // Only show errors if user has interacted with the field
-        if (!touchedFields.has(type)) {
-            if (dot) { dot.className = 'status-dot neutral'; }
-            return;
-        }
-
-        try {
-            const resp = await fetch('/validate-path', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({type, path})
-            });
-            const data = await resp.json();
-
-            if (type === 'sharepoint_docx') {
-                if (data.exists && data.is_xlsx) {
-                    valEl.textContent = '✓ Valid .xlsx file';
-                    valEl.className = 'dir-validation ok';
-                    if (dot) dot.className = 'status-dot ok';
-                } else if (data.exists) {
-                    valEl.textContent = 'Exists but not .xlsx';
-                    valEl.className = 'dir-validation warn';
-                    if (dot) dot.className = 'status-dot warn';
-                } else {
-                    valEl.textContent = 'File not found';
-                    valEl.className = 'dir-validation err';
-                    if (dot) dot.className = 'status-dot err';
-                }
-                return;
-            }
-
-            if (!data.exists) {
-                valEl.textContent = 'Path does not exist';
-                valEl.className = 'dir-validation err';
-                if (dot) dot.className = 'status-dot err';
-            } else if (!data.readable) {
-                valEl.textContent = 'Not readable';
-                valEl.className = 'dir-validation err';
-                if (dot) dot.className = 'status-dot err';
-            } else if (data.file_count === 0) {
-                valEl.textContent = 'Empty directory (0 files)';
-                valEl.className = 'dir-validation warn';
-                if (dot) dot.className = 'status-dot warn';
-            } else {
-                valEl.textContent = `✓ ${data.file_count} files found`;
-                valEl.className = 'dir-validation ok';
-                if (dot) dot.className = 'status-dot ok';
-            }
-        } catch(e) {
-            valEl.textContent = 'Validation error';
-            valEl.className = 'dir-validation err';
-            if (dot) dot.className = 'status-dot err';
-        }
-    }
-
-    // ── Debounced validation on typing ──
-    document.querySelectorAll('.dir-input').forEach(input => {
-        input.addEventListener('input', () => {
-            touchedFields.add(input.dataset.type);
-            const key = input.dataset.type;
-            clearTimeout(debounceTimers[key]);
-            debounceTimers[key] = setTimeout(() => validateInput(input), 400);
-        });
-    });
-
-    // ── Browse button ──
-    document.querySelectorAll('.browse-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const type = btn.dataset.type;
-            const panel = document.querySelector(`.browse-panel[data-type="${type}"]`);
-            if (panel.style.display === 'block') {
-                panel.style.display = 'none';
-                return;
-            }
-            panel.style.display = 'block';
-            const input = document.querySelector(`.dir-input[data-type="${type}"]`);
-            loadBrowse(type, input.value.trim() || '');
-        });
-    });
-
-    async function loadBrowse(type, path) {
-        const panel = document.querySelector(`.browse-panel[data-type="${type}"]`);
-        if (!panel) return;
-        panel.innerHTML = '<span class="text-muted text-sm">Loading...</span>';
-        try {
-            const url = '/browse' + (path ? '?path=' + encodeURIComponent(path) : '');
-            const resp = await fetch(url);
-            const data = await resp.json();
-            if (data.error) {
-                panel.innerHTML = `<span class="text-error text-sm">${escapeHtml(data.error)}</span>`;
-                return;
-            }
-            let html = `<div class="browse-path">${escapeHtml(data.current)}</div>`;
-            if (data.parent && data.parent !== data.current) {
-                html += `<div class="browse-item browse-dir" data-path="${escapeAttr(data.parent)}" data-type="${type}">📁 ..</div>`;
-            }
-            for (const dir of (data.dirs || [])) {
-                const full = data.current + (data.current.endsWith('/') || data.current.endsWith('\\') ? '' : '/') + dir;
-                html += `<div class="browse-item browse-dir" data-path="${escapeAttr(full)}" data-type="${type}">📁 ${escapeHtml(dir)}</div>`;
-            }
-            for (const file of (data.files || []).slice(0, 20)) {
-                const isExcelField = (type === 'sharepoint_docx');
-                const isXlsx = file.toLowerCase().endsWith('.xlsx');
-                if (isExcelField && isXlsx) {
-                    const full = data.current + (data.current.endsWith('/') || data.current.endsWith('\\') ? '' : '/') + file;
-                    html += `<div class="browse-item browse-clickable-file" data-path="${escapeAttr(full)}" data-type="${type}">📊 ${escapeHtml(file)}</div>`;
-                } else {
-                    html += `<div class="browse-item browse-file">📄 ${escapeHtml(file)}</div>`;
-                }
-            }
-            if (type !== 'sharepoint_docx') {
-                html += `<div style="margin-top:8px;"><button type="button" class="btn btn-sm btn-primary select-folder-btn" data-type="${type}" data-path="${escapeAttr(data.current)}">Select This Folder</button></div>`;
-            } else {
-                html += `<div class="text-dim text-xs" style="margin-top:8px;">Select a .xlsx file above</div>`;
-            }
-            panel.innerHTML = html;
-        } catch(e) {
-            panel.innerHTML = '<span class="text-error text-sm">Failed to load directory.</span>';
-        }
-    }
-
-    // ── Navigate / select in browse panels ──
-    document.addEventListener('click', e => {
-        const dirItem = e.target.closest('.browse-dir[data-path]');
-        if (dirItem) {
-            loadBrowse(dirItem.dataset.type, dirItem.dataset.path);
-            return;
-        }
-        const fileItem = e.target.closest('.browse-clickable-file[data-path]');
-        if (fileItem) {
-            const type = fileItem.dataset.type;
-            const input = document.querySelector(`.dir-input[data-type="${type}"]`);
-            if (input) {
-                input.value = fileItem.dataset.path;
-                touchedFields.add(type);
-                validateInput(input);
-            }
-            const panel = document.querySelector(`.browse-panel[data-type="${type}"]`);
-            if (panel) panel.style.display = 'none';
-            return;
-        }
-        const selectBtn = e.target.closest('.select-folder-btn');
-        if (selectBtn) {
-            const type = selectBtn.dataset.type;
-            const input = document.querySelector(`.dir-input[data-type="${type}"]`);
-            if (input) {
-                input.value = selectBtn.dataset.path;
-                touchedFields.add(type);
-                validateInput(input);
-            }
-            const panel = document.querySelector(`.browse-panel[data-type="${type}"]`);
-            if (panel) panel.style.display = 'none';
-        }
-    });
-
-    // ── Scan button ──
-    document.getElementById('scan-btn')?.addEventListener('click', async () => {
-        const btn = document.getElementById('scan-btn');
-        const spinner = document.getElementById('scan-spinner');
-        btn.disabled = true;
-        btn.textContent = 'Scanning...';
-        spinner.classList.add('visible');
-
-        // Mark all fields as touched for validation display
-        document.querySelectorAll('.dir-input').forEach(i => {
-            touchedFields.add(i.dataset.type);
-            validateInput(i);
-        });
-
-        const paths = {};
-        document.querySelectorAll('.dir-input').forEach(input => {
-            const val = input.value.trim();
-            if (val) paths[input.dataset.type] = val;
-        });
-
-        // Get date range
-        const startDate = document.getElementById('date-start')?.value;
-        const endDate = document.getElementById('date-end')?.value;
-        let selectedDates = null;
-        if (startDate && endDate) {
-            selectedDates = [];
-            const d = new Date(startDate);
-            const end = new Date(endDate);
-            while (d <= end) {
-                selectedDates.push(d.toISOString().slice(0,10));
-                d.setDate(d.getDate() + 1);
-            }
-        }
-
-        try {
-            const resp = await fetch('/scan', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({paths, selected_dates: selectedDates})
-            });
-            const data = await resp.json();
-            if (data.error) {
-                document.getElementById('date-results').innerHTML =
-                    `<div class="card"><p class="text-error">${escapeHtml(data.error)}</p></div>`;
-            } else {
-                renderDateResults(data.dates || []);
-            }
-        } catch(e) {
-            document.getElementById('date-results').innerHTML =
-                '<div class="card"><p class="text-error">Scan failed. Check your paths and try again.</p></div>';
-        } finally {
-            btn.disabled = false;
-            btn.textContent = '🔍 Scan for Files';
-            spinner.classList.remove('visible');
-        }
-    });
-
-    function renderDateResults(dates) {
-        const container = document.getElementById('date-results');
-        if (!dates.length) {
-            container.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><p>No media files found for the selected date range. Try expanding your dates or checking directory paths.</p></div>`;
-            return;
-        }
-
-        let html = '<div class="card"><h3 class="section-header">Available Dates</h3>';
-        html += '<p class="text-muted text-sm mb-md">Select the dates you want to upload, then click Review.</p>';
-        html += '<table><thead><tr>';
-        html += '<th style="width:40px;"><input type="checkbox" id="select-all-dyn"></th>';
-        html += '<th>Date</th><th>Media Found</th></tr></thead><tbody>';
-
-        for (const entry of dates) {
-            const medias = [];
-            if (entry.youtube_video_path) medias.push('horizontal');
-            if (entry.youtube_shorts_path) medias.push('vertical');
-            if (entry.podcast_path) medias.push('podcast');
-            if (entry.thumbnail_path) medias.push('thumbnail');
-            html += `<tr data-row-medias="${escapeAttr(medias.join(','))}">`;
-            html += `<td><input type="checkbox" name="dates" value="${escapeAttr(entry.date)}"></td>`;
-            if (entry.date_ambiguous && entry.date_alternatives && entry.date_alternatives.length > 1) {
-                let opts = entry.date_alternatives.map(a =>
-                    `<option value="${escapeAttr(a.date)}" ${a.date === entry.date ? 'selected' : ''}>${escapeHtml(a.display)} (${escapeHtml(a.interpretation)})</option>`
-                ).join('');
-                html += `<td><select class="date-interp-select" data-row-date="${escapeAttr(entry.date)}" style="max-width:220px;">${opts}</select> <span class="badge badge-warn">ambiguous</span></td>`;
-            } else {
-                html += `<td><strong>${escapeHtml(entry.display_date)}</strong> <span class="mono text-dim" style="margin-left:6px;">${escapeHtml(entry.date)}</span></td>`;
-            }
-            html += '<td>';
-            html += `<span class="badge badge-${entry.youtube_video_path?'ok':'miss'}" data-media-badge="horizontal">📹 Horizontal</span>`;
-            html += `<span class="badge badge-${entry.youtube_shorts_path?'ok':'miss'}" data-media-badge="vertical">📱 Vertical</span>`;
-            html += `<span class="badge badge-${entry.podcast_path?'ok':'miss'}" data-media-badge="podcast">🎙️ Podcast</span>`;
-            html += `<span class="badge badge-${entry.thumbnail_path?'ok':'miss'}" data-media-badge="thumbnail">🖼️ Thumb</span>`;
-            html += '</td></tr>';
-        }
-
-        html += '</tbody></table></div>';
-        html += '<button type="submit" class="btn btn-primary btn-lg btn-full">Review Selected Dates →</button>';
-        container.innerHTML = html;
-        applyMediaFilters();
-
-        document.getElementById('select-all-dyn')?.addEventListener('change', function() {
-            document.querySelectorAll('input[name="dates"]').forEach(cb => cb.checked = this.checked);
-        });
-    }
-
-    function escapeHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-    function escapeAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
-
-    // ── Ambiguous date handler ──
-    document.addEventListener('change', e => {
-        const sel = e.target.closest('.date-interp-select');
-        if (!sel) return;
-        const oldDate = sel.dataset.rowDate;
-        const newDate = sel.value;
-        const row = sel.closest('tr');
-        if (row) {
-            const cb = row.querySelector('input[name="dates"]');
-            if (cb) cb.value = newDate;
-        }
-        sel.dataset.rowDate = newDate;
-        fetch('/review/update', {
-            method: 'PATCH',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({date: oldDate, field: 'reinterpret_date', value: newDate})
-        })
-        // M32: log network errors / non-OK responses so a silently failed
-        // PATCH doesn't leave UI showing a value the server didn't accept.
-        .then(resp => {
-            if (!resp.ok) console.error('reinterpret_date PATCH failed:', resp.status);
-        })
-        .catch(err => console.error('reinterpret_date PATCH network error:', err));
-    });
-
-    // ── Select all ──
-    document.getElementById('select-all')?.addEventListener('change', function() {
-        document.querySelectorAll('input[name="dates"]').forEach(cb => cb.checked = this.checked);
-    });
-
-    loadScanConfig();
-    applyMediaFilters();
-})();
-</script>
+<script src="{{ url_for('static', filename='js/dld_pipeline.js') }}"></script>
 {% endblock %}

@@ -31,10 +31,8 @@ class AgentConnection:
 
     def connect(self) -> None:
         self.ws = _connect(_to_ws_url(self.server_url, self.token))
-        hello = json.dumps({"v": PROTOCOL_VERSION, "type": "hello",
-                            "payload": {"role": "agent"}})
-        if hasattr(self.ws, "send"):
-            self.ws.send(hello)
+        self.ws.send(json.dumps({"v": PROTOCOL_VERSION, "type": "hello",
+                                 "payload": {"role": "agent"}}))
 
     def send(self, message: dict) -> None:
         self.ws.send(json.dumps(message))

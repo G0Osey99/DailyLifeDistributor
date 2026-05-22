@@ -24,8 +24,12 @@ def test_handshake_sends_hello(monkeypatch):
 
 def test_url_uses_wss_and_token(monkeypatch):
     captured = {}
-    monkeypatch.setattr(transport, "_connect",
-                        lambda url: captured.setdefault("url", url) or _FakeWS([]))
+
+    def _cap(url):
+        captured["url"] = url
+        return _FakeWS([])
+
+    monkeypatch.setattr(transport, "_connect", _cap)
     transport.AgentConnection("https://autoalert.pro", "tok-9").connect()
     assert captured["url"] == "wss://autoalert.pro/agent/socket?token=tok-9"
 

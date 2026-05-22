@@ -12,6 +12,7 @@ import yaml
 from playwright.sync_api import sync_playwright
 
 from core.calendar_refresh import ExternalItem, SessionExpiredError
+from core.playwright_session import chromium_launch_kwargs, _persist_session_blob
 
 log = logging.getLogger(__name__)
 
@@ -102,7 +103,8 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
     with sync_playwright() as p:
         # Refresh runs unattended — default headless. Set ROCK_REFRESH_HEADED=1
         # to debug. Saved session is reused either way.
-        browser = p.chromium.launch(channel="chrome", headless=not _HEADED)
+        browser = p.chromium.launch(
+            **chromium_launch_kwargs("ROCK_CHROME_PATH", headless=not _HEADED))
         ctx = browser.new_context(storage_state=str(_SESSION_FILE))
         page = ctx.new_page()
         try:
@@ -153,7 +155,11 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
                         status="active",
                         raw_json=json.dumps({"channel_guid": guid}),
                     ))
+            # Re-save the (rolling) cookies AND push them back into the
+            # encrypted store, so the refreshed session survives a container
+            # restart — matching PlaywrightSession.__exit__'s persistence.
             ctx.storage_state(path=str(_SESSION_FILE))
+            _persist_session_blob(str(_SESSION_FILE))
         finally:
             browser.close()
     return out

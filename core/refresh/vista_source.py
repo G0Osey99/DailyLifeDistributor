@@ -291,6 +291,9 @@ _SESSION_CFG = SessionConfig(
     is_login_url=url_marker_login_check(_LOGIN_MARKERS),
     target_url=_CALENDAR_URL,
     headless_env="VISTA_SOCIAL_HEADLESS",
+    # Without this the refresh launch falls back to channel='chrome' and fails
+    # on the arm64 VPS (no Google Chrome); the env var points at chromium.
+    chrome_path_env="VISTA_SOCIAL_CHROME_PATH",
     # Refresh is a non-interactive scrape — default to headless. The uploader
     # has its own first-run-headed flow; refresh never needs that. Set
     # VISTA_SOCIAL_HEADLESS=false to debug selectors.

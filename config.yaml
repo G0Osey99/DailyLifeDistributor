@@ -98,3 +98,7 @@ calendar_refresh:
   youtube_max_items: 200
   rock_channel_guids:
   - 5a2ece2c-88b0-47eb-bea0-cbdb50e5c86c
+  # Rock "Daily Life" email content channel — scraped into the rock_email
+  # calendar chip so email broadcasts are distinct from Daily Experience.
+  rock_email_channel_guids:
+  - 2182c1f3-8f8c-44f3-987f-75a698fe44a7

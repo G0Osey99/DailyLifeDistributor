@@ -141,4 +141,4 @@ def test_get_configured_sources_returns_all_modules():
     from core.calendar_refresh import get_configured_sources
     sources = get_configured_sources()
     names = sorted(s.NAME for s in sources)
-    assert names == ["rock", "simplecast", "vista_social", "youtube"]
+    assert names == ["rock", "rock_email", "simplecast", "vista_social", "youtube"]

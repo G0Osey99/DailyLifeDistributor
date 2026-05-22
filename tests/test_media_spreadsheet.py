@@ -51,8 +51,13 @@ def test_spreadsheet_columns(client):
     )
     resp = client.get("/media/spreadsheet/columns?sheet=Plan")
     assert resp.status_code == 200
-    cols = resp.get_json()["columns"]
-    assert cols == ["Date", "Title", "Transcript"]
+    data = resp.get_json()
+    assert data["columns"] == ["Date", "Title", "Transcript"]
+    # Preview surfaces the first data row keyed by column so the user can
+    # tell which column holds what before mapping.
+    assert data["preview"] == [
+        {"Date": "2025-05-21", "Title": "Hello", "Transcript": "A transcript"}
+    ]
 
 
 def test_mapping_roundtrip(client):

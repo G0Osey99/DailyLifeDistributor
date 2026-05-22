@@ -43,28 +43,52 @@ def _is_failure(h: dict) -> bool:
     return (not bool(h.get("success"))) or bool(h.get("error"))
 
 
+# Status priority for dedup: a published item always beats the same content
+# still shown as scheduled, which beats a failed attempt. This is what turns a
+# scheduled item into a published one day-over-day (one fewer scheduled, one
+# more published) instead of showing the same content twice.
+_STATUS_RANK = {"published": 3, "scheduled": 2, "failed": 1}
+
+
+def _row_status(row: dict) -> str:
+    """Coarse status for a row from either table: 'published'|'scheduled'|'failed'."""
+    # `_status` is the calendar's pre-decorated form; `status` is the raw
+    # external_calendar_items value. Accept either.
+    s = (row.get("_status") or row.get("status") or "").strip().lower()
+    if s in _STATUS_RANK:
+        return s
+    if _is_failure(row):
+        return "failed"
+    # A successful upload with no explicit status is effectively published.
+    return "published"
+
+
+def _status_rank(row: dict) -> int:
+    return _STATUS_RANK.get(_row_status(row), 0)
+
+
 def merge_for_window(history_rows: list[dict], external_rows: list[dict]) -> list[dict]:
-    """Return one merged list with each item appearing exactly once.
+    """Return one merged list with each piece of content appearing exactly once.
 
-    Priority rules:
+    Rules:
 
-    1. **External rows win on (provider, iso_date) for failures.** An
-       external row reflects what's actually scheduled on the platform —
-       the source of truth. If the user fixed a failed upload by
-       scheduling the episode/video manually on the platform, the stale
-       failure in upload_history is no longer meaningful, so we drop it.
-       This applies whether or not the external_ids match (a manually-
-       created item won't have the same id as our failed attempt).
+    1. **Stale-failure suppression.** A *failed* upload_history row is dropped
+       when an external row covers the same ``(provider, iso_date)`` — the
+       platform now has the item (the user fixed it manually), so the local
+       failure is obsolete. Applies regardless of whether the ids match.
 
-    2. **Successful history rows dedupe externals by (provider,
-       external_id).** When both tables describe the same successful
-       upload, prefer the upload row (it has richer local context like
-       ``file_path``).
+    2. **Dedup by ``(provider, external_id)`` with status priority.** The same
+       content (same stable platform id — a YouTube videoId / SimpleCast
+       episode id doesn't change when it goes live) is collapsed to one row,
+       keeping the highest status: **published > scheduled > failed**. So a
+       scheduled item that later publishes becomes a single *published* row
+       rather than appearing as both. On a status tie the upload row wins (it
+       carries richer local context like ``file_path``). Applies uniformly to
+       every provider.
 
+    Rows without an ``external_id`` can't be matched and are always kept.
     Each returned row carries ``source`` ∈ {'upload', 'external'}.
     """
-    # Build a (provider, iso_date) set of external coverage so we can
-    # suppress stale failures.
     external_buckets: set[tuple[str, str]] = set()
     for e in external_rows:
         provider = _provider(e.get("platform") or "")
@@ -72,30 +96,45 @@ def merge_for_window(history_rows: list[dict], external_rows: list[dict]) -> lis
         if provider and iso_date:
             external_buckets.add((provider, iso_date))
 
-    seen_external_id_keys: set[tuple[str, str]] = set()
-    out: list[dict] = []
+    # Phase 1 — stale-failure suppression. Survivors become dedup candidates.
+    candidates: list[tuple[dict, str]] = []
     for h in history_rows:
         provider = _provider(h.get("platform") or "")
         iso_date = h.get("iso_date") or ""
-        is_failure = _is_failure(h)
-
-        # Stale-failure suppression: if the platform now has an item for
-        # this (provider, date), the failed local row is obsolete.
-        if is_failure and provider and iso_date and (provider, iso_date) in external_buckets:
+        if _is_failure(h) and provider and iso_date and (provider, iso_date) in external_buckets:
             continue
-
-        ext_id = h.get("external_id") or ""
-        if ext_id:
-            seen_external_id_keys.add((provider, ext_id))
-        h2 = dict(h)
-        h2["source"] = "upload"
-        out.append(h2)
-
+        candidates.append((h, "upload"))
     for e in external_rows:
-        ext_id = e.get("external_id") or ""
-        if ext_id and (_provider(e.get("platform") or ""), ext_id) in seen_external_id_keys:
+        candidates.append((e, "external"))
+
+    # Phase 2 — dedup by (provider, external_id), highest status wins.
+    best: dict[tuple[str, str], tuple] = {}
+    order: list[tuple[str, str]] = []
+    passthrough: list[tuple[dict, str]] = []
+    for row, source in candidates:
+        ext_id = row.get("external_id") or ""
+        if not ext_id:
+            passthrough.append((row, source))
             continue
-        e2 = dict(e)
-        e2["source"] = "external"
-        out.append(e2)
+        key = (_provider(row.get("platform") or ""), ext_id)
+        # Compare on (status_rank, upload_preferred) so published beats
+        # scheduled, and ties prefer the upload row.
+        score = (_status_rank(row), 1 if source == "upload" else 0)
+        cur = best.get(key)
+        if cur is None:
+            order.append(key)
+            best[key] = (score, row, source)
+        elif score > cur[0]:
+            best[key] = (score, row, source)
+
+    out: list[dict] = []
+    for key in order:
+        _score, row, source = best[key]
+        r = dict(row)
+        r["source"] = source
+        out.append(r)
+    for row, source in passthrough:
+        r = dict(row)
+        r["source"] = source
+        out.append(r)
     return out

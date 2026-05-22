@@ -24,6 +24,13 @@ simplecast:
   explicit: false
 upload:
   max_workers: 4
+  # Per-platform circuit breaker. After this many consecutive infra failures
+  # (broken/expired session, network, unresponsive page) the platform is
+  # skipped for the rest of the run instead of relaunching Chrome and burning
+  # the login timeout on every remaining date. It re-probes after the cooldown.
+  circuit_breaker:
+    failure_threshold: 3
+    recovery_timeout_seconds: 120
 llm:
   model: llama3.2
   num_title_suggestions: 3

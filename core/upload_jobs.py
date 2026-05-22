@@ -15,9 +15,31 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core import db as _db
+from core.circuit_breaker import get_breaker
 from core.config import load_config
 from core.playwright_session import SessionExpiredError
 from core.session_state import session
+
+try:
+    # Playwright's timeout (e.g. an unresponsive page during login/upload) is
+    # an infra failure that should trip the circuit breaker. Imported
+    # defensively so the module still loads where Playwright isn't installed.
+    from playwright.sync_api import TimeoutError as _PlaywrightTimeout  # type: ignore
+except Exception:  # pragma: no cover - playwright always present in prod
+    class _PlaywrightTimeout(Exception):  # type: ignore
+        """Placeholder when Playwright isn't importable."""
+
+# Exceptions that indicate an *infrastructure* failure of the integration
+# itself (broken/expired session, dead network, unresponsive page) as opposed
+# to a per-row data problem (missing file, empty title). Only these trip the
+# breaker, so a healthy platform is never disabled by a few bad rows.
+_INFRA_FAILURES = (
+    SessionExpiredError,
+    _PlaywrightTimeout,
+    ConnectionError,
+    TimeoutError,
+    OSError,
+)
 from uploaders.youtube_uploader import upload_video as yt_upload_video
 from uploaders.simplecast_uploader import upload_episode as sc_upload_episode
 from uploaders.rock import upload_daily_experience as rock_upload_de
@@ -168,6 +190,23 @@ def _resolve_youtube_watch_url(iso_date, emit_phase):
     return "", "Timed out waiting for the YouTube Video upload to finish."
 
 
+def _breaker_for(platform: str):
+    """Return the per-platform circuit breaker, configured from config.yaml.
+
+    Browser-automation platforms are the expensive ones (Chrome launch plus a
+    multi-minute login timeout per call), so a broken session there is exactly
+    the cascade the breaker exists to cut short. Thresholds are shared across
+    platforms via ``upload.circuit_breaker`` but the breaker instances are
+    per-platform so one broken integration never disables a healthy one.
+    """
+    cb_cfg = (load_config().get("upload", {}) or {}).get("circuit_breaker", {}) or {}
+    return get_breaker(
+        f"upload:{platform}",
+        failure_threshold=int(cb_cfg.get("failure_threshold", 3)),
+        recovery_timeout=float(cb_cfg.get("recovery_timeout_seconds", 120)),
+    )
+
+
 def _dispatch_upload(platform, entry, elements, emit, effective_row, item,
                      iso_date, yt_video_expected):
     """Run the uploader for one (date, platform) item and return its result.
@@ -203,41 +242,72 @@ def _dispatch_upload(platform, entry, elements, emit, effective_row, item,
             "phase": phase,
         })
 
-    if platform == "YouTube Video":
-        emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting YouTube video upload..."})
-        return yt_upload_video(entry, is_short=False, elements=elements,
-                               progress_callback=_yt_progress_cb, event_callback=_yt_event_cb)
-    if platform == "YouTube Shorts":
-        emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting YouTube Shorts upload..."})
-        return yt_upload_video(entry, is_short=True, elements=elements,
-                               progress_callback=_yt_progress_cb, event_callback=_yt_event_cb)
-    if platform == "SimpleCast":
-        emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting SimpleCast upload..."})
-        return sc_upload_episode(entry, elements=elements)
-    if platform == "Rock":
-        emit({"type": "progress", "row": effective_row, "percent": 0,
-              "message": "Starting Rock Daily Experience build..."})
-        return rock_upload_de(entry, elements=elements, progress_callback=_phase)
-    if platform == "Rock Email":
-        emit({"type": "progress", "row": effective_row, "percent": 0,
-              "message": "Preparing Daily Life email..."})
-        # Resolve the horizontal YouTube watch link. If a YouTube Video upload
-        # is part of this run for the date, wait for it; otherwise
-        # schedule_email falls back to entry.youtube_watch_url.
-        watch_url = ""
-        if yt_video_expected.get(iso_date):
-            watch_url, yt_err = _resolve_youtube_watch_url(iso_date, _phase)
-            if not watch_url:
-                return {"success": False, "skipped": False, "url": "",
-                        "scheduled_time": "", "error": yt_err}
-        return rock_schedule_email(entry, youtube_watch_url=watch_url,
-                                   elements=elements, progress_callback=_phase)
-    if platform == "Vista Social":
-        emit({"type": "progress", "row": effective_row, "percent": 0,
-              "message": "Starting Vista Social schedule..."})
-        return vs_upload_post(entry, elements=elements, progress_callback=_phase)
-    # H2: unknown platform — surface explicitly instead of silently dropping.
-    return {"success": False, "error": f"Unknown platform {platform!r}"}
+    # Circuit breaker: if this platform has already failed repeatedly in this
+    # run, fail fast instead of (for Playwright uploaders) relaunching Chrome
+    # and blocking on the login timeout for every remaining date.
+    breaker = _breaker_for(platform)
+    if not breaker.allow():
+        _phase("circuit_open")
+        return {
+            "success": False, "skipped": False, "url": "", "scheduled_time": "",
+            "error": (
+                f"{platform} temporarily disabled after repeated failures in "
+                "this run. If its session expired, re-connect it in Settings, "
+                "then re-run — already-completed rows are skipped."
+            ),
+        }
+
+    def _invoke():
+        if platform == "YouTube Video":
+            emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting YouTube video upload..."})
+            return yt_upload_video(entry, is_short=False, elements=elements,
+                                   progress_callback=_yt_progress_cb, event_callback=_yt_event_cb)
+        if platform == "YouTube Shorts":
+            emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting YouTube Shorts upload..."})
+            return yt_upload_video(entry, is_short=True, elements=elements,
+                                   progress_callback=_yt_progress_cb, event_callback=_yt_event_cb)
+        if platform == "SimpleCast":
+            emit({"type": "progress", "row": effective_row, "percent": 0, "message": "Starting SimpleCast upload..."})
+            return sc_upload_episode(entry, elements=elements)
+        if platform == "Rock":
+            emit({"type": "progress", "row": effective_row, "percent": 0,
+                  "message": "Starting Rock Daily Experience build..."})
+            return rock_upload_de(entry, elements=elements, progress_callback=_phase)
+        if platform == "Rock Email":
+            emit({"type": "progress", "row": effective_row, "percent": 0,
+                  "message": "Preparing Daily Life email..."})
+            # Resolve the horizontal YouTube watch link. If a YouTube Video upload
+            # is part of this run for the date, wait for it; otherwise
+            # schedule_email falls back to entry.youtube_watch_url.
+            watch_url = ""
+            if yt_video_expected.get(iso_date):
+                watch_url, yt_err = _resolve_youtube_watch_url(iso_date, _phase)
+                if not watch_url:
+                    return {"success": False, "skipped": False, "url": "",
+                            "scheduled_time": "", "error": yt_err}
+            return rock_schedule_email(entry, youtube_watch_url=watch_url,
+                                       elements=elements, progress_callback=_phase)
+        if platform == "Vista Social":
+            emit({"type": "progress", "row": effective_row, "percent": 0,
+                  "message": "Starting Vista Social schedule..."})
+            return vs_upload_post(entry, elements=elements, progress_callback=_phase)
+        # H2: unknown platform — surface explicitly instead of silently dropping.
+        return {"success": False, "error": f"Unknown platform {platform!r}"}
+
+    try:
+        result = _invoke()
+    except _INFRA_FAILURES:
+        # Infra failure (broken session, network, unresponsive page): count it
+        # toward opening the breaker, then re-raise so the runner's existing
+        # handlers turn it into the usual per-row error / re-Connect message.
+        breaker.record_failure()
+        raise
+    # Only genuine progress heals the breaker. A plain result-dict failure is
+    # treated as neutral (likely a per-row data issue, not infra), so it
+    # neither trips nor closes the breaker.
+    if result is None or result.get("success") or result.get("skipped"):
+        breaker.record_success()
+    return result
 
 
 def _build_yt_video_expected(summary, skip_set):

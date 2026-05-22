@@ -84,6 +84,21 @@ def _isolate_config(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_circuit_breakers():
+    """Clear the process-wide circuit-breaker registry around every test.
+
+    Breakers persist in a module-level registry by design (a platform that
+    fails repeatedly stays tripped across batches in a real run). In tests
+    that state would leak between cases — a test that trips ``upload:X`` would
+    short-circuit a later test for the same platform. Reset before and after.
+    """
+    from core import circuit_breaker
+    circuit_breaker.reset_all()
+    yield
+    circuit_breaker.reset_all()
+
+
+@pytest.fixture(autouse=True)
 def _master_key(monkeypatch):
     """Provide a valid Fernet master key for every test.
 

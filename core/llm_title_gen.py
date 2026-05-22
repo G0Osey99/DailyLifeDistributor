@@ -53,6 +53,25 @@ LLM_MODEL = os.environ.get("LLM_MODEL") or "local"
 # Back-compat alias: the /health probe and older imports reference this name.
 LLAMAFILE_BASE_URL = LLM_BASE_URL
 
+# Circuit breaker for the local LLM. When llamafile/Ollama is down, the health
+# check below would otherwise eat 5 s on every call (and the completion POST up
+# to 120 s) — across a batch of rows that piles up into a long, pointless wait.
+# After a few consecutive failures the breaker opens and is_llamafile_running()
+# returns False instantly, so callers fall back to the manual path without
+# hammering a dead endpoint. It re-probes after the cooldown.
+_LLM_BREAKER_NAME = "llm:title"
+_LLM_FAILURE_THRESHOLD = 3
+_LLM_RECOVERY_TIMEOUT = 120.0
+
+
+def _llm_breaker():
+    from core.circuit_breaker import get_breaker
+    return get_breaker(
+        _LLM_BREAKER_NAME,
+        failure_threshold=_LLM_FAILURE_THRESHOLD,
+        recovery_timeout=_LLM_RECOVERY_TIMEOUT,
+    )
+
 def _get_transcript_hash(transcript: str) -> str:
     return hashlib.sha256(transcript.encode("utf-8")).hexdigest()
 
@@ -67,10 +86,20 @@ def is_llamafile_running() -> bool:
     a stale server or DNS hiccup should fail closed so callers fall back to
     the manual path rather than wedge on a doomed POST.
     """
+    breaker = _llm_breaker()
+    if not breaker.allow():
+        logger.debug("llamafile circuit open — reporting not running without probing")
+        return False
     try:
         r = requests.get(f"{LLM_BASE_URL}/v1/models", timeout=5)
-        return r.status_code < 500
+        ok = r.status_code < 500
+        if ok:
+            breaker.record_success()
+        else:
+            breaker.record_failure()
+        return ok
     except Exception as e:
+        breaker.record_failure()
         logger.debug("llamafile health check failed: %s", e)
         return False
 
@@ -127,16 +156,36 @@ def generate_title_suggestions(
     text = ""
     try:
         logger.info("Calling llamafile transcript_length=%d", len(transcript))
-        response = requests.post(
-            f"{LLM_BASE_URL}/v1/chat/completions",
-            json={
-                "model": LLM_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.8,
-                "max_tokens": 300,
-            },
-            timeout=120
-        )
+        # One retry on a transient network error — the LLM server may be mid
+        # (re)start. Content failures (bad JSON, 4xx) are NOT retried here.
+        response = None
+        last_exc = None
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    f"{LLM_BASE_URL}/v1/chat/completions",
+                    json={
+                        "model": LLM_MODEL,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.8,
+                        "max_tokens": 300,
+                    },
+                    timeout=120,
+                )
+                break
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout) as e:
+                last_exc = e
+                if attempt == 0:
+                    logger.warning(
+                        "llamafile request transient failure (attempt 1/2): "
+                        "%s — retrying in 1s", e,
+                    )
+                    time.sleep(1.0)
+        if response is None:
+            _llm_breaker().record_failure()
+            logger.error("llamafile request failed after retries: %s", last_exc)
+            return []
         response.raise_for_status()
         # H12: validate the JSON shape before indexing — an unexpected payload
         # used to surface as a confusing KeyError/IndexError trace.
@@ -166,17 +215,22 @@ def generate_title_suggestions(
 
         titles = json.loads(text)
         if isinstance(titles, list) and all(isinstance(t, str) for t in titles):
+            _llm_breaker().record_success()
             _cache_put(cache_key, titles)
             return titles
         return []
 
     except requests.exceptions.ConnectionError:
+        _llm_breaker().record_failure()
         logger.error("llamafile connection failed — did it start correctly?")
         return []
     except json.JSONDecodeError as e:
+        # A malformed body is a content problem, not an infra outage — leave
+        # the breaker untouched so a single odd response doesn't disable it.
         logger.error("llamafile response was not valid JSON: %s | Raw: %s", e, text)
         return []
     except Exception as e:
+        _llm_breaker().record_failure()
         logger.error("llamafile title generation failed: %s", e, exc_info=True)
         return []
 

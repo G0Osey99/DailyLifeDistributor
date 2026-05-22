@@ -45,7 +45,7 @@ from core.quota import DAILY_QUOTA, get_quota_used
 from uploaders.youtube_uploader import (
     get_authenticated_service,
 )
-from app import _cached_yt_authenticated
+from app import _cached_yt_authenticated, invalidate_yt_auth_cache
 
 bp = Blueprint("settings", __name__)
 
@@ -399,6 +399,7 @@ def oauth_youtube():
         return _hosted_youtube_oauth_redirect()
     try:
         get_authenticated_service()
+        invalidate_yt_auth_cache()
         flash("YouTube authentication successful!", "success")
     except FileNotFoundError as e:
         flash(str(e), "danger")
@@ -414,6 +415,7 @@ def oauth_youtube_settings():
         return _hosted_youtube_oauth_redirect()
     try:
         get_authenticated_service()
+        invalidate_yt_auth_cache()
         flash("YouTube authentication successful!", "success")
     except FileNotFoundError as e:
         flash(str(e), "danger")
@@ -454,6 +456,7 @@ def oauth_youtube_callback():
     try:
         finish_web_authorization(redirect_uri, expected_state, code_verifier,
                                  auth_response)
+        invalidate_yt_auth_cache()   # flip the Settings badge immediately
         flash("YouTube authentication successful!", "success")
     except Exception as e:
         flash(f"YouTube authentication failed: {e}", "danger")
@@ -467,6 +470,7 @@ def clear_youtube_token():
     from core import secrets_store
     if secrets_store.has_secret(_YT_TOKEN_NAME):
         _clear_token()
+        invalidate_yt_auth_cache()
         flash("YouTube token cleared.", "success")
     else:
         flash("No YouTube token was set.", "warning")

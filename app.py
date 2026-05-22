@@ -181,7 +181,8 @@ def create_app() -> Flask:
 
     # Endpoints reachable without a session: the login routes, the health
     # probe, and static assets. Everything else requires authentication.
-    _PUBLIC_ENDPOINTS = {"auth.login", "auth.login_submit", "_health", "static"}
+    _PUBLIC_ENDPOINTS = {"auth.login", "auth.login_submit", "_health", "static",
+                         "agent.pair_redeem"}
 
     _ALLOWED_HOSTS = {
         h.strip().lower()
@@ -359,6 +360,10 @@ def create_app() -> Flask:
     app.register_blueprint(history_bp)
     app.register_blueprint(remote_login_bp)
     app.register_blueprint(media_bp)
+
+    if os.environ.get("HYBRID_AGENT_ENABLED", "").lower() in ("1", "true", "yes"):
+        from blueprints.agent import bp as agent_bp
+        app.register_blueprint(agent_bp)
 
     # Startup orphan sweep: clear any media-upload temp dirs left behind by a
     # previous process (crash / restart). No run is active yet, so pass empty.

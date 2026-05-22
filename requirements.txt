@@ -5,6 +5,10 @@ openpyxl>=3.1.0,<4
 google-auth>=2.28.0,<3
 google-auth-oauthlib>=1.2.0,<2
 google-api-python-client>=2.120.0,<3
-requests>=2.31.0,<3
-cryptography>=42.0.0,<46
+# 2.32.0 fixed CVE-2024-35195 (a Session kept verify=False across requests
+# after the first unverified call); 2.32.2 drops the 2.32.0/2.32.1 regressions.
+requests>=2.32.2,<3
+# 43.0.1 ships OpenSSL 3.3.2, fixing CVE-2024-6119 (denial of service in X.509
+# name checks). Keep the upper bound so a major bump is a deliberate change.
+cryptography>=43.0.1,<46
 playwright>=1.40.0,<2

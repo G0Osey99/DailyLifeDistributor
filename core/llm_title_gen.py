@@ -60,16 +60,23 @@ LLAMAFILE_BASE_URL = LLM_BASE_URL
 # returns False instantly, so callers fall back to the manual path without
 # hammering a dead endpoint. It re-probes after the cooldown.
 _LLM_BREAKER_NAME = "llm:title"
+# Defaults; overridable via the `llm.circuit_breaker` config section.
 _LLM_FAILURE_THRESHOLD = 3
 _LLM_RECOVERY_TIMEOUT = 120.0
+# Request/health HTTP timeouts and sampling params, overridable via `llm`.
+_LLM_REQUEST_TIMEOUT = 120
+_LLM_HEALTH_TIMEOUT = 5
+_LLM_TEMPERATURE = 0.8
+_LLM_MAX_TOKENS = 300
 
 
 def _llm_breaker():
     from core.circuit_breaker import get_breaker
+    cb = (_load_config().get("llm", {}) or {}).get("circuit_breaker", {}) or {}
     return get_breaker(
         _LLM_BREAKER_NAME,
-        failure_threshold=_LLM_FAILURE_THRESHOLD,
-        recovery_timeout=_LLM_RECOVERY_TIMEOUT,
+        failure_threshold=int(cb.get("failure_threshold", _LLM_FAILURE_THRESHOLD)),
+        recovery_timeout=float(cb.get("recovery_timeout_seconds", _LLM_RECOVERY_TIMEOUT)),
     )
 
 def _get_transcript_hash(transcript: str) -> str:
@@ -90,8 +97,10 @@ def is_llamafile_running() -> bool:
     if not breaker.allow():
         logger.debug("llamafile circuit open — reporting not running without probing")
         return False
+    health_timeout = (_load_config().get("llm", {}) or {}).get(
+        "health_timeout_seconds", _LLM_HEALTH_TIMEOUT)
     try:
-        r = requests.get(f"{LLM_BASE_URL}/v1/models", timeout=5)
+        r = requests.get(f"{LLM_BASE_URL}/v1/models", timeout=health_timeout)
         ok = r.status_code < 500
         if ok:
             breaker.record_success()
@@ -167,10 +176,10 @@ def generate_title_suggestions(
                     json={
                         "model": LLM_MODEL,
                         "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.8,
-                        "max_tokens": 300,
+                        "temperature": llm_config.get("temperature", _LLM_TEMPERATURE),
+                        "max_tokens": llm_config.get("max_tokens", _LLM_MAX_TOKENS),
                     },
-                    timeout=120,
+                    timeout=llm_config.get("request_timeout_seconds", _LLM_REQUEST_TIMEOUT),
                 )
                 break
             except (requests.exceptions.ConnectionError,

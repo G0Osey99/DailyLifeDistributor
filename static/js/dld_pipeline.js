@@ -167,7 +167,8 @@
         const dates = Object.keys(scanResults).sort();
         if (!dates.length) {
             container.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>No dated media matched. Check your folders and filenames.</p></div>';
-            $("#upload-area").style.display = "none";
+            $("#select-area").style.display = "none";
+            $("#customize-area").style.display = "none";
             return;
         }
         let html = '<div class="card"><h3 class="section-header">Matched dates</h3>';
@@ -191,7 +192,8 @@
         $("#select-all")?.addEventListener("change", function () {
             $all(".date-cb").forEach((cb) => { cb.checked = this.checked; });
         });
-        $("#upload-area").style.display = "block";
+        $("#select-area").style.display = "block";
+        $("#customize-area").style.display = "none";  // re-scan resets the step
     }
 
     function selectedDates() {
@@ -201,6 +203,97 @@
     function enabledPlatforms() {
         return $all(".platform-toggle").filter((cb) => cb.checked).map((cb) => cb.dataset.platform);
     }
+
+    // ── Review & customize step (reuses the Review look in-page so the
+    //    picked File objects stay in memory for the chunked upload) ───────
+    function selById(iso, cls) {
+        return $(`.${cls}[data-iso="${CSS.escape(iso)}"]`);
+    }
+
+    function buildCustomizeCards(dates) {
+        const list = $("#customize-list");
+        list.innerHTML = "";
+        for (const iso of dates) {
+            const meta = (scanResults[iso] && scanResults[iso].metadata) || {};
+            const title = meta.shorts_title || meta.youtube_title || "";
+            const desc = meta.description || "";
+            const card = document.createElement("div");
+            card.className = "card";
+            card.style.marginBottom = "0";
+            card.innerHTML =
+                `<div style="font-weight:600;margin-bottom:8px;">${esc(iso)}</div>` +
+                `<div class="mapping-field"><label>Title</label>` +
+                `<input type="text" class="cust-title" data-iso="${esc(iso)}"></div>` +
+                `<div class="cust-suggestions" data-iso="${esc(iso)}" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;"></div>` +
+                `<div class="mapping-field"><label>Description</label>` +
+                `<textarea class="cust-desc" data-iso="${esc(iso)}" rows="2"></textarea></div>`;
+            list.appendChild(card);
+            // Set values via .value (not innerHTML) so user content can't inject markup.
+            selById(iso, "cust-title").value = title;
+            selById(iso, "cust-desc").value = desc;
+        }
+    }
+
+    async function autofillTitles(dates, platforms) {
+        if (!platforms.includes("youtube_shorts")) return;  // only Shorts dates
+        for (const iso of dates) {
+            const input = selById(iso, "cust-title");
+            if (!input || input.value.trim()) continue;       // only-if-blank
+            const meta = (scanResults[iso] && scanResults[iso].metadata) || {};
+            const transcript = (meta.transcript || "").trim();
+            const box = selById(iso, "cust-suggestions");
+            if (!transcript) continue;
+            if (box) box.textContent = "suggesting title…";
+            try {
+                const r = await postJSON("/media/suggest-titles", { transcript, count: 5 });
+                const sug = (r.ok && r.data.suggestions) || [];
+                if (box) box.innerHTML = "";
+                if (!sug.length) { if (box) box.textContent = "no suggestions"; continue; }
+                if (!input.value.trim()) input.value = sug[0];   // fill the blank
+                sug.forEach((s) => {
+                    const chip = document.createElement("button");
+                    chip.type = "button";
+                    chip.className = "btn btn-sm btn-secondary";
+                    chip.textContent = s;                         // textContent = safe
+                    chip.addEventListener("click", () => { input.value = s; });
+                    if (box) box.appendChild(chip);
+                });
+            } catch (_) {
+                if (box) box.textContent = "suggestion unavailable";
+            }
+        }
+    }
+
+    function collectOverrides(platforms) {
+        const ov = {};
+        $all(".cust-title").forEach((inp) => {
+            const v = inp.value.trim();
+            if (!v) return;
+            const iso = inp.dataset.iso;
+            ov[iso] = ov[iso] || {};
+            if (platforms.includes("youtube_shorts")) ov[iso].youtube_shorts_title = v;
+            if (platforms.includes("youtube_video")) ov[iso].youtube_title = v;
+        });
+        $all(".cust-desc").forEach((t) => {
+            const v = t.value.trim();
+            if (!v) return;
+            const iso = t.dataset.iso;
+            ov[iso] = ov[iso] || {};
+            ov[iso].description = v;
+        });
+        return ov;
+    }
+
+    $("#review-btn")?.addEventListener("click", () => {
+        const dates = selectedDates();
+        const platforms = enabledPlatforms();
+        if (!dates.length) { alert("Select at least one date."); return; }
+        if (!platforms.length) { alert("Enable at least one platform."); return; }
+        buildCustomizeCards(dates);
+        $("#select-area").style.display = "none";
+        $("#customize-area").style.display = "block";
+        autofillTitles(dates, platforms);  // fire-and-forget; fills blanks as they return
+    });
 
     // ── Upload orchestration (batched, chunked, SSE) ─────────────────────
     async function postJSON(url, body) {
@@ -265,7 +358,7 @@
         });
     }
 
-    async function uploadBatch(runId, batchDates, platforms) {
+    async function uploadBatch(runId, batchDates, platforms, overrides) {
         // Gather the distinct physical files needed for this batch.
         const fileIdByFile = new Map();   // File -> file_id
         const filesMap = {};              // file_id -> [{category, date}]
@@ -288,8 +381,12 @@
                 }
             }
         }
+        // Only this batch's date overrides.
+        const batchOverrides = {};
+        for (const d of batchDates) if (overrides && overrides[d]) batchOverrides[d] = overrides[d];
         const res = await postJSON("/media/batch/run", {
             run_id: runId, dates: batchDates, platforms, files: filesMap,
+            overrides: batchOverrides,
         });
         if (!res.ok) {
             logProgress(`<div class="text-sm" style="color:var(--err)">Batch failed: ${esc(res.data.error || res.status)}</div>`);
@@ -307,6 +404,7 @@
         const platforms = enabledPlatforms();
         if (!dates.length) { alert("Select at least one date."); return; }
         if (!platforms.length) { alert("Enable at least one platform."); return; }
+        const overrides = collectOverrides(platforms);
 
         const btn = $("#upload-btn");
         btn.disabled = true;
@@ -326,7 +424,7 @@
             for (let i = 0; i < dates.length; i += BATCH_SIZE) {
                 const batch = dates.slice(i, i + BATCH_SIZE);
                 logProgress(`<div class="text-sm" style="margin-top:8px;font-weight:600;">Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.join(", ")}</div>`);
-                const result = await uploadBatch(runId, batch, platforms);
+                const result = await uploadBatch(runId, batch, platforms, overrides);
                 if (!result || !result.ok) {
                     aborted = true;
                     logProgress('<div class="text-sm" style="color:var(--err);margin-top:8px;font-weight:600;">Upload stopped — fix the issue above and re-run; finished dates are skipped automatically.</div>');
@@ -344,7 +442,13 @@
             window.onbeforeunload = null;
             btn.disabled = false;
             $("#keep-open-warn").classList.remove("visible");
-            renderDates(); // re-render so completed dates show as done
+            // Keep the customize view + progress log visible so the user sees
+            // the outcome. Mark finished dates done in the (hidden) matched
+            // table so a later "Match dates" / re-review reflects them, and
+            // disable re-uploading the same batch from this view.
+            $all(".date-cb").forEach((cb) => {
+                if (completedDates.has(cb.value)) { cb.checked = false; cb.disabled = true; }
+            });
         }
     });
 })();

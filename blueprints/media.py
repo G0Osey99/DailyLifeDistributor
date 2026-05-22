@@ -315,6 +315,8 @@ def batch_run():
     dates = list(data.get("dates") or [])
     platforms = list(data.get("platforms") or [])
     files = data.get("files") or {}
+    # Per-date user edits from the customize step: {iso: {field: value}}.
+    overrides = data.get("overrides") or {}
 
     # Reassembly handshake: every declared file-id must be fully received.
     # A shared physical file may map to several (category, date) placements,
@@ -341,7 +343,7 @@ def batch_run():
     # Rebuild this batch's session entries from the cached spreadsheet + the
     # temp files (titles/descriptions/tags/Rock fields/schedules), then select
     # the batch's dates/platforms so get_summary() yields the right rows.
-    _apply_paths_to_session(file_paths, dates, platforms)
+    _apply_paths_to_session(file_paths, dates, platforms, overrides)
     summary = [it for it in session.get_summary()
                if it.get("iso_date", it.get("date")) in set(dates)]
     entries_snapshot = dict(session.entries)
@@ -367,13 +369,25 @@ def batch_run():
     return jsonify({"job_id": job_id})
 
 
-def _apply_paths_to_session(file_paths, dates, platforms):
+# Override keys the customize step may send, mapped to ReviewEntry fields.
+_OVERRIDE_FIELDS = {
+    "youtube_title": "youtube_title",
+    "youtube_shorts_title": "youtube_shorts_title",
+    "podcast_title": "podcast_title",
+    "description": "description",
+}
+
+
+def _apply_paths_to_session(file_paths, dates, platforms, overrides=None):
     """Rebuild this batch's session entries from the cached spreadsheet + temp
     files so uploads carry the mapped metadata — titles, descriptions, tags,
     Rock fields, transcript, and the per-platform schedule/element defaults —
-    not blanks. The browser's platform selection for this batch is authoritative.
+    not blanks. Per-date `overrides` from the customize step (e.g. an
+    auto-filled Shorts title) win over the spreadsheet values. The browser's
+    platform selection for this batch is authoritative.
     """
     from core.file_scanner import MediaDateEntry
+    overrides = overrides or {}
 
     plat_flags = {k: (k in platforms) for k in (
         "youtube_video", "youtube_shorts", "simplecast", "rock",
@@ -402,12 +416,17 @@ def _apply_paths_to_session(file_paths, dates, platforms):
     # build_entry() pulls titles/tags/schedules/elements from config + meta.
     with session._lock:
         for iso in dates:
-            session.entries[iso] = session.build_entry(
+            entry = session.build_entry(
                 iso,
                 media=media_by_date.get(iso),
                 meta=meta_by_date.get(iso, {}),
                 global_platforms=plat_flags,
             )
+            for key, value in (overrides.get(iso) or {}).items():
+                field = _OVERRIDE_FIELDS.get(key)
+                if field and isinstance(value, str) and value.strip():
+                    setattr(entry, field, value.strip())
+            session.entries[iso] = entry
         session.selected_dates = list(dates)
 
 
@@ -457,3 +476,31 @@ def scan():
                 dates[iso]["metadata"] = meta
 
     return jsonify({"dates": dates})
+
+
+@bp.route("/media/suggest-titles", methods=["POST"])
+def suggest_titles():
+    """LLM title suggestions from a transcript (the customize step's auto-fill).
+
+    Stateless: the browser sends the date's transcript text (already returned
+    by /media/scan), so this doesn't depend on the workflow session. Returns
+    {suggestions: [...]} or an actionable error.
+    """
+    from core.llm_title_gen import generate_title_suggestions, is_llamafile_running
+
+    data = request.get_json(silent=True) or {}
+    transcript = (data.get("transcript") or "").strip()
+    if not transcript:
+        return jsonify({"error": "No transcript for this date"}), 422
+    if not is_llamafile_running():
+        return jsonify({"error": "Title LLM backend is not reachable"}), 503
+    try:
+        count = int(data.get("count") or 5)
+    except (TypeError, ValueError):
+        count = 5
+    count = max(1, min(count, 10))
+    try:
+        suggestions = generate_title_suggestions(transcript, num_suggestions=count)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"Title generation failed: {exc}"}), 500
+    return jsonify({"suggestions": suggestions or []})

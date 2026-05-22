@@ -24,6 +24,9 @@ def test_security_headers_on_login(client):
     assert "frame-ancestors 'self'" in csp
     assert "connect-src 'self'" in csp
     assert "object-src 'none'" in csp
+    # The hosted YouTube OAuth "Connect" POST redirects to Google's consent
+    # screen; form-action must permit it or the browser blocks the hop.
+    assert "form-action 'self' https://accounts.google.com" in csp
     assert resp.headers.get("Referrer-Policy")
 
 

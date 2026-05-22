@@ -253,7 +253,10 @@ def create_app() -> Flask:
             "frame-src 'self'; "
             "frame-ancestors 'self'; "
             "base-uri 'self'; "
-            "form-action 'self'; "
+            # accounts.google.com is allowed so the hosted YouTube OAuth flow
+            # can POST "Connect YouTube" and follow the redirect to Google's
+            # consent screen; without it form-action 'self' blocks the hop.
+            "form-action 'self' https://accounts.google.com; "
             "object-src 'none'",
         )
         # Only assert HSTS when we believe we're behind HTTPS, so a plain-http

@@ -41,6 +41,10 @@ services:
       DLD_UPLOAD_TMP: /data/uploads
       LLM_BASE_URL: http://ollama:11434
       LLM_MODEL: llama3.2
+      # Enables the agent relay + pairing routes (Phase 1+2a of the hybrid
+      # upload agent). With this off, the app is byte-for-byte the web-only
+      # flow. Confirm wss survives Cloudflare Tunnel + Caddy before flipping.
+      HYBRID_AGENT_ENABLED: "true"
     volumes:
       - dld-data:/data
     networks: [dld-net]

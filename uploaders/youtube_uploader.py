@@ -264,11 +264,17 @@ def _load_client_config() -> dict:
         return json.load(f)
 
 
-def build_web_flow(redirect_uri: str, state: str | None = None):
+def build_web_flow(redirect_uri: str, state: str | None = None,
+                   code_verifier: str | None = None):
     """Build a google-auth-oauthlib web `Flow` for redirect-based OAuth.
 
     Raises a clear error if the configured client is a Desktop ("installed")
     client, which Google will not let complete a public-redirect sign-in.
+
+    PKCE: when ``code_verifier`` is None (the authorization step) the flow
+    auto-generates one; when it's supplied (the token-exchange step) that exact
+    verifier is reused. The verifier created at authorization time MUST be
+    replayed here or Google rejects the exchange with "Missing code verifier".
     """
     if Flow is None:
         raise ImportError("google-auth-oauthlib is required but not installed")
@@ -281,34 +287,40 @@ def build_web_flow(redirect_uri: str, state: str | None = None):
             f"application', add the redirect URI {redirect_uri!r}, download it, "
             "and upload it under Settings → YouTube Client Secrets."
         )
-    flow = Flow.from_client_config(cfg, scopes=SCOPES, state=state)
+    flow = Flow.from_client_config(
+        cfg, scopes=SCOPES, state=state,
+        code_verifier=code_verifier,
+        autogenerate_code_verifier=(code_verifier is None),
+    )
     flow.redirect_uri = redirect_uri
     return flow
 
 
-def start_web_authorization(redirect_uri: str) -> tuple[str, str]:
-    """Return (authorization_url, state) to send the user's browser to Google's
-    consent screen. `state` must be stashed (e.g. in the session) and checked
-    on the callback."""
+def start_web_authorization(redirect_uri: str) -> tuple[str, str, str]:
+    """Return (authorization_url, state, code_verifier) to send the user's
+    browser to Google's consent screen. `state` and `code_verifier` must both
+    be stashed (e.g. in the session); the callback checks `state` and replays
+    `code_verifier` for the PKCE token exchange."""
     flow = build_web_flow(redirect_uri)
     auth_url, state = flow.authorization_url(
         access_type="offline",            # issue a refresh token
         include_granted_scopes="true",
         prompt="consent",                 # force a refresh token even on re-auth
     )
-    return auth_url, state
+    return auth_url, state, flow.code_verifier
 
 
-def finish_web_authorization(redirect_uri: str, state: str,
+def finish_web_authorization(redirect_uri: str, state: str, code_verifier: str,
                              authorization_response: str) -> None:
     """Exchange the authorization-response URL for credentials and persist the
     token. `authorization_response` must be an https URL (reconstruct it from
     the public callback so a Cloudflare-terminated http hop doesn't trip
-    oauthlib's transport check)."""
+    oauthlib's transport check). `code_verifier` is the PKCE verifier returned
+    by `start_web_authorization`."""
     # We request a single scope; Google may echo it with extra granted scopes
     # (e.g. openid), which oauthlib would otherwise reject as a scope change.
     os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
-    flow = build_web_flow(redirect_uri, state=state)
+    flow = build_web_flow(redirect_uri, state=state, code_verifier=code_verifier)
     flow.fetch_token(authorization_response=authorization_response)
     _save_token_json(flow.credentials.to_json())
 

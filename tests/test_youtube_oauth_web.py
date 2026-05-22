@@ -43,12 +43,14 @@ def test_build_web_flow_rejects_desktop_client(monkeypatch):
 
 def test_start_web_authorization_builds_consent_url(monkeypatch):
     monkeypatch.setattr(yt, "_load_client_config", lambda: _WEB_CFG)
-    url, state = yt.start_web_authorization(REDIRECT)
+    url, state, code_verifier = yt.start_web_authorization(REDIRECT)
     assert state
+    assert code_verifier                          # PKCE verifier generated
     assert "accounts.google.com" in url
     assert "test-client.apps.googleusercontent.com" in url
     assert quote(REDIRECT, safe="") in url        # redirect_uri round-trips
     assert "access_type=offline" in url           # asks for a refresh token
+    assert "code_challenge=" in url               # PKCE challenge sent
 
 
 def test_finish_web_authorization_saves_token(monkeypatch):
@@ -69,13 +71,19 @@ def test_finish_web_authorization_saves_token(monkeypatch):
             self.fetched = authorization_response
 
     fake = _Flow()
-    monkeypatch.setattr(yt, "build_web_flow",
-                        lambda redirect_uri, state=None: fake)
+    captured = {}
+
+    def _fake_build(redirect_uri, state=None, code_verifier=None):
+        captured["code_verifier"] = code_verifier
+        return fake
+
+    monkeypatch.setattr(yt, "build_web_flow", _fake_build)
 
     auth_response = REDIRECT + "?code=abc&state=st8"
-    yt.finish_web_authorization(REDIRECT, "st8", auth_response)
+    yt.finish_web_authorization(REDIRECT, "st8", "verifier-123", auth_response)
 
     assert fake.fetched == auth_response
+    assert captured["code_verifier"] == "verifier-123"   # PKCE verifier replayed
     assert saved["token"] == '{"refresh_token": "rt"}'
 
 

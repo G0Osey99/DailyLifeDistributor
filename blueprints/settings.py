@@ -381,11 +381,14 @@ def _hosted_youtube_oauth_redirect():
     redirect_uri = url_for("settings.oauth_youtube_callback",
                            _external=True, _scheme="https")
     try:
-        auth_url, state = start_web_authorization(redirect_uri)
+        auth_url, state, code_verifier = start_web_authorization(redirect_uri)
     except Exception as e:
         flash(f"YouTube authentication failed: {e}", "danger")
         return redirect(url_for("settings.settings"))
     flask_session["yt_oauth_state"] = state
+    # PKCE verifier must survive to the callback and be replayed at token
+    # exchange, or Google rejects it with "Missing code verifier".
+    flask_session["yt_oauth_code_verifier"] = code_verifier
     return redirect(auth_url)
 
 
@@ -433,6 +436,7 @@ def oauth_youtube_callback():
         return redirect(url_for("settings.settings"))
 
     expected_state = flask_session.pop("yt_oauth_state", None)
+    code_verifier = flask_session.pop("yt_oauth_code_verifier", None)
     if not expected_state or expected_state != request.args.get("state"):
         flash("YouTube sign-in could not be verified (state mismatch). "
               "Please click Connect YouTube and try again.", "danger")
@@ -448,7 +452,8 @@ def oauth_youtube_callback():
         auth_response += "?" + request.query_string.decode("utf-8")
 
     try:
-        finish_web_authorization(redirect_uri, expected_state, auth_response)
+        finish_web_authorization(redirect_uri, expected_state, code_verifier,
+                                 auth_response)
         flash("YouTube authentication successful!", "success")
     except Exception as e:
         flash(f"YouTube authentication failed: {e}", "danger")

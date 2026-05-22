@@ -110,7 +110,6 @@ def gather_image_for_verse(
         log.warning("Image gatherer: no topic terms produced for verse %r", verse_text[:60])
         return None
 
-    today = publish_date.isoformat()
     photo_cutoff = (publish_date - timedelta(days=_PHOTO_RECENCY_DAYS)).isoformat()
     topic_cutoff = (publish_date - timedelta(days=_TOPIC_RECENCY_DAYS)).isoformat()
     recent_topics = _db.recent_topics(topic_cutoff)

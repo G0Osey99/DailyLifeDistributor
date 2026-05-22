@@ -8,11 +8,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-import pytest
 
 from core.file_scanner import (
     _parse_date_entry_from_stem,
-    _parse_date_from_stem,
     _try_yymmdd,
     _try_ddmmyy,
     _try_ddmmyyyy,

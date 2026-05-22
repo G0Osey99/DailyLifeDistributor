@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
-import threading
 
-import requests
 import yaml
 from flask import (
     Blueprint,
@@ -35,7 +32,6 @@ KNOWN_SECRETS = [
     {"name": "playwright.rock_session", "label": "Rock session", "required": False, "kind": "managed", "where": "API Credentials → Connect"},
 ]
 from core.config import (
-    CONFIG_PATH,
     ENV_PATH,
     PROJECT_ROOT,
     invalidate_config_cache,
@@ -46,7 +42,6 @@ from core.session_state import session
 from core.quota import DAILY_QUOTA, get_quota_used
 from uploaders.youtube_uploader import (
     get_authenticated_service,
-    is_authenticated as yt_is_authenticated,
 )
 from app import _cached_yt_authenticated
 

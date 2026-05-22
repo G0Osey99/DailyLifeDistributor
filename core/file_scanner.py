@@ -1,14 +1,15 @@
-"""Scans network directories and parses dates from filenames."""
+"""Parse dates from media filenames (browser-streaming pipeline).
 
-import logging
+The browser reports the filenames in each picked folder; ``parse_names``
+groups them by date with no filesystem access, reusing the multi-format date
+extraction below.
+"""
+
 import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,11 +28,6 @@ class MediaDateEntry:
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav", ".aac", ".ogg"}
 THUMBNAIL_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-
-
-def _load_config() -> dict:
-    from core.config import load_config
-    return load_config()
 
 
 # ---------------------------------------------------------------------------
@@ -201,23 +197,6 @@ def _parse_date_entry_from_stem(stem: str) -> tuple:
             return primary_dt, alts, ambiguous
 
     return None, [], False
-
-
-def _parse_date_from_stem(stem: str) -> Optional[datetime]:
-    """Return the primary datetime parsed from a filename stem, or None.
-
-    Thin wrapper around _parse_date_entry_from_stem() that returns only the
-    primary datetime, for backward-compatibility with callers that don't need
-    ambiguity information.
-    """
-    primary_dt, _, _ = _parse_date_entry_from_stem(stem)
-    return primary_dt
-
-
-def _parse_date_from_filename(filename: str) -> Optional[datetime]:
-    """Wrapper: extract a date from a full filename (with extension)."""
-    stem = os.path.splitext(filename)[0]
-    return _parse_date_from_stem(stem)
 
 
 _MEDIA_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | THUMBNAIL_EXTENSIONS

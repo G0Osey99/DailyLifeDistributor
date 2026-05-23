@@ -175,10 +175,24 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
         except Exception as exc:  # noqa: BLE001
             if shutdown_event.is_set():
                 break
-            # Detect auth errors from simple_websocket (raised as exceptions
-            # with status codes embedded in the message).
-            msg_str = str(exc)
-            is_auth = any(str(c) in msg_str for c in _AUTH_ERR_CODES)
+            # Detect auth errors. simple_websocket raises ConnectionError
+            # with a ``status_code`` attribute on a non-101 HTTP response
+            # (verified via inspect on simple_websocket.errors.ConnectionError);
+            # prefer that over a substring match. Fall back to a tightened
+            # word-boundary string match for unexpected exception types so
+            # we don't mis-count a "401" embedded in a hostname or message.
+            is_auth = False
+            status_code = getattr(exc, "status_code", None)
+            if isinstance(status_code, int) and status_code in _AUTH_ERR_CODES:
+                is_auth = True
+            else:
+                import re
+                if re.search(r"\b(401|403)\b", str(exc)):
+                    # Heuristic — older simple_websocket versions don't set
+                    # status_code reliably; the only signal is the message
+                    # body. Tightened to word boundaries so a port like
+                    # 4011 doesn't trigger a false positive.
+                    is_auth = True
             if is_auth:
                 consecutive_auth_failures += 1
                 if consecutive_auth_failures >= 2:

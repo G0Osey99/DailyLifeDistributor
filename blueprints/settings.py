@@ -578,3 +578,62 @@ def change_password_route():
     except Exception as e:
         flash(f"Could not change password: {e}", "danger")
     return redirect(url_for("settings.settings"))
+
+
+# ---------- Phase γ: security preferences + org-level Require-2FA ----------
+
+@bp.route("/settings/security", methods=["GET"])
+def security_get():
+    from flask import session as _sess
+    from core import db as _db
+    uid = _sess.get("user_id")
+    if uid is None:
+        return redirect(url_for("auth.login"))
+    user = _db.get_user_by_id(uid)
+    notify = bool(user.get("notify_new_device", 1)) if user else True
+    return render_template(
+        "settings_security.html",
+        notify_new_device=notify,
+    )
+
+
+@bp.route("/settings/security", methods=["POST"])
+def security_post():
+    from flask import session as _sess
+    from core import db as _db
+    uid = _sess.get("user_id")
+    if uid is None:
+        return redirect(url_for("auth.login"))
+    on = bool(request.form.get("notify_new_device"))
+    _db.set_user_notify_new_device(uid, on)
+    return redirect(url_for("settings.security_get"))
+
+
+@bp.route("/settings/org/require-2fa", methods=["POST"])
+def org_require_2fa():
+    from flask import session as _sess
+    from core import audit as _audit
+    from core import db as _db
+    uid = _sess.get("user_id")
+    org_id = _sess.get("current_org_id")
+    if uid is None:
+        return redirect(url_for("auth.login"))
+    if not org_id:
+        return ("No org selected", 400)
+    m = _db.get_membership(uid, org_id)
+    if not m or m["role"] != "owner":
+        return ("Forbidden", 403)
+    org = _db.get_org(org_id) or {}
+    before = bool(org.get("require_2fa"))
+    enabled = bool(request.form.get("enabled"))
+    _db.set_org_require_2fa(org_id, enabled)
+    _audit.write_event(
+        action="org.settings_changed",
+        actor_user_id=uid, org_id=org_id,
+        target_type="org", target_id=org_id,
+        metadata={"changes": {"require_2fa": [before, enabled]}},
+    )
+    # Land back on /settings/security since that's where the operator
+    # most likely came from; the form action is /settings/org/require-2fa
+    # so a redirect home is fine if /settings/org doesn't exist yet.
+    return redirect(request.referrer or url_for("settings.security_get"))

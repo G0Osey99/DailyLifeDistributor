@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Security preferences</h1>
+<form method="post" action="/settings/security">
+  <label>
+    <input type="checkbox" name="notify_new_device" value="1" {% if notify_new_device %}checked{% endif %}>
+    Email me on new device sign-ins
+  </label>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

@@ -239,6 +239,48 @@ def create_app() -> Flask:
             abort(401)
         return redirect(url_for("auth.login", next=request.path))
 
+    # Phase γ: enforce org-level "Require 2FA" on protected paths.
+    # We deliberately exempt LEGACY_PASSWORD_ENABLED sessions (no user_id)
+    # so the existing test suite + ops rollback path don't trip this gate.
+    _ENFORCE_2FA_PATHS = ("/", "/upload", "/media/", "/review", "/confirm")
+    _EXEMPT_2FA_PATHS = (
+        "/settings/2fa", "/settings/security", "/logout", "/static",
+        "/login", "/recover",
+    )
+
+    @app.before_request
+    def _enforce_2fa():
+        uid = None
+        try:
+            from flask import session as _sess
+            uid = _sess.get("user_id")
+        except Exception:
+            return
+        if not uid:
+            return
+        org_id = _sess.get("current_org_id")
+        if not org_id:
+            return
+        try:
+            org = _db.get_org(org_id)
+        except Exception:
+            return
+        if not org or not org.get("require_2fa"):
+            return
+        try:
+            user = _db.get_user_by_id(uid)
+        except Exception:
+            return
+        if not user:
+            return
+        if user.get("totp_enabled") or user.get("email_2fa_enabled"):
+            return
+        p = request.path
+        if any(p.startswith(e) for e in _EXEMPT_2FA_PATHS):
+            return
+        if any(p == g or p.startswith(g) for g in _ENFORCE_2FA_PATHS):
+            return redirect(url_for("twofa.settings_2fa"))
+
     @app.before_request
     def _csrf_same_origin():
         """Reject cross-origin state-changing requests.

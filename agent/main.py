@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from agent import config, pair, scan, updater
+from agent import config, hostname as _hostname_mod, hwid as _hwid_mod, pair, scan, updater
 from agent._version import __version__
 from agent.transport import AgentConnection
 
@@ -145,7 +145,14 @@ def _ensure_paired(server_url: str) -> str:
         return token
     print(f"This device is not paired with {server_url}.")
     code = input("Enter the pairing code shown on the website: ").strip()
-    if not pair.redeem(server_url, code, _device_name()):
+    # Compute HWID + friendly hostname locally so the server can render
+    # a meaningful device picker. compute_hwid_hash() never raises (it
+    # falls back to a hostname-derived seed); get_friendly_hostname()
+    # always returns a non-empty string.
+    hwid_hash = _hwid_mod.compute_hwid_hash()
+    friendly = _hostname_mod.get_friendly_hostname()
+    if not pair.redeem(server_url, code, _device_name(),
+                       hwid_hash=hwid_hash, hostname=friendly):
         raise SystemExit("Pairing failed — check the code and try again.")
     print("✓ Paired successfully.")
     return config.get_token()

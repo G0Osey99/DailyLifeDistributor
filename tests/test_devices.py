@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timezone
 from core import db, devices
 
 
@@ -9,6 +10,17 @@ def _fresh_db(tmp_path, monkeypatch):
     importlib.reload(db)
     importlib.reload(devices)
     db.init_db()
+
+
+def _set_last_seen(device_id: str, ts: float) -> None:
+    """Directly write a specific last_seen_at (unix epoch) for a device."""
+    iso = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    with db._get_conn() as conn:
+        conn.execute(
+            "UPDATE agent_devices SET last_seen_at = ? WHERE id = ?",
+            (iso, device_id),
+        )
+        conn.commit()
 
 
 def test_redeem_valid_code_creates_device(tmp_path, monkeypatch):
@@ -49,3 +61,29 @@ def test_list_devices_reports_revoked(tmp_path, monkeypatch):
     devices.revoke_device(device_id)
     rows = devices.list_devices()
     assert any(r["id"] == device_id and r["revoked"] == 1 for r in rows)
+
+
+def test_most_recently_seen_online_picks_highest_last_seen(tmp_path, monkeypatch):
+    # Two devices, both online (last_seen within freshness window),
+    # the one with the later last_seen wins.
+    _fresh_db(tmp_path, monkeypatch)
+    code_a = devices.create_pairing_code()
+    dev_a_id, _ = devices.redeem_pairing_code(code_a, "dev-a")
+    _set_last_seen(dev_a_id, ts=100)
+
+    code_b = devices.create_pairing_code()
+    dev_b_id, _ = devices.redeem_pairing_code(code_b, "dev-b")
+    _set_last_seen(dev_b_id, ts=200)
+
+    result = devices.most_recently_seen_online(freshness_seconds=300, now=250)
+    assert result is not None
+    assert result["name"] == "dev-b"
+
+
+def test_most_recently_seen_online_returns_none_when_all_stale(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    code_a = devices.create_pairing_code()
+    dev_a_id, _ = devices.redeem_pairing_code(code_a, "dev-a")
+    _set_last_seen(dev_a_id, ts=10)
+
+    assert devices.most_recently_seen_online(freshness_seconds=60, now=1000) is None

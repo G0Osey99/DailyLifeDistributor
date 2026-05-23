@@ -103,3 +103,22 @@ def list_devices() -> list[dict]:
             "FROM agent_devices ORDER BY created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def most_recently_seen_online(freshness_seconds: int = 60, now: float | None = None) -> dict | None:
+    """Return the device dict whose last_seen_at is the largest among
+    non-revoked devices, provided it is within freshness_seconds of now.
+    Returns None if no device qualifies.
+
+    last_seen_at is stored as ISO-8601 UTC strings; the cutoff is converted
+    to the same format so string comparison is lexicographically correct.
+    """
+    cutoff_ts = (now if now is not None else _now().timestamp()) - freshness_seconds
+    cutoff_iso = datetime.fromtimestamp(cutoff_ts, tz=timezone.utc).isoformat()
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_devices WHERE revoked = 0 AND last_seen_at >= ? "
+            "ORDER BY last_seen_at DESC LIMIT 1",
+            (cutoff_iso,),
+        ).fetchone()
+    return dict(row) if row else None

@@ -397,6 +397,18 @@ def init_db() -> None:
                 PRIMARY KEY (org_id, platform)
             )
         """)
+        # Multi-tenant phase δ: per-org daily YouTube API quota usage.
+        # Same QUOTA_COSTS table as the legacy single-tenant counter; this
+        # one is scoped per-org so one tenant's heavy refresh day doesn't
+        # blow another's daily 10K cap.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS yt_quota_usage (
+                org_id INTEGER NOT NULL,
+                quota_date TEXT NOT NULL,
+                units_used INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (org_id, quota_date)
+            )
+        """)
         conn.commit()
 
 

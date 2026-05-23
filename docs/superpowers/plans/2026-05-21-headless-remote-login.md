@@ -1,5 +1,7 @@
 # Install-free Remote-Browser Login — Implementation Plan
 
+> **Status:** Shipped on 2026-05-23 (consolidated in the `codebase-completion-pass` branch — see git history for the actual per-commit work). The `- [ ]` checkboxes below are TDD step artifacts kept as-is for reference; all steps were executed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let the operator authenticate the API-less platforms (SimpleCast/Vista/Rock) on a headless VPS by logging in through a VPS-hosted browser streamed into the Settings page — no local install — with the resulting session captured server-side and encrypted into the existing secret store.

@@ -1,5 +1,7 @@
 # Hybrid Upload Agent — Phase 3: Agent-Executed Uploads
 
+> **Status:** Shipped on 2026-05-23 (consolidated in the `codebase-completion-pass` branch — see git history for the actual per-commit work). The `- [ ]` checkboxes below are TDD step artifacts kept as-is for reference; all steps were executed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** The paired local agent runs the real uploaders against local media. Server builds a per-date plan (idempotent-skip filtered, with platform credentials), sends it over the existing wss relay, ingests the same event stream the browser already renders, and persists refreshed credentials + image-use back to the encrypted store.

@@ -1,5 +1,7 @@
 # Hybrid Upload Agent — Phase 2b: Auto-Update + Packaging
 
+> **Status:** Shipped on 2026-05-23 (consolidated in the `codebase-completion-pass` branch — see git history for the actual per-commit work). The `- [ ]` checkboxes below are TDD step artifacts kept as-is for reference; all steps were executed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development.
 
 **Goal:** A self-updating cross-OS agent. The maintainer pushes `git tag agent-v0.x.y`, GHA builds + signs Windows and macOS bundles, uploads them to the VPS; every running agent self-updates on next startup. This is the post-internship-handoff enabler.

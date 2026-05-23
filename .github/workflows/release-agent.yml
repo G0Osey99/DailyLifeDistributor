@@ -63,6 +63,15 @@ jobs:
           with open("release-payload/manifest.json", "w") as f:
               json.dump(manifest, f, indent=2)
           PY
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: "agent ${{ github.ref_name }} — see docs/release-runbook.md for details"
+          files: release-payload/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: SCP to VPS
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}

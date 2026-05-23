@@ -243,6 +243,49 @@ call replaces the in-process `_run_batch_worker` thread.
 `error` event (`agent busy with job <prev_id>`); per-job state lives
 inside the worker thread.
 
+### Phase 3.5 — HWID-tagged devices + same-network picker
+
+The pair-redeem and dispatch paths grew three concrete signals so users with
+two paired agents (laptop + studio) can target the right one each run:
+
+- **HWID-tagged device records.** The agent computes a salted sha256 of
+  `py-machineid`'s machine id (`agent/hwid.py`) plus a friendly hostname
+  (`agent/hostname.py`, `.local` stripped, length-capped) and sends both
+  in the `/agent/pair/redeem` body. `core/devices.py:redeem_pairing_code`
+  persists them in two nullable columns (`hwid_hash`, `hostname`); old
+  agents that don't send the fields still pair successfully. A
+  `find_by_hwid(hash)` helper is exposed for future re-link UX.
+- **`agent_ip` capture.** The relay (`core/relay.py`) records the public
+  IP each agent connected from at handshake (`agent_ips: device_id → ip`).
+  `blueprints/agent.py:_client_ip` resolves the *real* IP via
+  `CF-Connecting-IP` → first `X-Forwarded-For` entry → `request.remote_addr`,
+  used both at the agent socket and the new browser-side route.
+- **`GET /agent/devices/online`.** Session-auth-gated endpoint returns
+  one entry per currently-connected agent:
+  `{id, name, hostname, hwid_hash_short, last_seen_at, same_network}`.
+  `same_network` is `True` when the agent's stored `connect_ip` equals
+  the browser's `_client_ip()` (neither side `"unknown"`).
+- **Dispatch fallback chain.** `core/agent_dispatch.py:_pick_device` now
+  takes optional `device_id` + `browser_ip` and runs:
+  1. Explicit `device_id` if it's currently online → win.
+  2. Exactly one online device → auto-pick.
+  3. Exactly one online device with `connect_ip == browser_ip` →
+     same-network win (ambiguous matches fall through).
+  4. `most_recently_seen_online()` — the original behavior.
+  `NoAgentOnlineError` only when all four yield nothing. The dashboard
+  passes `device_id` via `?device_id=` on `/media/batch/run?path=agent`.
+- **`whoami_ping` / `whoami_pong`.** Live identity confirmation: the
+  browser sends `{type: "whoami_ping", ping_id}` on its `/agent/ws`
+  socket; the relay forwards to all agents in the room; each agent's
+  `agent/main.py:_on_message` replies with `whoami_pong` carrying
+  `{ping_id, device_id, hwid_hash, hostname, protocol_version}`. The
+  dashboard chip refreshes its displayed hostname from the pong so
+  drift (reinstall, hostname change) appears without re-pairing.
+- **UI sticky preference.** `static/js/dld_pipeline.js` stores the
+  picker selection in `localStorage["dld:preferred_agent"]`. If the
+  stored device is offline at page load and exactly one same-network
+  device is online, that device pre-selects.
+
 ## Key Files
 
 | File | Purpose |

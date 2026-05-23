@@ -19,6 +19,50 @@
     const completedDates = new Set();
     let runActive = false;
 
+    // ── Agent upload-path state ───────────────────────────────────────────
+    const _agentState = { online: false, deviceName: null, chosenPath: "agent" };
+
+    function _updateAgentChip() {
+        const chip = document.getElementById("agent-chip");
+        const nameEl = document.getElementById("agent-chip-name");
+        const toggle = document.getElementById("agent-chip-toggle");
+        if (!chip) return;
+        if (!_agentState.online) { chip.hidden = true; return; }
+        chip.hidden = false;
+        chip.dataset.path = _agentState.chosenPath;
+        if (nameEl) nameEl.textContent = _agentState.deviceName || "agent";
+        if (toggle) toggle.textContent =
+            _agentState.chosenPath === "agent" ? "use web instead" : "use agent instead";
+    }
+
+    function onAgentPresence(presence) {
+        _agentState.online = !!presence.online;
+        if (!presence.online) _agentState.chosenPath = "agent"; // reset on disconnect
+        _updateAgentChip();
+    }
+
+    function _uploadPath() {
+        return (_agentState.online && _agentState.chosenPath === "agent") ? "agent" : "web";
+    }
+
+    // ── /agent/ws browser socket (presence frames) ────────────────────────
+    (function _connectAgentSocket() {
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        const wsUrl = `${proto}://${location.host}/agent/ws`;
+        function connect() {
+            let ws;
+            try { ws = new WebSocket(wsUrl); } catch (_) { return; }
+            ws.addEventListener("message", (e) => {
+                let msg;
+                try { msg = JSON.parse(e.data); } catch (_) { return; }
+                if (msg.type === "presence") onAgentPresence(msg.payload || {});
+            });
+            // Reconnect after 5 s so the chip stays live across server restarts.
+            ws.addEventListener("close", () => setTimeout(connect, 5000));
+        }
+        connect();
+    })();
+
     function $(sel) { return document.querySelector(sel); }
     function $all(sel) { return Array.from(document.querySelectorAll(sel)); }
     function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
@@ -411,7 +455,7 @@
         // Only this batch's date overrides.
         const batchOverrides = {};
         for (const d of batchDates) if (overrides && overrides[d]) batchOverrides[d] = overrides[d];
-        const res = await postJSON("/media/batch/run", {
+        const res = await postJSON(`/media/batch/run?path=${_uploadPath()}`, {
             run_id: runId, dates: batchDates, platforms, files: filesMap,
             overrides: batchOverrides,
         });
@@ -477,5 +521,13 @@
                 if (completedDates.has(cb.value)) { cb.checked = false; cb.disabled = true; }
             });
         }
+    });
+
+    // ── Agent chip toggle ─────────────────────────────────────────────────
+    document.addEventListener("click", (e) => {
+        if (e.target.id !== "agent-chip-toggle") return;
+        e.preventDefault();
+        _agentState.chosenPath = _agentState.chosenPath === "agent" ? "web" : "agent";
+        _updateAgentChip();
     });
 })();

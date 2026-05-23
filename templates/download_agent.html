@@ -50,17 +50,22 @@
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5L10.5 4.4v7.6H3V5.5zm0 13V12.5h7.5v7.1L3 18.5zm8.5-13.6L21 3.5v8.5h-9.5V4.9zm0 14.8V12.5H21v8L11.5 19.7z"/></svg>
       Download for Windows
     </a>
-    <a href="{{ macos_url }}"
-       class="dl-button {% if detected_os == 'macos' %}highlight detected-macos{% endif %}">
+    <a href="{{ macos_arm64_url }}"
+       class="dl-button {% if detected_os == 'macos' %}highlight detected-macos-arm64{% endif %}">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.1 12.6c0-2 1.6-3 1.7-3-.9-1.3-2.3-1.5-2.8-1.5-1.2-.1-2.4.7-3 .7s-1.6-.7-2.6-.7c-1.3 0-2.6.8-3.3 2-1.4 2.5-.4 6.1.9 8.1.7 1 1.5 2.1 2.5 2 1-.1 1.4-.6 2.6-.6s1.6.6 2.6.6c1.1 0 1.8-1 2.4-2 .8-1.1 1.1-2.2 1.1-2.3 0 0-2.1-.8-2.1-3.3zm-2-6.1c.5-.6.9-1.5.8-2.4-.8 0-1.7.5-2.2 1.1-.5.5-.9 1.5-.8 2.3.9.1 1.7-.5 2.2-1z"/></svg>
-      Download for macOS
+      Mac (Apple Silicon)
+    </a>
+    <a href="{{ macos_intel_url }}"
+       class="dl-button detected-macos-intel">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.1 12.6c0-2 1.6-3 1.7-3-.9-1.3-2.3-1.5-2.8-1.5-1.2-.1-2.4.7-3 .7s-1.6-.7-2.6-.7c-1.3 0-2.6.8-3.3 2-1.4 2.5-.4 6.1.9 8.1.7 1 1.5 2.1 2.5 2 1-.1 1.4-.6 2.6-.6s1.6.6 2.6.6c1.1 0 1.8-1 2.4-2 .8-1.1 1.1-2.2 1.1-2.3 0 0-2.1-.8-2.1-3.3zm-2-6.1c.5-.6.9-1.5.8-2.4-.8 0-1.7.5-2.2 1.1-.5.5-.9 1.5-.8 2.3.9.1 1.7-.5 2.2-1z"/></svg>
+      Mac (Intel)
     </a>
   </div>
   <p class="dl-detected">
     {% if detected_os == "windows" %}
-      Detected: Windows. The highlighted button matches your browser.
+      Detected: Windows.
     {% elif detected_os == "macos" %}
-      Detected: macOS. The highlighted button matches your browser.
+      Detected: macOS. Most Macs sold since late 2020 are Apple Silicon (M1/M2/M3/M4). Apple → menu → "About This Mac" shows the chip if unsure.
     {% else %}
       We couldn't auto-detect your OS — pick the matching binary.
     {% endif %}

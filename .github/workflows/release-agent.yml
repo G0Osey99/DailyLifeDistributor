@@ -9,7 +9,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        include:
+          - os: windows-latest
+            arch: ""
+            label: windows
+          # macos-latest = Apple Silicon (arm64). macos-13 still has the
+          # last Intel runner image GitHub ships. Both produce *separate*
+          # binaries; the download landing page surfaces both Mac options.
+          - os: macos-latest
+            arch: arm64
+            label: macos-arm64
+          - os: macos-13
+            arch: intel
+            label: macos-intel
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -28,10 +40,17 @@ jobs:
         env:
           AGENT_RELEASE_PRIVATE_KEY: ${{ secrets.AGENT_RELEASE_PRIVATE_KEY }}
         shell: bash
-        run: python scripts/build_agent.py --version "${{ steps.ver.outputs.version }}" > build-info.json
+        run: |
+          if [ -n "${{ matrix.arch }}" ]; then
+            python scripts/build_agent.py --version "${{ steps.ver.outputs.version }}" --arch "${{ matrix.arch }}" > build-info.json
+          else
+            python scripts/build_agent.py --version "${{ steps.ver.outputs.version }}" > build-info.json
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: agent-${{ matrix.os }}
+          # Use the matrix.label, not matrix.os, so two macos artifacts don't
+          # collide on the same artifact name (macos-13 vs macos-latest).
+          name: agent-${{ matrix.label }}
           path: |
             dist/dld-agent-*
             build-info.json

@@ -31,22 +31,50 @@ def _platform_label() -> str:
     return "windows" if s == "windows" else ("macos" if s == "darwin" else s)
 
 
-def _binary_name(version: str) -> str:
+def _full_label(arch: str | None) -> str:
+    """e.g. 'windows', 'macos-arm64', 'macos-intel'.
+
+    ``arch`` is the value passed in via --arch (or auto-detected on macOS).
+    For Windows we never append an arch because GHA only ships an x64 runner.
+    """
+    base = _platform_label()
+    if base == "macos" and arch:
+        return f"{base}-{arch}"
+    return base
+
+
+def _binary_name(version: str, arch: str | None) -> str:
     ext = ".exe" if _platform_label() == "windows" else ""
-    return f"dld-agent-{_platform_label()}-{version}{ext}"
+    return f"dld-agent-{_full_label(arch)}-{version}{ext}"
+
+
+def _detect_mac_arch() -> str | None:
+    """Return 'arm64' / 'intel' on macOS, else None. The CI matrix sets --arch
+    explicitly; this is the local-build fallback."""
+    if _platform_label() != "macos":
+        return None
+    m = platform.machine().lower()
+    return "arm64" if m in ("arm64", "aarch64") else "intel"
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", required=True, help="semver-ish, e.g. 0.2.0")
     ap.add_argument("--key-file", help="path to ed25519 private key PEM (else AGENT_RELEASE_PRIVATE_KEY env)")
+    ap.add_argument(
+        "--arch",
+        choices=["arm64", "intel"],
+        help="(macOS only) arch suffix baked into filename + manifest. "
+             "Auto-detected from platform.machine() if omitted.",
+    )
     args = ap.parse_args()
+    arch = args.arch or _detect_mac_arch()
 
     # Run PyInstaller.
     subprocess.check_call([sys.executable, "-m", "PyInstaller", "--clean",
                            "--noconfirm", "agent.spec"])
     built = os.path.join("dist", "dld-agent.exe" if _platform_label() == "windows" else "dld-agent")
-    final_name = _binary_name(args.version)
+    final_name = _binary_name(args.version, arch)
     final_path = os.path.join("dist", final_name)
     os.replace(built, final_path)
 
@@ -65,7 +93,8 @@ def main() -> None:
     digest = hashlib.sha256(data).hexdigest()
 
     print(json.dumps({
-        "platform": _platform_label(),
+        "platform": _full_label(arch),
+        "arch": arch,
         "filename": final_name,
         "sha256": digest,
         "signature_b64": base64.b64encode(sig).decode("ascii"),

@@ -236,8 +236,38 @@ def _ensure_paired(server_url: str) -> str:
     return config.get_token()
 
 
+# Set by _on_message when the server tells us the token is dead. The run loop
+# checks this between iterations and tears down to a re-pair prompt.
+_token_revoked_event = threading.Event()
+
+
 def _on_message(conn: AgentConnection, msg: dict) -> None:
     mtype = msg.get("type")
+    if mtype == "error":
+        # Server-sent in-band error. The relay does NOT reject the WebSocket
+        # handshake on a revoked token — it accepts the upgrade, then sends
+        # {type:"error", payload:{reason:"unauthorized"}}, then closes. So
+        # the only signal of revocation is this message; treat any payload
+        # reason in {unauthorized, revoked} as "clear the token and re-pair".
+        reason = ""
+        if isinstance(msg.get("payload"), dict):
+            reason = str(msg["payload"].get("reason", "")).lower()
+        if reason in ("unauthorized", "revoked", "device_revoked"):
+            log.warning(
+                "Server reported the agent token is no longer valid (%s); "
+                "clearing local token and exiting so the next run re-pairs.",
+                reason,
+            )
+            try:
+                config.clear_token()
+            except Exception:
+                log.debug("clear_token failed", exc_info=True)
+            _token_revoked_event.set()
+            _shutdown_event.set()
+            return
+        # Any other server-side error: surface to the user and keep going.
+        log.warning("Server error: %s", msg)
+        return
     if mtype == "ping":
         conn.send({"v": 1, "type": "pong", "payload": msg.get("payload", {})})
     elif mtype == "whoami_ping":
@@ -415,6 +445,25 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
             log.debug("agent connection dropped; reconnecting", exc_info=True)
         finally:
             conn.close()
+
+        # If the server told us this device is revoked, _on_message cleared
+        # the saved token and set both _token_revoked_event and
+        # shutdown_event. Catch that here, re-prompt for a new pairing code,
+        # and resume the connect loop with the fresh token — no restart
+        # needed.
+        if _token_revoked_event.is_set():
+            print(
+                "\nThis device's pairing was revoked on the server. "
+                "Enter a new pairing code to continue."
+            )
+            _token_revoked_event.clear()
+            shutdown_event.clear()
+            try:
+                token = _ensure_paired(server_url)
+            except SystemExit as e:
+                print(str(e) if e.code else "Pairing failed.")
+                break
+            continue
 
         if shutdown_event.is_set():
             break

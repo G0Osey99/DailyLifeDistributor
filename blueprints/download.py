@@ -34,7 +34,12 @@ bp = Blueprint("download", __name__)
 # clean 404 from release_binary rather than a 500 from this blueprint.
 _FALLBACK_BINARY = {
     "windows": "dld-agent-windows.exe",
-    "macos": "dld-agent-macos",
+    "macos-arm64": "dld-agent-macos-arm64",
+    "macos-intel": "dld-agent-macos-intel",
+    # Legacy unsuffixed key — kept so a manifest that lists "macos"
+    # (pre-arch-split builds) still resolves. Points at arm64 because that's
+    # what the current Mac fleet overwhelmingly runs.
+    "macos": "dld-agent-macos-arm64",
 }
 
 
@@ -101,6 +106,10 @@ def landing():
         "download_agent.html",
         detected_os=detected,
         windows_url=url_for("download.windows"),
+        macos_arm64_url=url_for("download.macos_arm64"),
+        macos_intel_url=url_for("download.macos_intel"),
+        # Backward-compat: existing templates / external links to macos_url
+        # still resolve, pointing at the arm64 build (the modern default).
         macos_url=url_for("download.macos"),
         pairing_code=pairing_code,
     )
@@ -110,6 +119,20 @@ def landing():
 def windows():
     """302 to the current Windows binary under /agent/releases/."""
     filename = _resolve_binary("windows")
+    return redirect(f"/agent/releases/{filename}", code=302)
+
+
+@bp.route("/download/agent/macos-arm64", methods=["GET"])
+def macos_arm64():
+    """302 to the current Apple Silicon (arm64) Mac binary."""
+    filename = _resolve_binary("macos-arm64")
+    return redirect(f"/agent/releases/{filename}", code=302)
+
+
+@bp.route("/download/agent/macos-intel", methods=["GET"])
+def macos_intel():
+    """302 to the current Intel Mac binary."""
+    filename = _resolve_binary("macos-intel")
     return redirect(f"/agent/releases/{filename}", code=302)
 
 

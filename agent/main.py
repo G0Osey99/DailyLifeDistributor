@@ -151,10 +151,15 @@ def _ensure_paired(server_url: str) -> str:
     # always returns a non-empty string.
     hwid_hash = _hwid_mod.compute_hwid_hash()
     friendly = _hostname_mod.get_friendly_hostname()
-    if not pair.redeem(server_url, code, _device_name(),
-                       hwid_hash=hwid_hash, hostname=friendly):
+    result = pair.redeem(server_url, code, _device_name(),
+                         hwid_hash=hwid_hash, hostname=friendly)
+    if not result:
         raise SystemExit("Pairing failed — check the code and try again.")
-    print("✓ Paired successfully.")
+    if isinstance(result, dict) and result.get("relinked"):
+        prev = result.get("previous_name") or _device_name()
+        print(f"✓ Re-linked to {prev} (replaced a prior pairing on this hardware).")
+    else:
+        print("✓ Paired successfully.")
     return config.get_token()
 
 

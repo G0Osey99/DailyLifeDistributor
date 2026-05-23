@@ -152,16 +152,41 @@ def pair_redeem():
         hwid_hash = hwid_hash[:128]
     if hostname and len(hostname) > 64:
         hostname = hostname[:64]
+    # Re-link UX: if the agent reports an hwid_hash that already matches
+    # an existing non-revoked device, the user almost certainly reinstalled
+    # on the same hardware. Revoke the stale row + carry its friendly name
+    # over to the new row so the dashboard's device picker doesn't fill up
+    # with abandoned duplicates. The user still has to enter the pairing
+    # code, so consent is unchanged.
+    relinked = False
+    inherited_name = None
+    if hwid_hash:
+        prior = devices.find_by_hwid(hwid_hash)
+        if prior and not prior.get("revoked"):
+            # Carry the old friendly name (the agent only knows its
+            # system hostname; users typically renamed it post-pair).
+            inherited_name = prior.get("name")
+            devices.revoke_device(prior["id"])
+            relinked = True
+
+    name = (data.get("name") or "device").strip()
+    if relinked and inherited_name:
+        name = inherited_name
+
     result = devices.redeem_pairing_code(
         (data.get("code") or "").strip(),
-        (data.get("name") or "device").strip(),
+        name,
         hwid_hash=hwid_hash,
         hostname=hostname,
     )
     if result is None:
         return jsonify({"error": "invalid or expired code"}), 400
     device_id, token = result
-    return jsonify({"device_id": device_id, "token": token})
+    body = {"device_id": device_id, "token": token}
+    if relinked:
+        body["relinked"] = True
+        body["previous_name"] = inherited_name
+    return jsonify(body)
 
 
 @bp.route("/agent/devices", methods=["GET"])

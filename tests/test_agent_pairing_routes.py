@@ -107,6 +107,90 @@ def test_pair_redeem_caps_oversized_hwid_and_hostname(client):
     assert len(devs[0]["hostname"]) == 64
 
 
+def test_pair_redeem_relinks_on_existing_hwid(client):
+    """When the agent reports an HWID that already matches a non-revoked
+    device, the old row is revoked and the new row inherits its friendly
+    name; the response carries relinked=True + previous_name so the
+    agent can log 'Re-linked to <name>'."""
+    _login(client)
+    code1 = client.post("/agent/pair/new").get_json()["code"]
+    client.application.test_client().post(
+        "/agent/pair/redeem", json={
+            "code": code1, "name": "Original Studio",
+            "hwid_hash": "f" * 64, "hostname": "Mac.local",
+        })
+    # User renames the original row in the dashboard.
+    devs = client.get("/agent/devices").get_json()["devices"]
+    old_id = devs[0]["id"]
+    client.post(f"/agent/devices/{old_id}/name", json={"name": "Studio Mac"})
+
+    # Same hardware reinstalls + pairs again.
+    code2 = client.post("/agent/pair/new").get_json()["code"]
+    resp = client.application.test_client().post(
+        "/agent/pair/redeem", json={
+            "code": code2, "name": "device",  # fresh install default
+            "hwid_hash": "f" * 64, "hostname": "Mac.local",
+        })
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["relinked"] is True
+    assert body["previous_name"] == "Studio Mac"
+    new_id = body["device_id"]
+    assert new_id != old_id
+
+    devs = client.get("/agent/devices").get_json()["devices"]
+    by_id = {d["id"]: d for d in devs}
+    # Old row is revoked.
+    assert by_id[old_id]["revoked"] == 1
+    # New row inherits the friendly name.
+    assert by_id[new_id]["revoked"] == 0
+    assert by_id[new_id]["name"] == "Studio Mac"
+
+
+def test_pair_redeem_does_not_relink_when_old_already_revoked(client):
+    """If the prior device with this HWID was already revoked, treat the
+    new pairing as fresh — don't carry over the (deliberately) discarded
+    name, and don't claim relinked."""
+    _login(client)
+    code1 = client.post("/agent/pair/new").get_json()["code"]
+    client.application.test_client().post(
+        "/agent/pair/redeem", json={
+            "code": code1, "name": "Old", "hwid_hash": "a" * 64,
+        })
+    devs = client.get("/agent/devices").get_json()["devices"]
+    client.post(f"/agent/devices/{devs[0]['id']}/revoke")
+
+    code2 = client.post("/agent/pair/new").get_json()["code"]
+    resp = client.application.test_client().post(
+        "/agent/pair/redeem", json={
+            "code": code2, "name": "Fresh", "hwid_hash": "a" * 64,
+        })
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert "relinked" not in body
+    devs = client.get("/agent/devices").get_json()["devices"]
+    new_row = next(d for d in devs if d["revoked"] == 0)
+    assert new_row["name"] == "Fresh"
+
+
+def test_pair_redeem_no_hwid_skips_relink_check(client):
+    """Older agent (no hwid_hash) — never relink, just create a new row."""
+    _login(client)
+    # First pairing (with hwid)
+    code1 = client.post("/agent/pair/new").get_json()["code"]
+    client.application.test_client().post(
+        "/agent/pair/redeem", json={
+            "code": code1, "name": "ExistingAgent", "hwid_hash": "b" * 64,
+        })
+    # Second pairing (no hwid) — should be a brand-new row.
+    code2 = client.post("/agent/pair/new").get_json()["code"]
+    resp = client.application.test_client().post(
+        "/agent/pair/redeem", json={"code": code2, "name": "Legacy"})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert "relinked" not in body
+
+
 def test_list_devices_includes_hwid_and_hostname_fields(client):
     """list_devices JSON includes the new fields even when NULL."""
     _login(client)

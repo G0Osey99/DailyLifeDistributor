@@ -14,7 +14,7 @@ def redeem(
     *,
     hwid_hash: str | None = None,
     hostname: str | None = None,
-) -> bool:
+) -> bool | dict:
     """POST the code to the server; on success store the token + server URL.
 
     *hwid_hash* and *hostname* are optional metadata sent on the redeem
@@ -22,6 +22,15 @@ def redeem(
     servers ignore extra JSON fields (Flask request.get_json with the
     default silent=True), so this stays backward compatible. Both
     arguments default to None for tests that don't care to set them.
+
+    Returns:
+      False on any failure (HTTP error, no token in body).
+      True on plain pairing (no re-link).
+      dict ``{"relinked": True, "previous_name": "Studio Mac"}`` when the
+      server detected this HWID was already paired and replaced the stale
+      record. The caller should log "Re-linked to <name>" instead of
+      "Paired". This dict is truthy so existing ``if pair.redeem(...):``
+      sites stay correct.
     """
     body: dict[str, object] = {"code": code, "name": device_name}
     if hwid_hash:
@@ -47,4 +56,9 @@ def redeem(
     device_id = (payload.get("device_id") or "").strip()
     if device_id:
         config.set_device_id(device_id)
+    if payload.get("relinked"):
+        return {
+            "relinked": True,
+            "previous_name": payload.get("previous_name") or device_name,
+        }
     return True

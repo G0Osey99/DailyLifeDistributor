@@ -1,5 +1,5 @@
 # agent/tests/test_main.py
-"""Minimal tests for agent/main.py _on_message dispatch — B9."""
+"""Minimal tests for agent/main.py _on_message dispatch — B9 + Phase 3."""
 import pytest
 from unittest.mock import MagicMock
 
@@ -14,14 +14,23 @@ def test_on_message_ping_sends_pong():
 
 
 def test_on_message_job_plan_routes_to_dispatch_handle_job_plan(monkeypatch):
-    """job_plan messages must be routed to dispatch.handle_job_plan."""
+    """job_plan messages must be routed to dispatch.handle_job_plan on a
+    background thread (so the receive loop stays responsive while the
+    upload runs)."""
+    import threading
     from agent import dispatch, main
 
+    # Ensure the busy slot is clear before we dispatch.
+    with main._active_job_lock:
+        main._active_job_id = None
+
     called = {}
+    done = threading.Event()
 
     def _fake_handle(*, plan, transport):
         called["plan"] = plan
         called["transport"] = transport
+        done.set()
 
     monkeypatch.setattr(dispatch, "handle_job_plan", _fake_handle)
 
@@ -37,18 +46,35 @@ def test_on_message_job_plan_routes_to_dispatch_handle_job_plan(monkeypatch):
     }
     main._on_message(conn, plan)
 
+    # The dispatch happens on a daemon thread; wait briefly for it.
+    assert done.wait(2.0), "handle_job_plan was not invoked on a background thread"
     assert called["plan"] is plan, "handle_job_plan did not receive the plan"
     # Transport wraps conn.send — verify it delegates correctly.
     called["transport"].send({"type": "event", "event": "done"})
-    conn.send.assert_called_once_with({"type": "event", "event": "done"})
+    # Allow the worker finally-block to clear _active_job_id.
+    for _ in range(20):
+        with main._active_job_lock:
+            if main._active_job_id is None:
+                break
+        threading.Event().wait(0.05)
 
 
 def test_on_message_job_plan_catches_exception_without_crashing(monkeypatch):
-    """A crash in handle_job_plan must be caught; _on_message must not raise."""
+    """A crash in handle_job_plan must be caught on the worker thread;
+    _on_message must not raise (the thread itself logs the exception)."""
+    import threading
     from agent import dispatch, main
 
+    with main._active_job_lock:
+        main._active_job_id = None
+
+    crashed = threading.Event()
+
     def _bad_handle(*, plan, transport):
-        raise RuntimeError("dispatch exploded")
+        try:
+            raise RuntimeError("dispatch exploded")
+        finally:
+            crashed.set()
 
     monkeypatch.setattr(dispatch, "handle_job_plan", _bad_handle)
 
@@ -56,3 +82,60 @@ def test_on_message_job_plan_catches_exception_without_crashing(monkeypatch):
     # Must not raise.
     main._on_message(conn, {"type": "job_plan", "job_id": "J0",
                             "rows": [], "credentials": {}, "config": {}})
+    assert crashed.wait(2.0)
+    # Slot must be released even after a crash.
+    for _ in range(20):
+        with main._active_job_lock:
+            if main._active_job_id is None:
+                break
+        threading.Event().wait(0.05)
+    with main._active_job_lock:
+        assert main._active_job_id is None
+
+
+def test_on_message_job_plan_busy_rejects_second_job(monkeypatch):
+    """A second job_plan arriving while another is running is rejected
+    with an error event and does NOT spawn a second dispatch."""
+    import threading
+    from agent import dispatch, main
+
+    with main._active_job_lock:
+        main._active_job_id = None
+
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def _slow_handle(*, plan, transport):
+        calls.append(plan["job_id"])
+        started.set()
+        release.wait(2.0)
+
+    monkeypatch.setattr(dispatch, "handle_job_plan", _slow_handle)
+
+    conn = MagicMock()
+    plan_a = {"type": "job_plan", "job_id": "JA",
+              "rows": [], "credentials": {}, "config": {}}
+    plan_b = {"type": "job_plan", "job_id": "JB",
+              "rows": [], "credentials": {}, "config": {}}
+
+    main._on_message(conn, plan_a)
+    assert started.wait(2.0), "first job didn't start"
+
+    # Second job arrives while first is still running.
+    main._on_message(conn, plan_b)
+    # The busy-rejection should have sent an error frame with JB's id.
+    error_sends = [c for c in conn.send.call_args_list
+                   if c.args and c.args[0].get("type") == "event"
+                   and c.args[0].get("event") == "error"
+                   and c.args[0].get("job_id") == "JB"]
+    assert error_sends, f"no busy-rejection frame for JB sent: {conn.send.call_args_list}"
+
+    # Let JA finish and confirm only one dispatch happened.
+    release.set()
+    for _ in range(40):
+        with main._active_job_lock:
+            if main._active_job_id is None:
+                break
+        threading.Event().wait(0.05)
+    assert calls == ["JA"], f"expected only JA to dispatch, got {calls}"

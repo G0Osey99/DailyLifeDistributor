@@ -390,9 +390,20 @@ def batch_run():
             )
         except agent_dispatch.NoAgentOnlineError:
             upload_jobs.drop_job(job_id)
+            # Release the run lock + clean the per-run temp dir: the agent
+            # path doesn't run _run_batch_worker's finally block, so without
+            # this the next /media/run/init returns 409 forever and the
+            # batch's temp files leak on the VPS volume.
+            _release_run(run_id)
             return jsonify({"error": "no_agent_online"}), 409
         agent_dispatch.register_job(job_id=job_id, sse_queue=job["queue"],
                                     session_id=session.session_id)
+        # The agent streams media from the user's machine; the per-run temp
+        # files the browser already uploaded are not consumed by the agent
+        # path. Release the run lock + delete the temp files now so the
+        # next run can start immediately and the VPS volume doesn't carry
+        # the batch through the (possibly hours-long) agent upload.
+        _release_run(run_id)
         return jsonify({"job_id": job_id})
 
     app_obj = current_app._get_current_object()  # type: ignore[attr-defined]

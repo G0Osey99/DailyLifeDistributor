@@ -26,6 +26,12 @@ _shutdown_event = threading.Event()
 _RECONNECT_DELAY = 3   # seconds between reconnect attempts
 _AUTH_ERR_CODES = {401, 403}
 
+# Single-job invariant: the agent runs one upload at a time. Track the
+# currently-active job_id so a second job_plan frame is rejected cleanly
+# instead of racing the first. Per-job state lives in run_batch.
+_active_job_lock = threading.Lock()
+_active_job_id: str | None = None
+
 
 def _device_name() -> str:
     return socket.gethostname() or "device"
@@ -65,16 +71,59 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
         report = scan.scan_roots(config.get_media_roots())
         conn.send({"v": 1, "type": "scan_result", "payload": report})
     elif mtype == "job_plan":
+        # Run the job on a daemon thread so the receive loop stays
+        # responsive — Cloudflare/nginx idle ~100s would otherwise drop
+        # the WebSocket mid-upload because the recv loop was blocked
+        # on handle_job_plan (minutes-to-hours).
         from agent import dispatch
+
+        job_id = msg.get("job_id", "")
 
         class _T:
             def send(self, frame):
                 conn.send(frame)
 
-        try:
-            dispatch.handle_job_plan(plan=msg, transport=_T())
-        except Exception as e:
-            log.exception("handle_job_plan crashed: %s", e)
+        transport_wrapper = _T()
+
+        # Single-job invariant: reject a second job_plan while one is
+        # already running. The server normally serializes per-agent, so
+        # this is a safety net.
+        global _active_job_id
+        with _active_job_lock:
+            if _active_job_id is not None:
+                log.warning(
+                    "Rejecting job_plan %s — agent busy with job %s",
+                    job_id[:8] if job_id else "?",
+                    _active_job_id[:8] if _active_job_id else "?",
+                )
+                try:
+                    transport_wrapper.send({
+                        "v": 1,
+                        "type": "event",
+                        "event": "error",
+                        "job_id": job_id,
+                        "error": f"agent busy with job {_active_job_id}",
+                    })
+                except Exception:
+                    log.debug("busy-rejection send failed", exc_info=True)
+                return
+            _active_job_id = job_id or "<unknown>"
+
+        def _run_plan():
+            global _active_job_id
+            try:
+                dispatch.handle_job_plan(plan=msg, transport=transport_wrapper)
+            except Exception as e:
+                log.exception("handle_job_plan crashed: %s", e)
+            finally:
+                with _active_job_lock:
+                    _active_job_id = None
+
+        threading.Thread(
+            target=_run_plan,
+            daemon=True,
+            name=f"job-{(job_id or 'unknown')[:8]}",
+        ).start()
 
 
 def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
@@ -126,10 +175,24 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
         except Exception as exc:  # noqa: BLE001
             if shutdown_event.is_set():
                 break
-            # Detect auth errors from simple_websocket (raised as exceptions
-            # with status codes embedded in the message).
-            msg_str = str(exc)
-            is_auth = any(str(c) in msg_str for c in _AUTH_ERR_CODES)
+            # Detect auth errors. simple_websocket raises ConnectionError
+            # with a ``status_code`` attribute on a non-101 HTTP response
+            # (verified via inspect on simple_websocket.errors.ConnectionError);
+            # prefer that over a substring match. Fall back to a tightened
+            # word-boundary string match for unexpected exception types so
+            # we don't mis-count a "401" embedded in a hostname or message.
+            is_auth = False
+            status_code = getattr(exc, "status_code", None)
+            if isinstance(status_code, int) and status_code in _AUTH_ERR_CODES:
+                is_auth = True
+            else:
+                import re
+                if re.search(r"\b(401|403)\b", str(exc)):
+                    # Heuristic — older simple_websocket versions don't set
+                    # status_code reliably; the only signal is the message
+                    # body. Tightened to word boundaries so a port like
+                    # 4011 doesn't trigger a false positive.
+                    is_auth = True
             if is_auth:
                 consecutive_auth_failures += 1
                 if consecutive_auth_failures >= 2:

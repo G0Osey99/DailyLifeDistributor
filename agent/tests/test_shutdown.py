@@ -73,8 +73,9 @@ def test_run_once_returns_false_when_shutdown_set():
 
 
 def test_run_once_returns_false_on_timeout_then_shutdown():
-    """run_once must keep looping on timeout=None returning None (idle server),
-    then exit when shutdown_event is set between polls."""
+    """receive() returning None is a poll timeout, NOT a closed connection.
+    run_once must keep polling and only exit when the shutdown event fires
+    (which it does between polls)."""
     from agent.transport import AgentConnection
 
     shutdown = threading.Event()
@@ -85,8 +86,9 @@ def test_run_once_returns_false_on_timeout_then_shutdown():
     def _fake_receive(timeout):
         nonlocal call_count
         call_count += 1
-        if call_count >= 2:
-            # On the second poll, signal shutdown.
+        if call_count >= 3:
+            # After a few poll-timeout ticks, request shutdown so the inner
+            # loop exits via the while-not-shutdown check.
             shutdown.set()
         return None  # simulate timeout (no message)
 
@@ -99,7 +101,60 @@ def test_run_once_returns_false_on_timeout_then_shutdown():
 
     assert result is False
     on_message.assert_not_called()
-    assert call_count >= 1
+    # Multiple None ticks before shutdown — None must NOT tear us down.
+    assert call_count >= 3
+
+
+def test_run_once_continues_after_none_then_dispatches_real_message():
+    """A None (poll timeout) is followed by a real message; run_once must
+    dispatch the message and return True (not silently return False)."""
+    from agent.transport import AgentConnection
+
+    shutdown = threading.Event()
+    conn = AgentConnection("https://example.com", "tok", shutdown_event=shutdown)
+
+    call_count = 0
+
+    def _fake_receive(timeout):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return None  # poll timeout — must NOT terminate the inner loop
+        return '{"type": "ping", "payload": {"x": 1}}'
+
+    fake_ws = MagicMock()
+    fake_ws.receive.side_effect = _fake_receive
+    conn.ws = fake_ws
+
+    received = []
+    result = conn.run_once(received.append)
+
+    assert result is True, "None followed by a message must dispatch normally"
+    assert received == [{"type": "ping", "payload": {"x": 1}}]
+    assert call_count == 2
+
+
+def test_run_once_returns_false_on_connection_closed_exception():
+    """A real disconnect surfaces as simple_websocket.ConnectionClosed
+    (not as receive() returning None). run_once must return False so the
+    outer loop reconnects."""
+    import simple_websocket
+    from agent.transport import AgentConnection
+
+    shutdown = threading.Event()
+    conn = AgentConnection("https://example.com", "tok", shutdown_event=shutdown)
+
+    fake_ws = MagicMock()
+    fake_ws.receive.side_effect = simple_websocket.ConnectionClosed(
+        1006, "abnormal close",
+    )
+    conn.ws = fake_ws
+
+    on_message = MagicMock()
+    result = conn.run_once(on_message)
+
+    assert result is False
+    on_message.assert_not_called()
 
 
 def test_run_once_processes_message_then_returns_true():

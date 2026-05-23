@@ -50,6 +50,13 @@ def _make_client(monkeypatch, tmp_path, hybrid_enabled: bool):
     }
     monkeypatch.setattr(media_mod, "_active_run", lambda run_id: fake_run)
 
+    # Patch _release_run so it doesn't try to touch fake_run["dir"] (None);
+    # tests that care about whether it was called inspect _release_calls.
+    _release_calls: list = []
+    def _fake_release(run_id):
+        _release_calls.append(run_id)
+    monkeypatch.setattr(media_mod, "_release_run", _fake_release)
+
     # Patch _apply_paths_to_session to no-op (no spreadsheet in test).
     monkeypatch.setattr(media_mod, "_apply_paths_to_session",
                         lambda *a, **kw: None)
@@ -58,6 +65,9 @@ def _make_client(monkeypatch, tmp_path, hybrid_enabled: bool):
     from core.session_state import session as _session
     monkeypatch.setattr(_session, "get_summary", lambda: [], raising=False)
     monkeypatch.setattr(_session, "entries", {}, raising=False)
+
+    # Expose the spy + the app for tests that want to inspect release calls.
+    flask_app_module.app._test_release_calls = _release_calls  # type: ignore[attr-defined]
 
     return client, flask_app_module.app
 
@@ -112,6 +122,46 @@ def test_upload_path_agent_dispatches_to_agent_dispatch(
     body = r.get_json()
     assert body["job_id"] == "JX"
     assert called, "agent_dispatch.start was not invoked"
+
+
+def test_upload_path_agent_releases_run_lock_after_dispatch(
+        monkeypatch, tmp_path):
+    """After a successful agent dispatch, the RunLock + per-run temp dir
+    must be released so a subsequent /media/run/init can succeed and the
+    batch's temp files don't leak through the agent upload."""
+    client, app = _make_client(monkeypatch, tmp_path, hybrid_enabled=True)
+    release_calls = app._test_release_calls  # type: ignore[attr-defined]
+
+    from core import agent_dispatch
+    monkeypatch.setattr(agent_dispatch, "start", lambda **kw: "JREL")
+
+    r = client.post("/media/batch/run?path=agent", json={**_BATCH_BODY, "run_id": "R1"})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert release_calls == ["R1"], (
+        f"_release_run was not called for the agent path: {release_calls}"
+    )
+
+
+def test_upload_path_agent_releases_run_lock_on_no_agent_online(
+        monkeypatch, tmp_path):
+    """If agent_dispatch.start raises NoAgentOnlineError, the RunLock and
+    temp dir must still be released — otherwise the next run is wedged."""
+    client, app = _make_client(monkeypatch, tmp_path, hybrid_enabled=True)
+    release_calls = app._test_release_calls  # type: ignore[attr-defined]
+
+    from core import agent_dispatch
+
+    def _raise(**kw):
+        raise agent_dispatch.NoAgentOnlineError("no agent")
+
+    monkeypatch.setattr(agent_dispatch, "start", _raise)
+
+    r = client.post("/media/batch/run?path=agent", json={**_BATCH_BODY, "run_id": "R2"})
+    assert r.status_code == 409
+    assert r.get_json().get("error") == "no_agent_online"
+    assert release_calls == ["R2"], (
+        f"_release_run was not called on NoAgentOnlineError: {release_calls}"
+    )
 
 
 def test_upload_path_agent_passes_real_elements(monkeypatch, tmp_path):

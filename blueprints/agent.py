@@ -169,6 +169,47 @@ def list_devices():
     return jsonify({"devices": devices.list_devices()})
 
 
+@bp.route("/agent/devices/online", methods=["GET"])
+def list_devices_online():
+    """List currently-connected agents with same_network annotation.
+
+    Session-auth-gated by the global ``_require_auth`` before_request hook
+    (this endpoint is NOT in ``_PUBLIC_ENDPOINTS``).
+
+    Returns ``{devices: [{id, name, hostname, hwid_hash_short, last_seen_at,
+    same_network}]}`` — one entry per agent currently registered on the
+    relay. ``same_network`` is True when the agent's stored connect_ip
+    equals the browser's _client_ip(). ``hwid_hash_short`` is the first
+    8 chars of the stored sha256 (full hash isn't useful to the UI and
+    leaks identifying entropy unnecessarily).
+    """
+    online = RELAY.online_agents(_ACCOUNT)
+    browser_ip = _client_ip()
+    # Look up persisted name/hostname/hwid for each online agent. We don't
+    # want to issue N queries in the worst case; one bulk listing is fine.
+    db_devices = {d["id"]: d for d in devices.list_devices()}
+
+    out: list[dict] = []
+    for entry in online:
+        did = entry["device_id"]
+        db_row = db_devices.get(did, {})
+        hwid = db_row.get("hwid_hash") or ""
+        out.append({
+            "id": did,
+            "name": entry.get("device_name") or db_row.get("name") or "device",
+            "hostname": db_row.get("hostname"),
+            "hwid_hash_short": hwid[:8] if hwid else None,
+            "last_seen_at": db_row.get("last_seen_at"),
+            "same_network": bool(
+                entry.get("connect_ip")
+                and browser_ip
+                and entry["connect_ip"] == browser_ip
+                and browser_ip != "unknown"
+            ),
+        })
+    return jsonify({"devices": out})
+
+
 @bp.route("/agent/devices/<device_id>/revoke", methods=["POST"])
 def revoke_device(device_id):
     devices.revoke_device(device_id)

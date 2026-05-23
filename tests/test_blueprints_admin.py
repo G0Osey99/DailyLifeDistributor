@@ -51,13 +51,15 @@ def test_admin_landing_ok_for_program_owner(app):
 def test_admin_organizations_list(app):
     with app.test_client() as c:
         owner = _owner_login(c)
+        # Use a distinct slug so the autouse migration's "lcbc-church" doesn't
+        # collide with the per-test fixture insert.
         org_store.create_org(
-            name="LCBC Church", slug="lcbc-church",
+            name="Test Church", slug="test-church",
             created_by_user_id=owner["id"],
         )
         resp = c.get("/admin/organizations")
         assert resp.status_code == 200
-        assert b"LCBC Church" in resp.data
+        assert b"Test Church" in resp.data
 
 
 def test_admin_organizations_create(app):

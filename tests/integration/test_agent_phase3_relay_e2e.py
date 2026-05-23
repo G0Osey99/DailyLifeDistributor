@@ -56,6 +56,9 @@ def running_server(tmp_path, monkeypatch):
     # Don't let rate limiting trip mid-test (we open multiple sockets in
     # the same test).
     monkeypatch.setenv("RATELIMIT_ENABLED", "false")
+    # Multi-tenant phase α: this test posts the legacy single-field login
+    # form; opt in to that path.
+    monkeypatch.setenv("LEGACY_PASSWORD_ENABLED", "true")
 
     import core.db as db
     import core.devices as devices

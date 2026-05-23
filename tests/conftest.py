@@ -99,6 +99,20 @@ def _reset_circuit_breakers():
 
 
 @pytest.fixture(autouse=True)
+def _legacy_password_enabled_for_tests(monkeypatch):
+    """Multi-tenant phase α: opt every existing test into the legacy
+    shared-password login form by default.
+
+    Many existing tests post ``data={"password": "pw"}`` to /login. The new
+    multi-tenant auth path requires ``username`` + ``password`` and would
+    otherwise 401 every one of them. Tests for the new Argon2id login
+    path explicitly set LEGACY_PASSWORD_ENABLED=false in their own fixtures.
+    """
+    monkeypatch.setenv("LEGACY_PASSWORD_ENABLED", "true")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _disable_rate_limiting(monkeypatch):
     """Disable flask-limiter + the manual ws-connect counters in tests.
 

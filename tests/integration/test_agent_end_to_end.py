@@ -12,6 +12,9 @@ simple_websocket = pytest.importorskip("simple_websocket")
 def live(tmp_path, monkeypatch):
     monkeypatch.setenv("DLD_STATE_DB", str(tmp_path / "state.db"))
     monkeypatch.setenv("HYBRID_AGENT_ENABLED", "true")
+    # Multi-tenant phase α: integration test logs in via the shared-password
+    # form, which is now opt-in behind LEGACY_PASSWORD_ENABLED.
+    monkeypatch.setenv("LEGACY_PASSWORD_ENABLED", "true")
     import importlib
     import core.db as db, core.devices as devices
     importlib.reload(db); importlib.reload(devices); db.init_db()

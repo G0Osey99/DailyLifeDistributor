@@ -8,6 +8,7 @@ docs/superpowers/specs/2026-05-22-hybrid-upload-agent-phase3-design.md.
 from __future__ import annotations
 import logging
 from typing import Any
+from core import db as _db
 
 _PROTOCOL_VERSION = 1
 
@@ -67,3 +68,23 @@ def build_envelope(
         "rows": out_rows,
         "credentials": dict(credentials),
     }
+
+
+def filter_done_rows(*, session_id: str, summary: list[dict]) -> list[dict]:
+    """Drop platforms (and entire rows) already recorded as ``success``
+    in upload_history.
+
+    Input: session_id, summary = list of {"date": iso, "platforms": [...]}
+    Output: list of {"row_idx": idx_in_summary, "iso_date": iso,
+    "platforms": [remaining]}, entire row omitted if all platforms done.
+    """
+    out: list[dict] = []
+    for idx, item in enumerate(summary):
+        iso = item["date"]
+        remaining = [
+            p for p in item["platforms"]
+            if not _db.has_successful_upload(session_id, iso, p)
+        ]
+        if remaining:
+            out.append({"row_idx": idx, "iso_date": iso, "platforms": remaining})
+    return out

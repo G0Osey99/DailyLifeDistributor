@@ -1,4 +1,3 @@
-import os
 from datetime import date, timedelta
 
 import pytest
@@ -6,8 +5,20 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.skipif(not os.path.exists("rock_session.json"),
-                    reason="Rock session missing")
+def _have_rock_session() -> bool:
+    """Rock Playwright session lives in the encrypted secrets store.
+
+    Legacy ``rock_session.json`` on disk is shredded post-migration.
+    """
+    try:
+        from core import secrets_store
+    except Exception:
+        return False
+    return secrets_store.has_secret("playwright.rock_session")
+
+
+@pytest.mark.skipif(not _have_rock_session(),
+                    reason="Rock session secret missing")
 def test_fetch_returns_items():
     from core.refresh import rock_source
     today = date.today()

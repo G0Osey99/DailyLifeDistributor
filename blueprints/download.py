@@ -19,9 +19,12 @@ from __future__ import annotations
 import json
 import os
 
-from flask import Blueprint, abort, redirect, render_template, request, url_for
+from flask import (
+    Blueprint, abort, redirect, render_template, request,
+    session as flask_session, url_for,
+)
 
-from core import release_store
+from core import devices, release_store
 
 bp = Blueprint("download", __name__)
 
@@ -75,11 +78,25 @@ def _resolve_binary(platform: str) -> str:
 
 @bp.route("/download/agent", methods=["GET"])
 def landing():
-    """OS-detection landing page with both download buttons."""
+    """OS-detection landing page with both download buttons.
+
+    When the visitor is authenticated, a one-time pairing code (30-minute
+    TTL) is minted and embedded in the page so the install →
+    paste-code → done flow is one continuous sequence. The code is bound
+    to ``flask.session['user_id']`` via ``create_pairing_code``'s
+    ``user_id=`` kwarg; the agent's redeem call inherits that user_id.
+    """
     detected = _detect_os(request.headers.get("User-Agent", ""))
-    # Phase δ task 10 wires a one-time pairing code into the page; for now
-    # the template renders a `pairing_code` only when one is in context.
     pairing_code = None
+    try:
+        uid = flask_session.get("user_id")
+        if uid is not None:
+            pairing_code = devices.create_pairing_code(
+                ttl_seconds=1800,  # 30 minutes
+                user_id=int(uid),
+            )
+    except Exception:  # noqa: BLE001 — a mint failure mustn't break the page
+        pairing_code = None
     return render_template(
         "download_agent.html",
         detected_os=detected,

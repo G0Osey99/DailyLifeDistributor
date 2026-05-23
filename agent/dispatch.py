@@ -62,7 +62,7 @@ def handle_job_plan(*, plan: dict, transport: Any) -> None:
             _logger.warning("transport.send failed: %s", exc)
 
     # Install shims fresh for this job — credentials from the envelope.
-    _sshim.install_as_core_secrets_store(
+    shim = _sshim.install_as_core_secrets_store(
         initial=dict(plan.get("credentials") or {}),
         emit=_emit,
     )
@@ -76,6 +76,16 @@ def handle_job_plan(*, plan: dict, transport: Any) -> None:
         _emit({"type": "event", "event": "error",
                "error": f"run_batch crashed: {exc}"})
         _emit({"type": "event", "event": "done"})
+    finally:
+        # Zeroize credentials at rest the moment the job is done so they
+        # don't linger in process memory between jobs. The Fernet key
+        # used to encrypt them is also dropped here — see
+        # agent/secrets_shim.py docstring for the residency story and
+        # its limitations.
+        try:
+            shim.shutdown()
+        except Exception:
+            _logger.debug("shim.shutdown() raised; suppressing", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

@@ -105,6 +105,57 @@ def test_handle_job_plan_emits_error_and_done_on_run_batch_crash(monkeypatch):
     assert "done" in events
 
 
+def test_handle_job_plan_calls_shim_shutdown_on_success(monkeypatch):
+    """The Shim returned by install_as_core_secrets_store must be shut down
+    in handle_job_plan's finally block so credentials don't linger."""
+    monkeypatch.setattr(dispatch, "_resolve_paths", lambda rows: {})
+    monkeypatch.setattr(dispatch, "_run_batch_run",
+                        lambda *, envelope, paths, emit: None)
+
+    shims_returned = []
+    real_install = dispatch._sshim.install_as_core_secrets_store
+
+    def _spy_install(*, initial, emit):
+        shim = real_install(initial=initial, emit=emit)
+        shims_returned.append(shim)
+        return shim
+
+    monkeypatch.setattr(dispatch._sshim, "install_as_core_secrets_store",
+                        _spy_install)
+
+    dispatch.handle_job_plan(plan=_PLAN, transport=StubTransport())
+
+    assert len(shims_returned) == 1
+    assert shims_returned[0]._closed is True, (
+        "shim.shutdown() must be called in handle_job_plan finally"
+    )
+
+
+def test_handle_job_plan_calls_shim_shutdown_even_on_crash(monkeypatch):
+    """Crash path must also call shim.shutdown() (finally semantics)."""
+    monkeypatch.setattr(dispatch, "_resolve_paths", lambda rows: {})
+
+    def _crash(*, envelope, paths, emit):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(dispatch, "_run_batch_run", _crash)
+
+    shims_returned = []
+    real_install = dispatch._sshim.install_as_core_secrets_store
+
+    def _spy_install(*, initial, emit):
+        shim = real_install(initial=initial, emit=emit)
+        shims_returned.append(shim)
+        return shim
+
+    monkeypatch.setattr(dispatch._sshim, "install_as_core_secrets_store",
+                        _spy_install)
+
+    dispatch.handle_job_plan(plan=_PLAN, transport=StubTransport())
+
+    assert shims_returned[0]._closed is True
+
+
 def test_resolve_paths_uses_latest_results_when_cached(monkeypatch):
     """_resolve_paths returns paths from the scan cache without re-scanning."""
     from agent import scan

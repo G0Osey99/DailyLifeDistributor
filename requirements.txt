@@ -14,3 +14,7 @@ cryptography>=43.0.1,<46
 playwright>=1.40.0,<2
 # Server-side WebSocket for the hybrid-agent relay (pulls in simple-websocket).
 flask-sock>=0.7,<1
+# Rate limiting on pairing + agent endpoints (Phase 3 hardening).
+# In-memory storage is fine for the single-instance VPS; switch to a Redis
+# URI (RATELIMIT_STORAGE_URI=redis://...) when going multi-instance.
+flask-limiter>=3.5,<5

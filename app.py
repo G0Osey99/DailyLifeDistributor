@@ -360,10 +360,42 @@ def create_app() -> Flask:
     app.register_blueprint(remote_login_bp)
     app.register_blueprint(media_bp)
 
+    # --- Rate limiter (Phase 3 hardening) -----------------------------------
+    # Configured here on the app object so the agent blueprint can import the
+    # shared instance. In-memory storage is fine for the single-instance VPS
+    # deploy; switching to multi-instance is a one-line config change:
+    #   RATELIMIT_STORAGE_URI=redis://... (the limiter picks it up via env).
+    #
+    # Tests disable rate limiting via app.config["RATELIMIT_ENABLED"]=False
+    # (see tests/conftest.py — flipped on whenever TESTING=True), so the rest
+    # of the suite can hit /agent/* and /pair/* repeatedly without 429s.
+    # Production sets RATELIMIT_ENABLED=False only if the operator opts out.
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    _ratelimit_enabled = (
+        os.environ.get("RATELIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
+    )
+    limiter = Limiter(
+        key_func=get_remote_address,
+        app=app,
+        default_limits=[],  # no global default — opt-in per route
+        storage_uri=os.environ.get("RATELIMIT_STORAGE_URI", "memory://"),
+        enabled=_ratelimit_enabled,
+        # Suppress flask-limiter's noisy warning when storage_uri=memory:// in
+        # production-style deploys; that's the documented default for single
+        # instance and the message scares operators reading the logs.
+        in_memory_fallback_enabled=True,
+    )
+    # Stash on app.extensions so blueprints can grab the same instance without
+    # re-importing the limiter (avoids two separate Limiter() instances).
+    app.extensions["dld_limiter"] = limiter
+
     if os.environ.get("HYBRID_AGENT_ENABLED", "").lower() in ("1", "true", "yes"):
         from flask_sock import Sock
-        from blueprints.agent import bp as agent_bp, register_sockets
+        from blueprints.agent import bp as agent_bp, register_sockets, attach_limits
         app.register_blueprint(agent_bp)
+        # Apply rate limits on the now-registered routes (pair_new, pair_redeem).
+        attach_limits(app, limiter)
         sock = Sock(app)
         register_sockets(sock)
         # Public (no-session) agent endpoints: the agent redeems a pairing code

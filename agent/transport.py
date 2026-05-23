@@ -112,5 +112,15 @@ class AgentConnection:
         return False
 
     def close(self) -> None:
-        if self.ws:
+        if not self.ws:
+            return
+        try:
             self.ws.close()
+        except Exception:
+            # simple_websocket raises ConnectionClosed (and friends) when the
+            # peer has already sent a close frame — that's the normal shutdown
+            # path, not an error. Anything else here is also non-actionable;
+            # the socket is going away regardless.
+            pass
+        finally:
+            self.ws = None

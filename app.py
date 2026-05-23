@@ -365,17 +365,34 @@ def create_app() -> Flask:
     def _inject_membership_context():
         # Multi-tenant phase α: header switch-org dropdown only renders when
         # the user has more than one membership.
-        from core import auth as _auth, org_store as _os
+        from core import auth as _auth, org_store as _os, user_store as _us
+        from flask import session as _sess
         uid = _auth.current_user_id()
+        # `is_authenticated` covers both the new user_id session and the
+        # legacy shared-password session, so the Sign-out button shows for
+        # both forms.
+        signed_in = _auth.is_authenticated()
         if uid is None:
-            return {"current_memberships": [], "current_org_id": None}
+            return {
+                "current_memberships": [],
+                "current_org_id": None,
+                "current_username": None,
+                "is_signed_in": signed_in,
+            }
         try:
             mems = _os.list_memberships_for_user(uid)
         except Exception:
             mems = []
+        try:
+            user = _us.get_user_by_id(uid)
+            username = (user or {}).get("username")
+        except Exception:
+            username = None
         return {
             "current_memberships": mems,
             "current_org_id": _auth.current_org_id(),
+            "current_username": username,
+            "is_signed_in": signed_in,
         }
 
     @app.route("/health")

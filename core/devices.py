@@ -37,10 +37,20 @@ def create_pairing_code(ttl_seconds: int = 600) -> str:
     return code
 
 
-def redeem_pairing_code(code: str, device_name: str) -> tuple[str, str] | None:
+def redeem_pairing_code(
+    code: str,
+    device_name: str,
+    *,
+    hwid_hash: str | None = None,
+    hostname: str | None = None,
+) -> tuple[str, str] | None:
     """Consume a valid code, create a device, return (device_id, raw_token).
 
     Returns None if the code is unknown, expired, or already consumed.
+
+    *hwid_hash* / *hostname* are optional metadata used by the device
+    picker UI. Both nullable to remain backward compatible with older
+    agents that don't report them.
     """
     code_hash = _hash(code)
     now = _now()
@@ -60,10 +70,12 @@ def redeem_pairing_code(code: str, device_name: str) -> tuple[str, str] | None:
         device_id = uuid.uuid4().hex
         token = secrets.token_urlsafe(32)
         conn.execute(
-            "INSERT INTO agent_devices (id, name, token_hash, created_at, last_seen_at, revoked) "
-            "VALUES (?, ?, ?, ?, ?, 0)",
+            "INSERT INTO agent_devices (id, name, token_hash, created_at, "
+            "last_seen_at, revoked, hwid_hash, hostname) "
+            "VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
             (device_id, device_name or "device", _hash(token),
-             now.isoformat(), now.isoformat()),
+             now.isoformat(), now.isoformat(),
+             hwid_hash or None, hostname or None),
         )
         conn.commit()
     return device_id, token
@@ -99,10 +111,35 @@ def revoke_device(device_id: str) -> None:
 def list_devices() -> list[dict]:
     with _get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, name, created_at, last_seen_at, revoked "
+            "SELECT id, name, created_at, last_seen_at, revoked, "
+            "hwid_hash, hostname "
             "FROM agent_devices ORDER BY created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def find_by_hwid(hwid_hash: str) -> dict | None:
+    """Return the most-recently-paired device row whose hwid_hash matches.
+
+    Used to enable a re-link UX: when an agent reinstalls and pairs again
+    on the same machine, we can spot the prior record and offer to merge.
+    Returns None if no row matches (including empty/None hwid_hash input).
+
+    Multiple rows can share a hwid_hash (re-pair across reinstalls); we
+    return the most-recently-paired one — that's the one currently active
+    on the machine and the most useful match for the UI.
+    """
+    if not hwid_hash:
+        return None
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, name, created_at, last_seen_at, revoked, "
+            "hwid_hash, hostname "
+            "FROM agent_devices WHERE hwid_hash = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (hwid_hash,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def get_device_name(device_id: str) -> str | None:

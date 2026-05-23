@@ -134,10 +134,30 @@ def pair_new():
 
 @bp.route("/agent/pair/redeem", methods=["POST"])
 def pair_redeem():
-    """Redeem a pairing code for a device token (no session — agent has none yet)."""
+    """Redeem a pairing code for a device token (no session — agent has none yet).
+
+    Optional JSON fields ``hwid_hash`` (sha256 hex, ~64 chars) and
+    ``hostname`` (friendly name, <=64 chars) are persisted on the device
+    record so the dashboard can render a meaningful picker. Missing or
+    empty values are stored as NULL — older agents that don't send the
+    fields still pair successfully.
+    """
     data = request.get_json(silent=True) or {}
+    hwid_hash = (data.get("hwid_hash") or "").strip() or None
+    hostname = (data.get("hostname") or "").strip() or None
+    # Defensive caps — these are server-side trusts. hwid_hash is exactly
+    # 64 hex chars in practice; hostname capped at 64 by the agent but
+    # re-cap here so a tampered client can't bloat the row.
+    if hwid_hash and len(hwid_hash) > 128:
+        hwid_hash = hwid_hash[:128]
+    if hostname and len(hostname) > 64:
+        hostname = hostname[:64]
     result = devices.redeem_pairing_code(
-        (data.get("code") or "").strip(), (data.get("name") or "device").strip())
+        (data.get("code") or "").strip(),
+        (data.get("name") or "device").strip(),
+        hwid_hash=hwid_hash,
+        hostname=hostname,
+    )
     if result is None:
         return jsonify({"error": "invalid or expired code"}), 400
     device_id, token = result

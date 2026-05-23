@@ -161,6 +161,16 @@ def init_db() -> None:
         cols = [r[1] for r in conn.execute("PRAGMA table_info('upload_history')").fetchall()]
         if "external_id" not in cols:
             conn.execute("ALTER TABLE upload_history ADD COLUMN external_id TEXT")
+        # Idempotent ALTERs for HWID + hostname columns on agent_devices
+        # (Phase 3.5: HWID-tagged device records). Both nullable; older
+        # rows from before this migration sit as NULL and the list/online
+        # endpoints handle that.
+        dcols = {r[1] for r in conn.execute(
+            "PRAGMA table_info('agent_devices')").fetchall()}
+        if "hwid_hash" not in dcols:
+            conn.execute("ALTER TABLE agent_devices ADD COLUMN hwid_hash TEXT")
+        if "hostname" not in dcols:
+            conn.execute("ALTER TABLE agent_devices ADD COLUMN hostname TEXT")
         conn.commit()
 
 

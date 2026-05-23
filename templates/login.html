@@ -61,14 +61,16 @@
     h1 { font-size: 1.15rem; font-weight: 600; letter-spacing: -0.012em; margin-bottom: 4px; }
     .lede { color: var(--text-muted); font-size: 0.86rem; margin-bottom: 22px; }
     label { display: block; font-weight: 500; font-size: 0.82rem; margin-bottom: 6px; }
-    input[type="password"] {
+    input[type="password"],
+    input[type="text"] {
       width: 100%; padding: 10px 12px;
       background: var(--panel); color: var(--text);
       border: 1px solid var(--border-strong); border-radius: var(--radius-md);
       font: inherit; font-size: 0.9rem; outline: none;
       transition: border-color .15s ease, box-shadow .15s ease;
     }
-    input[type="password"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    input[type="password"]:focus,
+    input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
     input::placeholder { color: var(--text-dim); }
     button {
       width: 100%; margin-top: 18px; padding: 11px;
@@ -106,8 +108,8 @@
     </div>
 
     <h1>Sign in</h1>
+    {% if legacy_enabled %}
     <p class="lede">Enter the shared password to access the uploader.</p>
-
     <form method="POST" action="{{ url_for('auth.login_submit', next=request.args.get('next', '')) }}">
       {% if error %}
       <div class="error" role="alert">
@@ -119,6 +121,22 @@
       <input type="password" id="password" name="password" autofocus autocomplete="current-password" placeholder="••••••••••">
       <button type="submit">Sign in</button>
     </form>
+    {% else %}
+    <p class="lede">Sign in with your username and password.</p>
+    <form method="POST" action="{{ url_for('auth.login_submit', next=request.args.get('next', '')) }}">
+      {% if error %}
+      <div class="error" role="alert">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+        <span>{{ error }}</span>
+      </div>
+      {% endif %}
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autofocus autocomplete="username" placeholder="alice">
+      <label for="password" style="margin-top:12px;">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" placeholder="••••••••••">
+      <button type="submit">Sign in</button>
+    </form>
+    {% endif %}
 
     <div class="foot">&copy; 2026 Daily Life Distributor</div>
   </div>

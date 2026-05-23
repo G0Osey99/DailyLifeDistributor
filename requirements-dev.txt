@@ -8,3 +8,6 @@ pytest-timeout>=2.3,<3
 # intentionally NOT in requirements.txt — the server Docker image doesn't need
 # them. simple-websocket already comes transitively via flask-sock.
 keyring>=24,<26
+# Multi-tenant phase α: freeze datetime.now() for password_changed_at /
+# invitations.expires_at / recovery_requests.expires_at deterministic tests.
+freezegun>=1.4,<2

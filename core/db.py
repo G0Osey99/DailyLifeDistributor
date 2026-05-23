@@ -157,6 +157,142 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             )
         """)
+        # Multi-tenant phase α: organizations.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS organizations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                slug TEXT NOT NULL UNIQUE,
+                plan TEXT NOT NULL DEFAULT 'free',
+                billing_email TEXT,
+                require_2fa INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                created_by_user_id INTEGER,
+                disabled_at TEXT
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orgs_slug ON organizations(slug)"
+        )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                totp_secret_encrypted TEXT,
+                email_2fa_enabled INTEGER NOT NULL DEFAULT 0,
+                program_owner INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                last_login_at TEXT,
+                password_changed_at TEXT
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)"
+        )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS org_memberships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                org_id INTEGER NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('owner','manager','user')),
+                joined_at TEXT NOT NULL,
+                UNIQUE(user_id, org_id),
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(org_id) REFERENCES organizations(id)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memberships_user "
+            "ON org_memberships(user_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memberships_org "
+            "ON org_memberships(org_id)"
+        )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS invitations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                org_id INTEGER NOT NULL,
+                inviter_user_id INTEGER NOT NULL,
+                email TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('owner','manager','user')),
+                token_hash TEXT NOT NULL UNIQUE,
+                expires_at TEXT NOT NULL,
+                accepted_at TEXT,
+                revoked_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(org_id) REFERENCES organizations(id),
+                FOREIGN KEY(inviter_user_id) REFERENCES users(id)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_invitations_email "
+            "ON invitations(email)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_invitations_org "
+            "ON invitations(org_id)"
+        )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS recovery_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                code_hash TEXT NOT NULL,
+                used_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recovery_codes_user "
+            "ON recovery_codes(user_id)"
+        )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS recovery_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                requested_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                approver_user_id INTEGER,
+                approved_at TEXT,
+                password_reset_token_hash TEXT,
+                consumed_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(approver_user_id) REFERENCES users(id)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recovery_requests_user "
+            "ON recovery_requests(user_id)"
+        )
+        for _t in ("audit_log", "audit_log_archive"):
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {_t} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    org_id INTEGER,
+                    actor_user_id INTEGER,
+                    action TEXT NOT NULL,
+                    target_type TEXT,
+                    target_id INTEGER,
+                    metadata TEXT,
+                    ip TEXT,
+                    user_agent TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_org_time "
+            "ON audit_log(org_id, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_actor_time "
+            "ON audit_log(actor_user_id, created_at)"
+        )
         # Idempotent ALTER for the new external_id column on upload_history
         cols = [r[1] for r in conn.execute("PRAGMA table_info('upload_history')").fetchall()]
         if "external_id" not in cols:
@@ -171,6 +307,36 @@ def init_db() -> None:
             conn.execute("ALTER TABLE agent_devices ADD COLUMN hwid_hash TEXT")
         if "hostname" not in dcols:
             conn.execute("ALTER TABLE agent_devices ADD COLUMN hostname TEXT")
+        # Multi-tenant phase α: agent_devices.user_id (nullable).
+        if "user_id" not in dcols:
+            conn.execute("ALTER TABLE agent_devices ADD COLUMN user_id INTEGER")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_devices_user "
+            "ON agent_devices(user_id)"
+        )
+        # Multi-tenant phase α: secrets.org_id (nullable).
+        scols = {r[1] for r in conn.execute(
+            "PRAGMA table_info('secrets')").fetchall()}
+        if "org_id" not in scols:
+            conn.execute("ALTER TABLE secrets ADD COLUMN org_id INTEGER")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_secrets_org ON secrets(org_id)"
+        )
+        # Multi-tenant phase α: upload_history.org_id + user_id (nullable).
+        uhcols = {r[1] for r in conn.execute(
+            "PRAGMA table_info('upload_history')").fetchall()}
+        if "org_id" not in uhcols:
+            conn.execute("ALTER TABLE upload_history ADD COLUMN org_id INTEGER")
+        if "user_id" not in uhcols:
+            conn.execute("ALTER TABLE upload_history ADD COLUMN user_id INTEGER")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_upload_history_org "
+            "ON upload_history(org_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_upload_history_user "
+            "ON upload_history(user_id)"
+        )
         conn.commit()
 
 

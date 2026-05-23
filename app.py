@@ -154,6 +154,20 @@ def create_app() -> Flask:
     from core import auth as _auth
     _auth.bootstrap_from_env()
 
+    # Multi-tenant phase α: idempotent first-boot migration.
+    try:
+        from core.migration_bootstrap import run_migration as _run_mt_migration
+        _run_mt_migration()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Multi-tenant migration_bootstrap.run_migration() failed. "
+            "First boot requires PROGRAM_OWNER_EMAIL + INITIAL_ADMIN_PASSWORD."
+        )
+        # We deliberately do NOT re-raise: a missing env var on later boots
+        # (after the bootstrap user already exists) must not block startup.
+        # The check inside run_migration() handles the "already bootstrapped"
+        # path explicitly — only a true first-boot misconfig logs + continues.
+
     try:
         from scripts.migrate_secrets import run as _migrate_secrets
         _migrate_secrets()
@@ -296,6 +310,23 @@ def create_app() -> Flask:
         """Make youtube_authenticated available in all templates (used by navbar)."""
         return {"youtube_authenticated": _cached_yt_authenticated()}
 
+    @app.context_processor
+    def _inject_membership_context():
+        # Multi-tenant phase α: header switch-org dropdown only renders when
+        # the user has more than one membership.
+        from core import auth as _auth, org_store as _os
+        uid = _auth.current_user_id()
+        if uid is None:
+            return {"current_memberships": [], "current_org_id": None}
+        try:
+            mems = _os.list_memberships_for_user(uid)
+        except Exception:
+            mems = []
+        return {
+            "current_memberships": mems,
+            "current_org_id": _auth.current_org_id(),
+        }
+
     @app.route("/health")
     def _health():
         """Lightweight readiness probe for on-call diagnosis.
@@ -359,6 +390,10 @@ def create_app() -> Flask:
     app.register_blueprint(history_bp)
     app.register_blueprint(remote_login_bp)
     app.register_blueprint(media_bp)
+
+    # Multi-tenant phase α: program-owner admin pages.
+    from blueprints.admin import bp as admin_bp
+    app.register_blueprint(admin_bp)
 
     # --- Rate limiter (Phase 3 hardening) -----------------------------------
     # Configured here on the app object so the agent blueprint can import the

@@ -1,0 +1,7 @@
+Welcome to {{ org_name }} on Daily Life Distributor
+
+Hi {{ username }},
+
+Your account is ready. Sign in at https://autoalert.pro/login
+
+— Daily Life Distributor

@@ -626,6 +626,16 @@
                 </div>
             </div>
 
+            {% if current_memberships and current_memberships|length > 1 %}
+            <form method="POST" action="{{ url_for('auth.switch_org') }}" style="padding: 8px 12px;">
+              <select name="org_id" onchange="this.form.submit()" aria-label="Switch organization" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--shell-border);background:var(--shell-panel);font:inherit;font-size:0.85rem;">
+                {% for m in current_memberships %}
+                <option value="{{ m.org_id }}"{% if m.org_id == current_org_id %} selected{% endif %}>{{ m.org_name }}</option>
+                {% endfor %}
+              </select>
+            </form>
+            {% endif %}
+
             {% set ep = (request.endpoint or '').rsplit('.', 1)[-1] %}
             {% set is_flow = ep in ['index', 'review', 'confirm', 'results'] %}
             <nav class="sb-nav">

@@ -17,6 +17,8 @@ def _touch(p):
 def live(tmp_path, monkeypatch):
     monkeypatch.setenv("DLD_STATE_DB", str(tmp_path / "state.db"))
     monkeypatch.setenv("HYBRID_AGENT_ENABLED", "true")
+    # Multi-tenant phase α: legacy shared-password form (opt-in).
+    monkeypatch.setenv("LEGACY_PASSWORD_ENABLED", "true")
     import importlib
     import core.db as db, core.devices as devices
     importlib.reload(db); importlib.reload(devices); db.init_db()

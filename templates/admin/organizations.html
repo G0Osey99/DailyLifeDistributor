@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="utf-8">
+  <title>Admin · Organizations · Daily Life Distributor</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 24px auto; padding: 0 16px; color: #222; }
+    h1 { font-size: 1.4rem; margin-bottom: 16px; }
+    h2 { font-size: 1.1rem; margin: 24px 0 8px; }
+    nav a { margin-right: 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 0.92rem; }
+    form.create { display: flex; gap: 8px; align-items: center; margin: 12px 0 0; }
+    input[type=text] { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font: inherit; }
+    button { padding: 7px 14px; background: #215fd6; color: #fff; border: 0; border-radius: 6px; font: inherit; cursor: pointer; }
+    .err { background: #fde; color: #900; padding: 8px 12px; border-radius: 6px; margin: 8px 0; }
+  </style>
+</head><body>
+  <nav>
+    <a href="{{ url_for('admin.landing') }}">Admin</a>
+    <a href="{{ url_for('admin.organizations_list') }}">Organizations</a>
+    <a href="{{ url_for('admin.users_list') }}">Users</a>
+  </nav>
+  <h1>Admin · Organizations</h1>
+  {% if form_error %}<div class="err">{{ form_error }}</div>{% endif %}
+  <h2>Create organization</h2>
+  <form class="create" method="POST" action="{{ url_for('admin.organizations_create') }}">
+    <input type="text" name="name" placeholder="Org name" required>
+    <input type="text" name="slug" placeholder="slug (auto from name)">
+    <button type="submit">Create</button>
+  </form>
+  <h2>Existing organizations ({{ orgs|length }})</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Slug</th><th>Plan</th><th>Created</th><th>Disabled?</th></tr></thead>
+    <tbody>
+      {% for o in orgs %}
+      <tr>
+        <td>{{ o.name }}</td>
+        <td><code>{{ o.slug }}</code></td>
+        <td>{{ o.plan }}</td>
+        <td>{{ o.created_at }}</td>
+        <td>{{ 'Yes' if o.disabled_at else 'No' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="color:#888;">No organizations yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body></html>

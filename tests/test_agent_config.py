@@ -24,3 +24,22 @@ def test_config_file_roundtrip(tmp_path, monkeypatch):
     assert config.get_media_roots() == {"video": "/Users/x/vids"}
     data = json.load(open(tmp_path / "agent.json"))
     assert data["server_url"] == "https://autoalert.pro"
+
+
+def test_clear_token_swallows_backend_errors_with_debug_log(monkeypatch, caplog):
+    """clear_token must not raise when keyring's backend throws (e.g.
+    PasswordDeleteError on first run, or transient backend hiccups).
+    The failure is logged at debug so triage can spot real backend
+    issues without scaring users on the happy path."""
+    class _Raising(_MemKeyring):
+        def delete_password(self, svc, user):
+            raise RuntimeError("simulated backend failure")
+
+    monkeypatch.setattr(config, "_keyring", _Raising())
+    with caplog.at_level("DEBUG", logger="agent.config"):
+        # Must not raise.
+        config.clear_token()
+    debug_lines = [r for r in caplog.records
+                   if r.levelname == "DEBUG"
+                   and "clear_token" in r.message]
+    assert debug_lines, "expected a DEBUG log line on backend failure"

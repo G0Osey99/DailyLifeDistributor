@@ -421,7 +421,12 @@ def register_sockets(sock) -> None:
                             "payload": {"reason": "rate_limit_exceeded"},
                         }))
                     except Exception:
-                        pass
+                        _log.debug(
+                            "agent_socket: rate-limit notice send failed "
+                            "for device=%s",
+                            device_id[:8] if device_id else "?",
+                            exc_info=True,
+                        )
                     break
                 # Route frames that target the server (event,
                 # credentials_updated, image_used). on_frame logs unrecognised
@@ -451,7 +456,17 @@ def register_sockets(sock) -> None:
                         _agent_dispatch.on_frame(frame)
                         continue
                 except Exception:
-                    pass
+                    # A malformed frame (bad JSON, unexpected shape, or a
+                    # transient bug in on_frame) must not bring the socket
+                    # down — we fall through to route_from_agent so the
+                    # browser can still see legitimate broadcasts. Log at
+                    # debug with exc_info so triage has a stack on the
+                    # rare occasions an operator pulls logs.
+                    _log.debug(
+                        "agent_socket frame dispatch raised for device=%s",
+                        device_id[:8] if device_id else "?",
+                        exc_info=True,
+                    )
                 RELAY.route_from_agent(_ACCOUNT, msg)
         finally:
             RELAY.unregister_agent(_ACCOUNT, device_id)

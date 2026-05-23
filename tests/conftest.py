@@ -99,6 +99,20 @@ def _reset_circuit_breakers():
 
 
 @pytest.fixture(autouse=True)
+def _disable_rate_limiting(monkeypatch):
+    """Disable flask-limiter + the manual ws-connect counters in tests.
+
+    Many existing tests hit /agent/* and /pair/* dozens of times in a single
+    test run; with rate limiting on those would 429 partway through.
+    Production keeps the default RATELIMIT_ENABLED=true; the test suite
+    flips it off via RATELIMIT_ENABLED=false so create_app() reads it
+    before initialising the Limiter.
+    """
+    monkeypatch.setenv("RATELIMIT_ENABLED", "false")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _master_key(monkeypatch):
     """Provide a valid Fernet master key for every test.
 

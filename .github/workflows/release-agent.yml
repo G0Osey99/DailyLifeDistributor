@@ -40,14 +40,19 @@ jobs:
           curl -fL -o /tmp/python.pkg \
             "https://www.python.org/ftp/python/${PY_VER}/python-${PY_VER}-macos11.pkg"
           sudo installer -pkg /tmp/python.pkg -target /
-          PY="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11"
-          "$PY" --version
+          BIN="/Library/Frameworks/Python.framework/Versions/3.11/bin"
+          "$BIN/python3.11" --version
           # Confirm both arch slices are present in the interpreter — if
           # PyInstaller's --target-arch universal2 step later fails with a
           # cryptic message, this is usually why.
-          file "$PY"
-          # Expose as `python` for the rest of the steps.
-          echo "/Library/Frameworks/Python.framework/Versions/3.11/bin" >> $GITHUB_PATH
+          file "$BIN/python3.11"
+          # python.org's .pkg ships python3.11 and pip3.11 only; the
+          # downstream steps use bare `python` and `pip`, so symlink them.
+          # (actions/setup-python normally creates these aliases — we
+          # bypass it here to get a universal2 build.)
+          sudo ln -sf "$BIN/python3.11" "$BIN/python"
+          sudo ln -sf "$BIN/pip3.11" "$BIN/pip"
+          echo "$BIN" >> $GITHUB_PATH
       - name: Install build deps
         shell: bash
         run: |

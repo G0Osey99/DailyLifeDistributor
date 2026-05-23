@@ -167,7 +167,7 @@ def _dispatch_job(monkeypatch, devices_mod, device_id: str) -> str:
     # by; name is the human-readable label shown in the dashboard chip.
     monkeypatch.setattr(
         agent_dispatch, "_pick_device",
-        lambda: {"id": device_id, "name": "Mac"},
+        lambda **kw: {"id": device_id, "name": "Mac"},
     )
     # Skip credential bundling — we don't need real YT/Rock keys for the
     # relay's wire path; the fake agent doesn't actually upload.

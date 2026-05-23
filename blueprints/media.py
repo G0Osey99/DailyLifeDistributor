@@ -377,6 +377,20 @@ def batch_run():
         from core.config import load_config as _load_config
         _cfg = _load_config()
         _max_workers = (_cfg.get("upload") or {}).get("max_workers", 4)
+        # Phase 3.5 — accept an explicit device picker selection from the
+        # dashboard. The browser passes ?device_id=<uuid> when the user
+        # has chosen a specific device; absent → fallback chain runs.
+        # Also pass the browser's _client_ip() so the dispatch can compute
+        # same-network when no explicit pick was made.
+        _picked_device = (request.args.get("device_id")
+                          or (data.get("device_id") if isinstance(data, dict) else None)
+                          or None)
+        _browser_ip = None
+        try:
+            from blueprints.agent import _client_ip as _bp_client_ip
+            _browser_ip = _bp_client_ip()
+        except Exception:  # noqa: BLE001 — never block the upload on this
+            _browser_ip = None
         try:
             job_id = agent_dispatch.start(
                 session_id=session.session_id,
@@ -387,6 +401,8 @@ def batch_run():
                     for iso, entry in entries_snapshot.items()
                 },
                 config={"max_workers": _max_workers},
+                device_id=_picked_device,
+                browser_ip=_browser_ip,
             )
         except agent_dispatch.NoAgentOnlineError:
             upload_jobs.drop_job(job_id)

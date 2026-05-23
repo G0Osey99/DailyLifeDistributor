@@ -253,15 +253,85 @@ class NoAgentOnlineError(RuntimeError):
     """Raised when /upload?path=agent is invoked but no paired agent is online."""
 
 
-def _pick_device() -> dict:
-    """Return the most-recently-seen online device dict.
+def _relay_online_agents() -> list[dict]:
+    """Return online_agents() from the default relay, or [] if none set.
 
-    Raises NoAgentOnlineError if no device qualifies (none paired, or all
-    last-seen more than freshness_seconds ago).
+    Wrapped so tests that don't initialise the default relay (most unit
+    tests monkeypatch _pick_device directly) don't blow up on the
+    AttributeError. The production path always has the default relay
+    registered by blueprints.agent at startup.
     """
+    try:
+        relay = _relay._default_relay
+        if relay is None:
+            return []
+        return relay.online_agents(_relay._default_account)
+    except Exception:  # noqa: BLE001 — defensive; same fallback as no agents
+        _logger.debug("_relay_online_agents: failed", exc_info=True)
+        return []
+
+
+def _pick_device(device_id: str | None = None,
+                 browser_ip: str | None = None) -> dict:
+    """Pick the target device using the explicit-first fallback chain.
+
+    Order:
+      1. If *device_id* is given AND that device is currently online on
+         the relay → return its row.
+      2. If the user has exactly one online device → return it.
+      3. If exactly one online device's connect_ip == *browser_ip*
+         (same-network) → return it.
+      4. Fall back to most_recently_seen_online() (last known good).
+
+    Raises NoAgentOnlineError if no device qualifies (relay empty AND
+    no recently-seen row).
+
+    *browser_ip* may be None — that simply disables same-network matching
+    so the chain skips straight to step 4.
+    """
+    online = _relay_online_agents()
+    online_ids = {a["device_id"] for a in online}
+
+    # (1) Explicit device_id wins if it's currently online.
+    if device_id and device_id in online_ids:
+        row = _devices.find_by_hwid("")  # placeholder, replaced below
+        # Look up the persisted row by id; fall back to a minimal stub if the
+        # device was paired in a previous DB but list_devices doesn't surface
+        # it (shouldn't happen — verify_device_token created the row).
+        all_rows = {d["id"]: d for d in _devices.list_devices()}
+        row = all_rows.get(device_id) or {"id": device_id, "name": "device"}
+        _logger.info("_pick_device: explicit device_id=%s", device_id)
+        return row
+
+    # (2) Single online → trivially pick it.
+    if len(online) == 1:
+        only_id = online[0]["device_id"]
+        all_rows = {d["id"]: d for d in _devices.list_devices()}
+        row = all_rows.get(only_id) or {"id": only_id, "name": "device"}
+        _logger.info("_pick_device: single-online device_id=%s", only_id)
+        return row
+
+    # (3) Same-network — only fires when the browser_ip is known and
+    # exactly one online device matches it. Multiple matches → ambiguous,
+    # fall through to (4) so we don't silently pick the wrong one.
+    if browser_ip and browser_ip != "unknown":
+        matches = [a for a in online if a.get("connect_ip") == browser_ip]
+        if len(matches) == 1:
+            mid = matches[0]["device_id"]
+            all_rows = {d["id"]: d for d in _devices.list_devices()}
+            row = all_rows.get(mid) or {"id": mid, "name": "device"}
+            _logger.info(
+                "_pick_device: same-network device_id=%s ip=%s",
+                mid, browser_ip,
+            )
+            return row
+
+    # (4) Most-recently-seen — the original behavior.
     dev = _devices.most_recently_seen_online()
     if dev is None:
         raise NoAgentOnlineError("no paired agent is online")
+    _logger.info("_pick_device: fallback most-recently-seen device_id=%s",
+                 dev.get("id"))
     return dev
 
 
@@ -272,6 +342,8 @@ def start(
     entries: dict,
     elements: dict,
     config: dict,
+    device_id: str | None = None,
+    browser_ip: str | None = None,
 ) -> str:
     """Filter done rows, bundle credentials, build the envelope, and send
     it through the relay to the chosen agent. Returns the new job_id.
@@ -280,6 +352,12 @@ def start(
     Each row receives its own per-date elements slice; rows whose iso_date
     is absent from the map fall back to an empty dict (all defaults apply
     on the agent side).
+
+    *device_id* (optional) — explicit picker selection from the dashboard.
+    When provided and currently online, it bypasses the fallback chain.
+
+    *browser_ip* (optional) — the dashboard's _client_ip() at request
+    time, used by _pick_device to compute same-network matches.
     """
     job_id = _uuid.uuid4().hex
     rows = filter_done_rows(session_id=session_id, summary=summary)
@@ -299,7 +377,7 @@ def start(
         credentials=creds,
         config=config,
     )
-    device = _pick_device()
+    device = _pick_device(device_id=device_id, browser_ip=browser_ip)
     # Route by device_id, not device_name: the relay rooms in core/relay.py
     # are keyed by device_id (immutable UUID). device["name"] is the human-
     # readable label ("Mac", "Studio Laptop") which can collide between

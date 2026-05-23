@@ -83,6 +83,32 @@ def test_send_to_device_raises_when_no_default_relay(monkeypatch):
         relay.send_to_device("some-device", {"v": 1, "type": "ping"})
 
 
+# ---------------------------------------------------------------------------
+# Task A8: credentials_updated writes back to secrets_store / playwright blobs
+# ---------------------------------------------------------------------------
+def test_credentials_updated_writes_back_to_secrets_store():
+    """YouTube token (non-playwright key) must land in secrets_store as a kv secret."""
+    from core import agent_dispatch, secrets_store
+    agent_dispatch.on_frame({
+        "v": 1, "type": "credentials_updated", "job_id": "J3",
+        "key": "youtube.token", "value": '{"refreshed": true}',
+    })
+    assert secrets_store.get_secret("youtube.token") == '{"refreshed": true}'
+
+
+def test_credentials_updated_playwright_key_writes_blob():
+    """playwright.* key must land in secrets_store as a blob (get_blob retrieval)."""
+    from core import agent_dispatch, secrets_store
+    payload = '{"cookies": [], "origins": []}'
+    agent_dispatch.on_frame({
+        "v": 1, "type": "credentials_updated", "job_id": "J3",
+        "key": "playwright.rock_session", "value": payload,
+    })
+    raw = secrets_store.get_blob("playwright.rock_session")
+    assert raw is not None
+    assert raw.decode("utf-8") == payload
+
+
 def test_send_to_device_works_when_default_relay_is_set(monkeypatch):
     """Smoke: send_to_device routes to the correct agent sink."""
     from core import relay

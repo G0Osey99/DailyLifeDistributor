@@ -146,6 +146,19 @@ def on_frame(frame: dict) -> None:
                 _logger.warning("record_upload failed: %s", exc)
         job["queue"].put({k: v for k, v in frame.items() if k not in ("v", "type", "job_id")})
         return
+    elif ftype == "credentials_updated":
+        key, value = frame.get("key"), frame.get("value")
+        if not isinstance(key, str) or not isinstance(value, str):
+            _logger.warning("credentials_updated: bad shape %r", frame)
+            return
+        try:
+            if key.startswith("playwright."):
+                _ss.set_blob(key, value.encode("utf-8"))
+            else:
+                _ss.set_secret(key, value)
+        except Exception as e:
+            _logger.warning("credentials_updated: write failed for %s: %s", key, e)
+        return
     _logger.debug("agent_dispatch.on_frame: unhandled type %r", ftype)
 
 

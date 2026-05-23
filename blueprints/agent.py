@@ -98,8 +98,26 @@ def register_sockets(sock) -> None:
                 try:
                     frame = _json.loads(msg)
                     ftype = frame.get("type") if isinstance(frame, dict) else None
-                    if ftype in ("event", "credentials_updated",
-                                 "image_used", "pending_results_chunk"):
+                    if ftype == "hello":
+                        # C3: apply any pending_results the agent buffered
+                        # while disconnected, then ack so it can clear them.
+                        pending = frame.get("pending_results") or []
+                        if pending:
+                            try:
+                                acked = _agent_dispatch.apply_pending_results(pending)
+                                ws.send(_json.dumps({
+                                    "v": 1,
+                                    "type": "pending_results_ack",
+                                    "acked": [list(k) for k in acked],
+                                }))
+                            except Exception as _exc:
+                                import logging as _log
+                                _log.getLogger(__name__).warning(
+                                    "apply_pending_results failed: %s", _exc)
+                        # Don't continue — hello also needs to reach the relay
+                        # for presence tracking (fall through to route_from_agent).
+                    elif ftype in ("event", "credentials_updated",
+                                   "image_used", "pending_results_chunk"):
                         _agent_dispatch.on_frame(frame)
                         continue
                 except Exception:

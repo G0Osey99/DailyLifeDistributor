@@ -304,3 +304,56 @@ def start(
     _logger.info("agent_dispatch.start(job=%s, device=%s, rows=%d)",
                  job_id, device["name"], len(rows))
     return job_id
+
+
+# ---------------------------------------------------------------------------
+# C3 — Idempotent pending_results ingest
+# ---------------------------------------------------------------------------
+
+def apply_pending_results(entries: list[dict]) -> list[tuple]:
+    """Apply each pending-result entry to upload_history idempotently.
+
+    Called when the agent reconnects and sends ``pending_results`` in its
+    hello frame.  Each entry has the shape::
+
+        {"job_id": str, "row_idx": int, "iso_date": str,
+         "platform": str, "status": "success", "payload": dict}
+
+    The function writes to upload_history only when ``has_successful_upload``
+    returns False (idempotent skip).  Every entry that can be matched to a
+    known session is always acked so the agent can clear its local buffer.
+    Entries whose job_id is not in the registry (job already dropped) are
+    also acked — best-effort, server may have already written the row from
+    the event stream before the disconnect.
+
+    Returns a list of ``(job_id, row_idx, platform)`` tuples the agent
+    should clear from its PendingResults buffer.
+    """
+    acked: list[tuple] = []
+    for e in entries:
+        job = _job(e.get("job_id", ""))
+        session_id = job.get("session_id") if job else None
+        if session_id:
+            iso = e.get("iso_date", "")
+            platform = e.get("platform", "")
+            if not _db.has_successful_upload(session_id, iso, platform):
+                try:
+                    _db.record_upload(
+                        session_id,
+                        iso,
+                        platform,
+                        e.get("payload", {}).get("title", ""),
+                        e.get("payload", {}).get("file_path", ""),
+                        True,
+                        e.get("payload", {}).get("watch_url")
+                            or e.get("payload", {}).get("url", ""),
+                        e.get("payload", {}).get("scheduled_time"),
+                        "",
+                        e.get("payload", {}).get("external_id"),
+                    )
+                except Exception as exc:
+                    _logger.warning("apply_pending_results record failed: %s", exc)
+                    # Still ack — we tried; re-sending won't help if it keeps failing.
+        acked.append((e.get("job_id", ""), e.get("row_idx", 0),
+                      e.get("platform", "")))
+    return acked

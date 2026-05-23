@@ -157,6 +157,23 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             )
         """)
+        # Multi-tenant phase α: organizations.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS organizations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                slug TEXT NOT NULL UNIQUE,
+                plan TEXT NOT NULL DEFAULT 'free',
+                billing_email TEXT,
+                require_2fa INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                created_by_user_id INTEGER,
+                disabled_at TEXT
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orgs_slug ON organizations(slug)"
+        )
         # Idempotent ALTER for the new external_id column on upload_history
         cols = [r[1] for r in conn.execute("PRAGMA table_info('upload_history')").fetchall()]
         if "external_id" not in cols:

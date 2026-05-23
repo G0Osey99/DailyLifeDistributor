@@ -150,3 +150,41 @@ def has_free_space(required_bytes: int) -> bool:
     usage = shutil.disk_usage(_TEMP_ROOT)
     margin = 2 * 1024 * 1024 * 1024  # keep 2 GB headroom
     return usage.free >= required_bytes + margin
+
+
+# Phase δ disk-budget admission control: refuse new web upload runs when the
+# VPS volume is below this floor. Agent-path uploads stream from the user's
+# machine and don't touch the VPS disk, so the user-facing 507 message points
+# users there.
+_DISK_MIN_FREE_BYTES_DEFAULT = 5 * 1024 * 1024 * 1024  # 5 GiB
+
+
+def _disk_min_free_bytes() -> int:
+    """Read the configurable floor from env (DLD_DISK_MIN_FREE_BYTES).
+
+    A value of 0 (or unparseable) disables the floor; a negative value is
+    clamped to zero. We re-read on every call so a test or operator can
+    monkey-patch the threshold without restarting the process.
+    """
+    raw = os.environ.get("DLD_DISK_MIN_FREE_BYTES")
+    if raw is None:
+        return _DISK_MIN_FREE_BYTES_DEFAULT
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _DISK_MIN_FREE_BYTES_DEFAULT
+    return max(0, value)
+
+
+def has_minimum_free_space() -> bool:
+    """True if the temp volume's free bytes are >= the configured floor.
+
+    Returns True (no admission control) when the floor is 0. The temp root
+    is created on demand so a fresh deploy doesn't 507 the first run.
+    """
+    floor = _disk_min_free_bytes()
+    if floor <= 0:
+        return True
+    os.makedirs(_TEMP_ROOT, exist_ok=True)
+    usage = shutil.disk_usage(_TEMP_ROOT)
+    return usage.free >= floor

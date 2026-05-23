@@ -185,6 +185,14 @@ def run_init():
         total_bytes = 0
     if total_bytes and not ms.has_free_space(total_bytes):
         return jsonify({"error": "Not enough free disk space for this run"}), 507
+    # Phase δ admission control: refuse new web runs when the VPS volume
+    # is below the minimum-free threshold (default 5 GiB,
+    # overridable via DLD_DISK_MIN_FREE_BYTES). Agent-path uploads stream
+    # from the user's own machine, so the message points users there.
+    if not ms.has_minimum_free_space():
+        return jsonify({
+            "error": "VPS storage full; please use the agent path.",
+        }), 507
     run = ms.RunDir.allocate()
     if not _run_lock.acquire(uid, run.run_id):
         run.cleanup()

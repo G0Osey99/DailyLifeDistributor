@@ -37,6 +37,17 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
     elif mtype == "scan_request":
         report = scan.scan_roots(config.get_media_roots())
         conn.send({"v": 1, "type": "scan_result", "payload": report})
+    elif mtype == "job_plan":
+        from agent import dispatch
+
+        class _T:
+            def send(self, frame):
+                conn.send(frame)
+
+        try:
+            dispatch.handle_job_plan(plan=msg, transport=_T())
+        except Exception as e:
+            log.exception("handle_job_plan crashed: %s", e)
 
 
 def run(server_url: str) -> None:

@@ -33,9 +33,10 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         run: |
           # python.org ships a universal2 .pkg; setup-python does not.
-          # Pin a patch version that PyInstaller currently supports.
+          # 3.11.9 is the last 3.11 release with a binary installer —
+          # 3.11.10+ went source-only when 3.11 entered security-fix mode.
           set -euxo pipefail
-          PY_VER="3.11.10"
+          PY_VER="3.11.9"
           curl -fL -o /tmp/python.pkg \
             "https://www.python.org/ftp/python/${PY_VER}/python-${PY_VER}-macos11.pkg"
           sudo installer -pkg /tmp/python.pkg -target /

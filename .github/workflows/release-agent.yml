@@ -57,29 +57,46 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          # On macOS we're targeting universal2 — that requires EVERY
-          # C-extension wheel to itself be universal2 (PyInstaller raises
-          # IncompatibleBinaryArchError otherwise). pip's default install
-          # picks the running runner's arch (arm64) so we force the right
-          # tag explicitly for the C-extension deps. Pure-Python deps come
-          # via the normal requirements install below.
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-            python -m pip install --upgrade --force-reinstall \
-              --platform macosx_11_0_universal2 \
-              --only-binary=:all: \
-              --target "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages" \
-              cffi cryptography
-          fi
           pip install -r agent/requirements.txt
-          pip install pyinstaller
-          if [[ "${{ runner.os }}" != "macOS" ]]; then
-            pip install cryptography
-          fi
-          # Sanity check on macOS: every .so under site-packages must be fat.
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-            python -c "import cffi, cryptography; print('cffi', cffi.__file__); print('cryptography', cryptography.__file__)"
-            find /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
-              -name '*.so' -exec sh -c 'file "$1" | grep -q "Mach-O universal" || { echo "NOT UNIVERSAL: $1"; file "$1"; exit 1; }' _ {} \; || echo "(non-universal .so found above — may break universal2 PyInstaller build)"
+          pip install pyinstaller cryptography
+
+      - name: Fuse universal2 wheels for C extensions (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          # PyInstaller's --target-arch universal2 raises
+          # IncompatibleBinaryArchError on any .so that isn't already fat.
+          # cryptography 42+ ships a universal2 wheel on PyPI; cffi (its
+          # runtime dep) does not — only arm64 + x86_64 separately. We
+          # download both, merge them with `delocate-merge`, and replace
+          # the installed copy so PyInstaller sees a fat _cffi_backend.so.
+          set -euxo pipefail
+          pip install delocate
+          mkdir -p /tmp/cffi-arm /tmp/cffi-x86
+          # Pin to the version pip already resolved so the two downloads
+          # match the installed version exactly.
+          CFFI_VER=$(python -c "import cffi, sys; sys.stdout.write(cffi.__version__)")
+          echo "Fusing cffi==${CFFI_VER}"
+          pip download --no-deps --only-binary=:all: \
+            --platform macosx_11_0_arm64 \
+            --dest /tmp/cffi-arm "cffi==${CFFI_VER}"
+          pip download --no-deps --only-binary=:all: \
+            --platform macosx_10_9_x86_64 \
+            --dest /tmp/cffi-x86 "cffi==${CFFI_VER}"
+          mkdir -p /tmp/cffi-univ
+          delocate-merge -w /tmp/cffi-univ /tmp/cffi-arm/cffi-*.whl /tmp/cffi-x86/cffi-*.whl
+          pip install --force-reinstall --no-deps /tmp/cffi-univ/cffi-*.whl
+          # Verify cffi's .so is now fat.
+          python -c "import cffi, os, subprocess; subprocess.check_call(['file', os.path.dirname(cffi.__file__)+'/_cffi_backend.cpython-311-darwin.so'])"
+          # Also verify cryptography ships fat .so files. If pip resolved
+          # an arm64-only wheel (older cryptography), reinstall the
+          # universal2 one explicitly.
+          if ! file /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/cryptography/hazmat/bindings/_rust*.so | grep -q "Mach-O universal"; then
+            CRY_VER=$(python -c "import cryptography, sys; sys.stdout.write(cryptography.__version__)")
+            pip install --force-reinstall --no-deps \
+              --platform macosx_11_0_universal2 --only-binary=:all: \
+              --target /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
+              "cryptography==${CRY_VER}"
           fi
       - name: Extract version from tag
         id: ver

@@ -749,31 +749,53 @@
     }
 
     // Live session status panel — single round-trip refreshes every
-    // status row (YouTube, SimpleCast, Vista, Rock, Agent, Ollama).
-    // Refreshes every 30s so a fresh login / agent reconnect lights up
-    // without a page reload.
+    // status row (YouTube, SimpleCast, Vista, Rock, Agent, Ollama) AND
+    // the dashboard's empty-state download card (hidden as soon as the
+    // user has at least one paired device — so a fresh pairing reflects
+    // without a manual reload).
+    //
+    // Polls every 15s and immediately on tab focus (so flipping back to
+    // a stale tab gets a fresh paint right away).
     (function(){
         const list = document.getElementById('sb-conn-list');
-        if(!list) return;
+        const downloadCard = document.getElementById('empty-state-download-card-js');
+        if(!list && !downloadCard) return;
         function paint(d){
-            list.querySelectorAll('[data-status-key]').forEach(row => {
-                const key = row.dataset.statusKey;
-                const entry = d && d[key];
-                const dot = row.querySelector('.sb-conn-dot');
-                const label = row.querySelector('.sb-conn-label');
-                if(!entry){ dot.className = 'sb-conn-dot dim'; return; }
-                if(entry.ok){ dot.className = 'sb-conn-dot ok'; label.textContent = entry.label_on; }
-                else        { dot.className = 'sb-conn-dot warn'; label.textContent = entry.label_off; }
-            });
+            if(list){
+                list.querySelectorAll('[data-status-key]').forEach(row => {
+                    const key = row.dataset.statusKey;
+                    const entry = d && d[key];
+                    const dot = row.querySelector('.sb-conn-dot');
+                    const label = row.querySelector('.sb-conn-label');
+                    if(!entry){ dot.className = 'sb-conn-dot dim'; return; }
+                    if(entry.ok){ dot.className = 'sb-conn-dot ok'; label.textContent = entry.label_on; }
+                    else        { dot.className = 'sb-conn-dot warn'; label.textContent = entry.label_off; }
+                });
+            }
+            if(downloadCard){
+                const count = d && d._meta && d._meta.paired_device_count;
+                if(typeof count === 'number' && count > 0){
+                    downloadCard.style.display = 'none';
+                }
+            }
         }
+        let inflight = false;
         function refresh(){
+            if(inflight) return;
+            inflight = true;
             fetch('/sessions/status', {headers:{'Accept':'application/json'}})
                 .then(r => r.ok ? r.json() : Promise.reject())
                 .then(paint)
-                .catch(() => { /* keep the last good state on transient failure */ });
+                .catch(() => { /* keep last good state */ })
+                .finally(() => { inflight = false; });
         }
         refresh();
-        setInterval(refresh, 30000);
+        setInterval(refresh, 15000);
+        // Reflect a fresh pairing / reconnect immediately on tab focus.
+        window.addEventListener('focus', refresh);
+        document.addEventListener('visibilitychange', () => {
+            if(document.visibilityState === 'visible') refresh();
+        });
     })();
     </script>
     {% block extra_scripts %}{% endblock %}

@@ -540,6 +540,19 @@ def sessions_status():
         "label_on": "Ollama connected",
         "label_off": "Ollama offline",
     }
+    # Paired-device count for the current user (not just currently-online).
+    # The dashboard's empty-state download card uses this to hide itself
+    # the moment a fresh pairing lands, without a page reload.
+    paired_count = 0
+    try:
+        from flask import session as _sess
+        from core import devices as _devices
+        uid = _sess.get("user_id")
+        if uid is not None:
+            paired_count = int(_devices.count_user_devices(int(uid)))
+    except Exception:
+        paired_count = 0
+    out["_meta"] = {"paired_device_count": paired_count}
     return jsonify(out)
 
 

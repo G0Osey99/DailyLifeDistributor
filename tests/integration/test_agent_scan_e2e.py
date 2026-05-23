@@ -64,7 +64,12 @@ def test_scan_request_roundtrip(live, monkeypatch):
         pytest.fail("agent never reported presence=online within 5 messages")
 
     browser.send(json.dumps({"v": 1, "type": "scan_request", "payload": {}}))
-    result = json.loads(browser.receive(timeout=5))
+    for _ in range(10):
+        result = json.loads(browser.receive(timeout=5))
+        if result.get("type") == "scan_result":
+            break
+    else:
+        pytest.fail("scan_result never received within 10 messages")
     assert result["type"] == "scan_result"
     assert result["payload"]["dates"] == ["2026-01-15", "2026-01-16"]
     assert result["payload"]["by_date"]["2026-01-15"]["video"] == ["260115_sermon.mp4"]

@@ -13,7 +13,7 @@ from flask import (
     Blueprint, redirect, render_template, request, url_for,
 )
 
-from core import org_store, user_store, auth
+from core import org_store, auth
 from core.permissions import require_program_owner
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")

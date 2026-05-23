@@ -300,9 +300,17 @@ def start(
         config=config,
     )
     device = _pick_device()
-    _relay.send_to_device(device["name"], envelope)
-    _logger.info("agent_dispatch.start(job=%s, device=%s, rows=%d)",
-                 job_id, device["name"], len(rows))
+    # Route by device_id, not device_name: the relay rooms in core/relay.py
+    # are keyed by device_id (immutable UUID). device["name"] is the human-
+    # readable label ("Mac", "Studio Laptop") which can collide between
+    # devices and isn't what register_agent() stores. Passing the name
+    # here only worked when name == id (test fixtures) — in production
+    # send_to_device would raise ValueError("device not connected").
+    # The dashboard chip still shows device_name because the presence
+    # broadcast carries it separately.
+    _relay.send_to_device(device["id"], envelope)
+    _logger.info("agent_dispatch.start(job=%s, device_id=%s, name=%s, rows=%d)",
+                 job_id, device["id"], device.get("name"), len(rows))
     return job_id
 
 

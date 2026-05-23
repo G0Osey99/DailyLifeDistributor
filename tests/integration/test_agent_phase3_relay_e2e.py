@@ -147,9 +147,10 @@ def _drain_browser_until(browser_ws, predicate, timeout: float = 5.0):
 def _dispatch_job(monkeypatch, devices_mod, device_id: str) -> str:
     """Use the real agent_dispatch.start to send a job through the relay.
 
-    Patches _pick_device to return a dict whose name == device_id (the
-    relay rooms are keyed by device_id, see core/relay.py:73) and stubs
-    `collect_credentials` so we don't have to seed real secrets.
+    Patches _pick_device to return a realistic device dict (id=device_id,
+    name="Mac") and stubs `collect_credentials` so we don't have to seed
+    real secrets. agent_dispatch.start routes by device["id"], which
+    matches the relay-room key set in register_agent().
 
     Returns the job_id of the dispatched job.
     """
@@ -162,11 +163,11 @@ def _dispatch_job(monkeypatch, devices_mod, device_id: str) -> str:
         youtube_title="Test Episode", elements=UploadElements(),
     )
 
-    # _pick_device passes device["name"] into send_to_device, which the
-    # relay then looks up by device_id key. Use the device_id for both.
+    # Realistic shape: id is the immutable hex UUID the relay keys rooms
+    # by; name is the human-readable label shown in the dashboard chip.
     monkeypatch.setattr(
         agent_dispatch, "_pick_device",
-        lambda: {"name": device_id, "id": device_id},
+        lambda: {"id": device_id, "name": "Mac"},
     )
     # Skip credential bundling — we don't need real YT/Rock keys for the
     # relay's wire path; the fake agent doesn't actually upload.

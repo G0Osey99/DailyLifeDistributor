@@ -108,7 +108,8 @@ def test_start_sends_envelope_through_relay_and_returns_job_id(monkeypatch, temp
     assert isinstance(job_id, str) and len(job_id) > 0
     assert len(sent) == 1
     device, env = sent[0]
-    assert device == "mac-1"
+    # Routing is by device_id (relay rooms key by id, not name).
+    assert device == "dev-1"
     assert env["type"] == "job_plan"
     assert env["job_id"] == job_id
     assert env["rows"][0]["iso_date"] == "2026-05-22"

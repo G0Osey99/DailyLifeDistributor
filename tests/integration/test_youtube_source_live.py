@@ -2,6 +2,8 @@ from datetime import date, timedelta
 
 import pytest
 
+from tests.integration._creds_helpers import safely_has_credential
+
 pytestmark = pytest.mark.integration
 
 
@@ -9,30 +11,14 @@ def _have_yt_auth() -> bool:
     """YouTube OAuth lives in the encrypted secrets store post-migration.
 
     The legacy on-disk ``token.json`` / ``client_secrets.json`` files are
-    shredded by ``scripts/migrate_secrets.py`` on first boot, so checking the
-    filesystem always returns False even when creds are present.
-
-    Also verifies decryption works (SECRET_ENC_KEY is set + matches what
-    the stored secrets were written with). Without the master key the
-    rows are present but unreadable; we'd rather skip than die on a
-    MasterKeyError mid-test.
+    shredded by ``scripts/migrate_secrets.py`` on first boot, so checking
+    the filesystem always returns False even when creds are present. The
+    helper returns False on CI / fresh installs where the DB is unmigrated
+    (no ``secrets`` table), where ``SECRET_ENC_KEY`` is missing, or where
+    decryption otherwise fails — so the test skips cleanly instead of
+    erroring at collection time.
     """
-    try:
-        from core import secrets_store
-    except Exception:
-        return False
-    if not (
-        secrets_store.has_secret("youtube.token")
-        and secrets_store.has_secret("youtube.client_secrets")
-    ):
-        return False
-    try:
-        return (
-            secrets_store.get_secret("youtube.token") is not None
-            and secrets_store.get_blob("youtube.client_secrets") is not None
-        )
-    except Exception:
-        return False
+    return safely_has_credential("youtube.token", "youtube.client_secrets")
 
 
 @pytest.mark.skipif(not _have_yt_auth(), reason="YouTube OAuth secrets missing")

@@ -2,6 +2,8 @@ from datetime import date, timedelta
 
 import pytest
 
+from tests.integration._creds_helpers import safely_has_credential
+
 pytestmark = pytest.mark.integration
 
 
@@ -9,19 +11,12 @@ def _have_simplecast_session() -> bool:
     """SimpleCast Playwright session lives in the encrypted secrets store.
 
     Legacy ``simplecast_session.json`` on disk is shredded post-migration.
-    Also verifies decryption works — without SECRET_ENC_KEY set we can't
-    read the blob, so we skip cleanly rather than fail with MasterKeyError.
+    The helper returns False on CI / fresh installs where the DB is
+    unmigrated (no ``secrets`` table), where ``SECRET_ENC_KEY`` is missing,
+    or where decryption otherwise fails — so the test skips cleanly instead
+    of erroring at collection time.
     """
-    try:
-        from core import secrets_store
-    except Exception:
-        return False
-    if not secrets_store.has_secret("playwright.simplecast_session"):
-        return False
-    try:
-        return secrets_store.get_blob("playwright.simplecast_session") is not None
-    except Exception:
-        return False
+    return safely_has_credential("playwright.simplecast_session")
 
 
 @pytest.mark.skipif(not _have_simplecast_session(),

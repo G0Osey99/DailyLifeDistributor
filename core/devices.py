@@ -22,18 +22,39 @@ def _hash(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def create_pairing_code(ttl_seconds: int = 600) -> str:
-    """Mint a single-use pairing code valid for ttl_seconds."""
+# Multi-tenant phase β: pairing-code → user_id propagation.
+#
+# The agent CLI calls /agent/pair/redeem without a session, so the redeem
+# endpoint cannot read user_id from request state. Instead the BROWSER side
+# (which IS session-gated) creates the code with the inviter's user_id baked
+# in; the redeem path simply propagates that user_id onto the new device row.
+#
+# Stored in-process (the codes table is keyed by sha256 hash; we keep a
+# parallel mapping by hash so a fresh restart loses unredeemed codes
+# along with their user_id binding — the user just generates a new code).
+_pairing_code_user_id: dict[str, int] = {}
+
+
+def create_pairing_code(ttl_seconds: int = 600, *, user_id: int | None = None) -> str:
+    """Mint a single-use pairing code valid for ttl_seconds.
+
+    *user_id* is the session user that requested the code; it propagates to
+    the new device row when the agent redeems the code. None when the
+    caller has no session (legacy / shared-password mode).
+    """
     code = secrets.token_urlsafe(9)  # ~12 chars, URL-safe
     now = _now()
+    h = _hash(code)
     with _get_conn() as conn:
         conn.execute(
             "INSERT INTO agent_pairing_codes (code_hash, created_at, expires_at, consumed) "
             "VALUES (?, ?, ?, 0)",
-            (_hash(code), now.isoformat(),
+            (h, now.isoformat(),
              (now + timedelta(seconds=ttl_seconds)).isoformat()),
         )
         conn.commit()
+    if user_id is not None:
+        _pairing_code_user_id[h] = int(user_id)
     return code
 
 
@@ -69,13 +90,16 @@ def redeem_pairing_code(
         )
         device_id = uuid.uuid4().hex
         token = secrets.token_urlsafe(32)
+        # Inherit user_id from the code-creation side if present.
+        inherited_user_id = _pairing_code_user_id.pop(code_hash, None)
         conn.execute(
             "INSERT INTO agent_devices (id, name, token_hash, created_at, "
-            "last_seen_at, revoked, hwid_hash, hostname) "
-            "VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+            "last_seen_at, revoked, hwid_hash, hostname, user_id) "
+            "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
             (device_id, device_name or "device", _hash(token),
              now.isoformat(), now.isoformat(),
-             hwid_hash or None, hostname or None),
+             hwid_hash or None, hostname or None,
+             inherited_user_id),
         )
         conn.commit()
     return device_id, token

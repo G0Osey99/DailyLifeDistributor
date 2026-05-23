@@ -73,6 +73,19 @@
 {% endblock %}
 
 {% block content %}
+{% if show_agent_download_card %}
+<div class="auth-banner" data-test-id="empty-state-download-card"
+     style="border-left:4px solid var(--color-accent,#2563eb);">
+    <div class="auth-banner-text">
+        <strong>Get started: download the Daily Life Distributor agent</strong><br>
+        <span>The agent runs on your computer so uploads go directly
+              from your machine to the platforms — no double-upload.</span>
+    </div>
+    <a href="{{ url_for('download.landing') }}" class="btn btn-primary">
+        Download agent →
+    </a>
+</div>
+{% endif %}
 {% if not youtube_authenticated %}
 <div class="auth-banner">
     <div class="auth-banner-text">

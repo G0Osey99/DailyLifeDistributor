@@ -132,6 +132,29 @@ def revoke_device(device_id: str) -> None:
         conn.commit()
 
 
+def count_user_devices(user_id: int) -> int:
+    """Number of non-revoked devices owned by ``user_id``.
+
+    Powers the dashboard empty-state download card (phase δ): when this
+    returns 0, the dashboard renders a "get started: download the agent"
+    card; otherwise the card is hidden.
+
+    A NULL ``user_id`` value in ``agent_devices`` represents a legacy
+    pre-phase-α row; those don't belong to any user and aren't counted
+    by this helper. Revoked rows are also excluded — a user with all-
+    revoked devices is effectively starting over.
+    """
+    if user_id is None:
+        return 0
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM agent_devices "
+            "WHERE user_id = ? AND revoked = 0",
+            (int(user_id),),
+        ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 def list_devices() -> list[dict]:
     with _get_conn() as conn:
         rows = conn.execute(

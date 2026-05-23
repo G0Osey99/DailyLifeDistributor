@@ -117,3 +117,42 @@ def get_quota_used() -> int:
             "SELECT units_used FROM youtube_quota WHERE quota_date = ?", (key,)
         ).fetchone()
         return int(row["units_used"]) if row else 0
+
+
+# ---------- Multi-tenant phase δ: per-org quota tracking ----------
+
+def track_org_quota_usage(
+    org_id: int, action: str, units: int | None = None
+) -> None:
+    """Per-org counterpart of ``track_quota_usage``.
+
+    Backed by the ``yt_quota_usage`` table (created in
+    ``core.db.init_db()`` with primary key (org_id, quota_date)). Same
+    QUOTA_COSTS lookup; unknown actions with no explicit ``units`` are a
+    no-op so callers can add new actions without crashing older paths.
+    """
+    cost = units if units is not None else QUOTA_COSTS.get(action, 0)
+    if cost <= 0:
+        return
+    key = _today_key()
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO yt_quota_usage (org_id, quota_date, units_used) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(org_id, quota_date) "
+            "DO UPDATE SET units_used = units_used + excluded.units_used",
+            (org_id, key, cost),
+        )
+        c.commit()
+
+
+def get_org_quota_used(org_id: int) -> int:
+    """Return units used today (Pacific time) for ``org_id``. 0 if none."""
+    key = _today_key()
+    with _conn() as c:
+        row = c.execute(
+            "SELECT units_used FROM yt_quota_usage "
+            "WHERE org_id = ? AND quota_date = ?",
+            (org_id, key),
+        ).fetchone()
+        return int(row["units_used"]) if row else 0

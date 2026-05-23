@@ -12,7 +12,7 @@ from core.session_state import session
 def client(temp_db, monkeypatch, tmp_path):
     monkeypatch.setattr(ms, "_TEMP_ROOT", str(tmp_path / "uploads"))
     from blueprints import media
-    media._run_lock = ms.RunLock()
+    media._run_lock = ms.PerUserRunLock()
     media._runs.clear()
     session.entries.clear()
     session.selected_dates.clear()

@@ -383,6 +383,32 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_upload_history_user "
             "ON upload_history(user_id)"
         )
+        # Multi-tenant phase δ: per-org per-platform soft mutex used by the
+        # web upload dispatch. Primary key (org_id, platform) gives us a
+        # single holder per pair; expires_at lets a stale lock auto-release
+        # 30 minutes after acquisition.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS platform_locks (
+                org_id INTEGER NOT NULL,
+                platform TEXT NOT NULL,
+                locked_by_user_id INTEGER NOT NULL,
+                locked_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY (org_id, platform)
+            )
+        """)
+        # Multi-tenant phase δ: per-org daily YouTube API quota usage.
+        # Same QUOTA_COSTS table as the legacy single-tenant counter; this
+        # one is scoped per-org so one tenant's heavy refresh day doesn't
+        # blow another's daily 10K cap.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS yt_quota_usage (
+                org_id INTEGER NOT NULL,
+                quota_date TEXT NOT NULL,
+                units_used INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (org_id, quota_date)
+            )
+        """)
         conn.commit()
 
 

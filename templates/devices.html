@@ -26,6 +26,23 @@
 
 {% block content %}
 <h1>Paired Devices</h1>
+
+<div data-test-id="settings-download-section"
+     style="margin-bottom:24px; padding:16px;
+            border:1px solid var(--color-border-subtle);
+            border-radius:8px; background:var(--color-bg-alt,#f8fafc);">
+    <strong>Download the agent</strong>
+    <p style="margin:8px 0; font-size:.9rem; color:var(--color-text-dim);">
+        Install on a new machine, re-install after wiping a laptop, or
+        keep the link handy for future docs.
+    </p>
+    <p style="margin:0;">
+        <a href="/download/agent" class="btn btn-ghost">
+            Open download page →
+        </a>
+    </p>
+</div>
+
 <p class="subtitle">
     Hybrid upload agents that have paired with this server.
     {% if not hybrid_enabled %}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Download Agent — DLD{% endblock %}
+
+{% block extra_css %}
+    .dl-card {
+        max-width:640px; margin:32px auto; padding:32px;
+        border:1px solid var(--color-border-subtle); border-radius:12px;
+        background:var(--color-surface,#fff);
+    }
+    .dl-buttons { display:flex; gap:16px; flex-wrap:wrap; margin-top:24px; }
+    .dl-button {
+        display:inline-block; padding:12px 24px; font-weight:600;
+        border-radius:8px; text-decoration:none;
+        background:var(--color-bg-alt,#f3f4f6); color:var(--color-text,#111);
+        border:1px solid var(--color-border-subtle);
+    }
+    .dl-button.highlight {
+        background:var(--color-accent,#2563eb); color:#fff;
+        border-color:var(--color-accent,#2563eb);
+    }
+    .dl-detected { color:var(--color-text-dim); font-size:.88rem; margin-top:16px; }
+    .pair-code-block {
+        margin-top:24px; padding:16px;
+        background:var(--color-bg-alt,#f3f4f6); border-radius:8px;
+    }
+    .pair-code {
+        font-family:var(--font-mono,monospace); font-size:1.4rem;
+        font-weight:700; letter-spacing:1px;
+    }
+{% endblock %}
+
+{% block content %}
+<div class="dl-card" data-os="{{ detected_os }}">
+    <h1>Download the Daily Life Distributor agent</h1>
+    <p>
+        The agent runs on your computer so uploads go directly from your
+        machine to the platforms — no double-upload, no waiting on the
+        server's bandwidth.
+    </p>
+
+    <div class="dl-buttons">
+        <a href="{{ windows_url }}"
+           class="dl-button {% if detected_os == 'windows' %}highlight detected-windows{% endif %}">
+            Download for Windows
+        </a>
+        <a href="{{ macos_url }}"
+           class="dl-button {% if detected_os == 'macos' %}highlight detected-macos{% endif %}">
+            Download for macOS
+        </a>
+    </div>
+
+    <p class="dl-detected">
+        {% if detected_os == "windows" %}
+            Detected: Windows.
+        {% elif detected_os == "macos" %}
+            Detected: macOS.
+        {% else %}
+            We couldn't auto-detect your OS — pick the matching binary.
+        {% endif %}
+    </p>
+
+    {% if pairing_code %}
+    <div class="pair-code-block">
+        <strong>One-time pairing code (valid 30 minutes):</strong><br>
+        <span class="pair-code" id="pair-code">{{ pairing_code }}</span>
+        <button type="button"
+                onclick="navigator.clipboard.writeText(document.getElementById('pair-code').textContent.trim()); this.textContent='Copied';"
+                class="btn btn-sm btn-ghost"
+                style="margin-left:12px;">
+            Copy
+        </button>
+        <p style="margin-top:8px; font-size:.85rem; color:var(--color-text-dim);">
+            After installing the agent, paste this code into its pair-up
+            screen to link it to your account.
+        </p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

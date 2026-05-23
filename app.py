@@ -459,6 +459,9 @@ def create_app() -> Flask:
     app.register_blueprint(twofa_bp)
     app.register_blueprint(audit_bp)
     app.register_blueprint(recovery_bp)
+    # Phase δ: stable user-facing agent download URLs.
+    from blueprints.download import bp as download_bp
+    app.register_blueprint(download_bp)
     # The /recover form is reachable without a session (a user who's lost
     # everything can't log in to ask for help). The reset POST is also
     # token-gated, not session-gated.

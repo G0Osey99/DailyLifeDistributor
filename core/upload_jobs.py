@@ -15,6 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core import db as _db
+from core import platform_locks
 from core.circuit_breaker import get_breaker
 from core.config import load_config
 from core.playwright_session import SessionExpiredError
@@ -230,6 +231,54 @@ def _resolve_youtube_watch_url(iso_date, emit_phase):
             )
         time.sleep(_YT_POLL_INTERVAL_S)
     return "", "Timed out waiting for the YouTube Video upload to finish."
+
+
+# ---------- Phase δ: per-org platform soft mutex ----------
+
+def _wait_for_platform_lock(
+    org_id: int, platform: str, user_id: int,
+    emit, row_id: int, date_iso: str,
+    timeout_s: float = 30.0, poll_interval_s: float = 0.5,
+) -> bool:
+    """Acquire ``(org_id, platform)`` for ``user_id`` or wait up to
+    ``timeout_s`` seconds for the current holder to release.
+
+    Emits a single ``phase_change`` with ``phase="platform_lock_wait"``
+    the first time we have to wait (so the dashboard can render "Waiting
+    for another user's upload to finish"), then polls. Returns True if
+    we ended up holding the lock; False on timeout. On False the caller
+    should turn the row into a per-row error.
+
+    No-op (returns True immediately) when ``org_id`` is falsy — this
+    keeps backward-compatible call sites that don't know the org_id (the
+    legacy whole-session runner and tests using the in-memory session
+    state) from blocking on the lock they can't acquire.
+    """
+    if not org_id or not user_id:
+        return True
+    # Fast path: not held → we win.
+    if platform_locks.try_acquire(org_id, platform, user_id):
+        return True
+    # Emit the wait-phase once so the UI can show a "Waiting…" message,
+    # then poll until either we win or timeout fires.
+    try:
+        holder = platform_locks.current_holder(org_id, platform) or {}
+        emit({
+            "type": "phase_change",
+            "row": row_id,
+            "date": date_iso,
+            "platform": platform,
+            "phase": "platform_lock_wait",
+            "blocked_by_user_id": holder.get("locked_by_user_id"),
+        })
+    except Exception:  # noqa: BLE001 — never fail dispatch because of an SSE drop
+        pass
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while time.monotonic() < deadline:
+        time.sleep(max(0.05, poll_interval_s))
+        if platform_locks.try_acquire(org_id, platform, user_id):
+            return True
+    return False
 
 
 def _breaker_for(platform: str):

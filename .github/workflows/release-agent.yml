@@ -58,7 +58,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r agent/requirements.txt
-          pip install pyinstaller cryptography
+          # On macOS, pin cffi to a version that still publishes both
+          # arm64 AND x86_64 wheels on PyPI so the fuse step downstream
+          # has matching pair to merge. cffi 2.x dropped x86_64 macOS
+          # builds, which breaks universal2.
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            pip install pyinstaller cryptography "cffi==1.17.1"
+          else
+            pip install pyinstaller cryptography
+          fi
 
       - name: Fuse universal2 wheels for C extensions (macOS)
         if: startsWith(matrix.os, 'macos')

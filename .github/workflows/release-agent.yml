@@ -57,8 +57,30 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
+          # On macOS we're targeting universal2 — that requires EVERY
+          # C-extension wheel to itself be universal2 (PyInstaller raises
+          # IncompatibleBinaryArchError otherwise). pip's default install
+          # picks the running runner's arch (arm64) so we force the right
+          # tag explicitly for the C-extension deps. Pure-Python deps come
+          # via the normal requirements install below.
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            python -m pip install --upgrade --force-reinstall \
+              --platform macosx_11_0_universal2 \
+              --only-binary=:all: \
+              --target "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages" \
+              cffi cryptography
+          fi
           pip install -r agent/requirements.txt
-          pip install pyinstaller cryptography
+          pip install pyinstaller
+          if [[ "${{ runner.os }}" != "macOS" ]]; then
+            pip install cryptography
+          fi
+          # Sanity check on macOS: every .so under site-packages must be fat.
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            python -c "import cffi, cryptography; print('cffi', cffi.__file__); print('cryptography', cryptography.__file__)"
+            find /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
+              -name '*.so' -exec sh -c 'file "$1" | grep -q "Mach-O universal" || { echo "NOT UNIVERSAL: $1"; file "$1"; exit 1; }' _ {} \; || echo "(non-universal .so found above — may break universal2 PyInstaller build)"
+          fi
       - name: Extract version from tag
         id: ver
         shell: bash

@@ -84,6 +84,50 @@ _STRIPPED_PATH_FIELDS = frozenset((
 
 _logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Active-job registry — maps job_id → {"queue": Queue}
+# ---------------------------------------------------------------------------
+import threading as _threading
+
+_jobs: dict[str, dict] = {}
+_jobs_lock = _threading.RLock()
+
+
+def register_job(*, job_id: str, sse_queue) -> None:
+    """Register an SSE queue for *job_id* so on_frame can route events to it."""
+    with _jobs_lock:
+        _jobs[job_id] = {"queue": sse_queue}
+
+
+def drop_job(job_id: str) -> None:
+    """Remove a job from the registry (call when the SSE stream closes)."""
+    with _jobs_lock:
+        _jobs.pop(job_id, None)
+
+
+def _job(job_id: str) -> dict | None:
+    with _jobs_lock:
+        return _jobs.get(job_id)
+
+
+def on_frame(frame: dict) -> None:
+    """Route an incoming relay frame to the appropriate SSE queue.
+
+    Currently handles type ``event``; other types (credentials_updated,
+    image_used, pending_results_chunk) are logged as debug no-ops so that
+    adding them in A7/A8/A9 is a small switch addition here.
+    """
+    ftype = frame.get("type")
+    if ftype == "event":
+        job = _job(frame.get("job_id", ""))
+        if job is None:
+            _logger.debug("agent_dispatch.on_frame: event for unknown job %s dropped",
+                          frame.get("job_id"))
+            return
+        job["queue"].put({k: v for k, v in frame.items() if k not in ("v", "type", "job_id")})
+        return
+    _logger.debug("agent_dispatch.on_frame: unhandled type %r", ftype)
+
 
 def _strip_paths(entry_dict: dict) -> dict:
     return {k: v for k, v in entry_dict.items() if k not in _STRIPPED_PATH_FIELDS}

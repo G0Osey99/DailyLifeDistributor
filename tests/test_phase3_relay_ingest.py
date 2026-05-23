@@ -127,3 +127,67 @@ def test_send_to_device_works_when_default_relay_is_set(monkeypatch):
 
     # Cleanup — restore None so other tests are not affected.
     monkeypatch.setattr(relay, "_default_relay", None)
+
+
+# ---------------------------------------------------------------------------
+# Task A9: image_used records db row + calls append_credits_entry
+# ---------------------------------------------------------------------------
+def test_image_used_records_db_and_credits(temp_db, monkeypatch):
+    """image_used frame must INSERT into image_history AND call append_credits_entry."""
+    from core import agent_dispatch, db as _db, image_gatherer
+
+    appended: list = []
+    monkeypatch.setattr(image_gatherer, "append_credits_entry",
+                        lambda **kw: appended.append(kw))
+
+    agent_dispatch.on_frame({
+        "v": 1, "type": "image_used", "job_id": "J4", "row_idx": 0,
+        "photo_id": "ph-1", "source": "unsplash", "topic": "joy",
+        "used_on_date": "2026-05-22", "photographer": "Jane",
+        "photo_url": "https://u/p1",
+    })
+
+    # Verify db row exists via direct cursor (no image_was_used helper).
+    with _db._get_conn() as conn:
+        row = conn.execute(
+            "SELECT photo_id, source, topic, used_on_date, photographer, photo_url "
+            "FROM image_history WHERE photo_id = ?",
+            ("ph-1",),
+        ).fetchone()
+    assert row is not None, "Expected image_history row not found"
+    assert row[0] == "ph-1"
+    assert row[1] == "unsplash"
+    assert row[2] == "joy"
+    assert row[3] == "2026-05-22"
+    assert row[4] == "Jane"
+    assert row[5] == "https://u/p1"
+
+    # Verify append_credits_entry was called once with correct kwargs.
+    assert len(appended) == 1
+    assert appended[0]["used_on_date"] == "2026-05-22"
+    assert appended[0]["source"] == "unsplash"
+    assert appended[0]["photographer"] == "Jane"
+    assert appended[0]["photo_url"] == "https://u/p1"
+    assert appended[0]["topic"] == "joy"
+
+
+def test_image_used_db_failure_does_not_block_credits(temp_db, monkeypatch):
+    """DB failure must not prevent append_credits_entry from being called."""
+    from core import agent_dispatch, db as _db, image_gatherer
+
+    appended: list = []
+    monkeypatch.setattr(image_gatherer, "append_credits_entry",
+                        lambda **kw: appended.append(kw))
+    monkeypatch.setattr(_db, "record_image_use",
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError("db down")))
+
+    agent_dispatch.on_frame({
+        "v": 1, "type": "image_used", "job_id": "J4", "row_idx": 0,
+        "photo_id": "ph-2", "source": "pexels", "topic": "peace",
+        "used_on_date": "2026-05-22", "photographer": "Bob",
+        "photo_url": "https://p/p2",
+    })
+
+    # credits still appended despite DB failure
+    assert len(appended) == 1
+    assert appended[0]["used_on_date"] == "2026-05-22"

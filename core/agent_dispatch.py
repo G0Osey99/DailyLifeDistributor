@@ -10,6 +10,7 @@ import logging
 from typing import Any
 from core import db as _db
 from core import secrets_store as _ss
+from core import image_gatherer as _img
 
 _PROTOCOL_VERSION = 1
 
@@ -158,6 +159,29 @@ def on_frame(frame: dict) -> None:
                 _ss.set_secret(key, value)
         except Exception as e:
             _logger.warning("credentials_updated: write failed for %s: %s", key, e)
+        return
+    elif ftype == "image_used":
+        try:
+            _db.record_image_use(
+                photo_id=frame["photo_id"],
+                source=frame["source"],
+                topic=frame["topic"],
+                used_on_date=frame["used_on_date"],
+                photographer=frame.get("photographer", ""),
+                photo_url=frame.get("photo_url", ""),
+            )
+        except Exception as e:
+            _logger.warning("record_image_use failed: %s", e)
+        try:
+            _img.append_credits_entry(
+                used_on_date=frame["used_on_date"],
+                source=frame["source"],
+                photographer=frame.get("photographer", ""),
+                photo_url=frame.get("photo_url", ""),
+                topic=frame["topic"],
+            )
+        except Exception as e:
+            _logger.warning("append_credits_entry failed: %s", e)
         return
     _logger.debug("agent_dispatch.on_frame: unhandled type %r", ftype)
 

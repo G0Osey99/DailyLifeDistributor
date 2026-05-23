@@ -262,13 +262,20 @@ On first boot the app auto-imports any plaintext secrets present, but on a fresh
 VPS you'll typically have none — so enter your API keys (and authorize YouTube)
 from the **Settings** page; everything is encrypted at rest with `SECRET_ENC_KEY`.
 
-> ⚠️ **Browser-uploader auth on a headless VPS is an open item.** YouTube uses
-> the API and works fully headless. The API-less platforms (SimpleCast, Vista
-> Social, Rock) authenticate through an **interactive** browser login, which a
-> headless server can't perform on its own. The planned approach is to log in
-> **locally** with a helper and upload the resulting encrypted session through
-> Settings (reusing the secret store) — this is being designed separately and is
-> not wired up yet. Until then, treat the Playwright platforms as not-yet-hosted.
+> 🖥️ **Browser-uploader auth on a headless VPS.** YouTube uses the API and works
+> fully headless. The API-less platforms (SimpleCast, Vista Social, Rock)
+> authenticate through an **interactive** browser login, which a bare headless
+> server can't perform on its own — so the VPS deploy ships an in-container
+> Chromium + a noVNC viewer wired up to a dedicated `/remote-login/*` flow
+> (see `blueprints/remote_login.py`, `core/remote_login_playwright.py`, and
+> `core/vnc.py`). From **Settings → API Credentials → Connect** the dashboard
+> launches the headed login in-container; the operator drives it through the
+> in-page noVNC iframe; on submit the resulting Playwright `storage_state` is
+> encrypted with `SECRET_ENC_KEY` and stored in the `secrets` table next to
+> the rest of the platform creds. The Phase-3 hybrid upload agent
+> (`HYBRID_AGENT_ENABLED`) can additionally run the uploads locally on the
+> operator's laptop against locally-stored sessions — that path bypasses the
+> VPS-side login entirely when an agent is paired and online. See `docs/RUNBOOK.md`.
 
 ---
 

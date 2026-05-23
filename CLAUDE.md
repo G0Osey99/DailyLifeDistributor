@@ -58,18 +58,18 @@ The legacy `SIMPLECAST_API_KEY` / `SIMPLECAST_SHOW_ID` variables are no longer u
 
 ## Architecture Overview
 
-This is a single-file Flask app (`app.py`) backed by `core/` modules and two uploaders, with a small SQLite database for session/history persistence.
+This is a single-file Flask app (`app.py`) backed by `core/` modules and four uploaders (YouTube, SimpleCast, Vista Social, Rock — Rock itself spans the Daily Experience orchestrator + the Rock Email sub-uploader), with a small SQLite database for session/history persistence.
 
 **User workflow (browser-streaming pipeline — see its own section below):**
 1. **Setup** (`/`) — pick per-category media folders + spreadsheet in the browser, map columns, match dates (`/media/scan`), select dates + platforms
 2. **Upload** — the browser orchestrates a batched, chunked upload to `/media/*`; per-batch progress streams via SSE at `/upload/stream`
 3. **History** (`/history`) — past sessions and per-row upload outcomes loaded from SQLite
 
-(The legacy `/review` and `/confirm` blueprints still exist but the dashboard is the primary path.)
+(The legacy `/review` and `/confirm` blueprints were removed when the dashboard replaced the old three-page flow.)
 
 **Core modules (`core/`):**
 - `media_session.py` — per-run temp dir lifecycle (`RunDir`), the single-active `RunLock`, the orphan sweep, and the free-space precheck for the streaming pipeline
-- `file_scanner.py` — `parse_names(filenames)` matches dates from a list of filenames (no filesystem) using multi-format digit extraction (YYMMDD, DDMMYY, DDMMYYYY, YYYYMMDD, MMDD); 6-digit ambiguity surfaces the file under both candidate dates. (The legacy `FileScanner` directory-scan class remains but is no longer the primary path.)
+- `file_scanner.py` — `parse_names(filenames)` matches dates from a list of filenames (no filesystem) using multi-format digit extraction (YYMMDD, DDMMYY, DDMMYYYY, YYYYMMDD, MMDD); 6-digit ambiguity surfaces the file under both candidate dates.
 - `excel_parser.py` — `parse_spreadsheet(path, mapping)` reads an uploaded `.xlsx` at an arbitrary path with a per-session column mapping (incl. `transcript_column`)
 - `session_state.py` — in-memory singleton (`session`); `ReviewEntry` dataclass holds all per-date fields (incl. `transcript`); `UploadElements` controls which upload components are active per platform
 - `llm_title_gen.py` — calls the LLM''s OpenAI-compatible API to generate title suggestions from the mapped transcript text; results cached by text hash
@@ -324,3 +324,50 @@ two paired agents (laptop + studio) can target the right one each run:
 | `agent/secrets_shim.py` | In-memory drop-in for `core.secrets_store`. Surfaces `get/set/delete_secret`, `get/set_blob`, `has_secret`, `materialize_blob_to_tempfile`; every mutation emits a `credentials_updated` event so the server stays the source of truth |
 | `agent/db_shim.py` | In-memory drop-in for `core.db`. Implements only `record_image_use` (the one call uploaders make); everything else raises `NotImplementedError` to surface new coupling loudly |
 | `agent/remote_session.py` | Headless remote-login bridge used when the operator re-authenticates a Playwright session from the web UI while the agent runs the actual login |
+| `blueprints/calendar.py` | Calendar view + per-platform schedule refresh endpoints |
+| `blueprints/remote_login.py` | VNC-driven Playwright login flow for SimpleCast/Vista/Rock on the hosted deploy |
+| `blueprints/history.py` | `/history` rendering from `upload_history` |
+| `blueprints/scan.py` | Root dashboard route (`/`) — index + scan UI |
+| `blueprints/settings.py` | Settings page, OAuth, llamafile status, env-file editing, devices-management entry |
+| `blueprints/upload.py` | `/upload/stream` SSE consumer + `POST /upload/<job_id>/cancel` for agent-path jobs |
+| `core/calendar_refresh.py` | Orchestrator that pulls each platform source + reconciles `upload_history` with what's actually scheduled |
+| `core/calendar_refresh_view.py` | Read-side projection — merges the refreshed calendar entries into the dashboard's calendar grid |
+| `core/refresh/*.py` | Per-platform "what's currently scheduled" sources: `youtube_source`, `simplecast_source`, `rock_source`, `rock_email_source`, `vista_source`, plus `id_extract` helpers |
+| `core/image_gatherer.py` | Unsplash / Pexels free-stock-image lookup for Rock spotlight/vista/reflection slots + the credits ledger (`docs/credits_*.txt`) |
+| `core/hosted.py` | `is_hosted()` — single source of truth for "are we on the autoalert.pro VPS" branching (env or `/data/HOSTED` marker) |
+| `core/quota.py` | YouTube Data API daily-quota tracker (`QUOTA_COSTS`, `DAILY_QUOTA`, per-op recording in the session) |
+| `core/vnc.py` | x11vnc / Xvfb + websockify lifecycle for the hosted remote-login flow; provides the noVNC iframe URL |
+| `core/remote_login.py` | Top-level coordinator for the remote-login state machine (`idle → launching → awaiting_user → saving → done`) consumed by `blueprints/remote_login.py` |
+| `core/remote_login_playwright.py` | Playwright headed-browser driver inside the Xvfb display; writes the resulting `storage_state` to `secrets_store` |
+| `uploaders/vista_social_uploader.py` | Vista Social Playwright uploader (no API) — daily-image + caption + per-platform schedules |
+| `templates/devices.html` | `/settings/devices` — paired-device list with inline rename + revoke (added in the codebase-completion pass) |
+
+## Device management + cancel UX (codebase-completion pass)
+
+Three UX gaps the audit caught and this PR closes:
+
+- **Device management UI** — `GET /settings/devices` (in
+  `blueprints/settings.py`) renders `templates/devices.html`, showing every
+  paired agent (active + revoked) with inline rename + revoke buttons.
+  Rename POSTs to `POST /agent/devices/<id>/name` (validates 1..64 chars),
+  revoke POSTs to the existing `POST /agent/devices/<id>/revoke`.
+  `core.devices.set_device_name` is the underlying helper; hostname stays
+  immutable (it's agent-reported), only the user-friendly `name` column
+  changes.
+
+- **Re-link UX** — `blueprints/agent.pair_redeem` now consults
+  `devices.find_by_hwid(hwid_hash)` before creating a new row. If a prior
+  non-revoked device matches the HWID (i.e. the agent reinstalled on the
+  same hardware), the old row is revoked, its friendly name carries over to
+  the new row, and the response includes `{relinked: true, previous_name}`.
+  The agent (`agent/main.py`) logs "Re-linked to <name>" instead of
+  "Paired". The consent gate is unchanged — the user still types the
+  pairing code.
+
+- **Cooperative cancel** — `POST /upload/<job_id>/cancel` sends a
+  `cancel_job` frame to the agent that owns the job. In-flight uploads
+  finish; pending platform dispatches emit `error_type=cancelled` events
+  and skip. The dashboard surfaces a Cancel button below the upload
+  progress (agent-path only — web-only-path cancel is a future addition).
+  Wire types are documented in
+  `docs/superpowers/specs/2026-05-22-hybrid-upload-agent-phase3-design.md`.

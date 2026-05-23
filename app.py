@@ -194,8 +194,12 @@ def create_app() -> Flask:
     app.register_blueprint(auth_bp)
 
     # Endpoints reachable without a session: the login routes, the health
-    # probe, and static assets. Everything else requires authentication.
-    _PUBLIC_ENDPOINTS = {"auth.login", "auth.login_submit", "_health", "static"}
+    # probe, static assets, and the invite-accept GET/POST (so a brand-new
+    # invitee can hit the signup form without an existing session).
+    _PUBLIC_ENDPOINTS = {
+        "auth.login", "auth.login_submit", "_health", "static",
+        "invitations.accept_get", "invitations.accept_post",
+    }
 
     _ALLOWED_HOSTS = {
         h.strip().lower()
@@ -394,6 +398,12 @@ def create_app() -> Flask:
     # Multi-tenant phase α: program-owner admin pages.
     from blueprints.admin import bp as admin_bp
     app.register_blueprint(admin_bp)
+
+    # Multi-tenant phase β: invitations + member-management routes.
+    from blueprints.invitations import bp as invitations_bp
+    from blueprints.members import bp as members_bp
+    app.register_blueprint(invitations_bp)
+    app.register_blueprint(members_bp)
 
     # --- Rate limiter (Phase 3 hardening) -----------------------------------
     # Configured here on the app object so the agent blueprint can import the

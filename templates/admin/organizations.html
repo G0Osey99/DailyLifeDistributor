@@ -1,49 +1,86 @@
-<!DOCTYPE html>
-<html lang="en"><head>
-  <meta charset="utf-8">
-  <title>Admin · Organizations · Daily Life Distributor</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 24px auto; padding: 0 16px; color: #222; }
-    h1 { font-size: 1.4rem; margin-bottom: 16px; }
-    h2 { font-size: 1.1rem; margin: 24px 0 8px; }
-    nav a { margin-right: 12px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 0.92rem; }
-    form.create { display: flex; gap: 8px; align-items: center; margin: 12px 0 0; }
-    input[type=text] { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font: inherit; }
-    button { padding: 7px 14px; background: #215fd6; color: #fff; border: 0; border-radius: 6px; font: inherit; cursor: pointer; }
-    .err { background: #fde; color: #900; padding: 8px 12px; border-radius: 6px; margin: 8px 0; }
-  </style>
-</head><body>
-  <nav>
-    <a href="{{ url_for('admin.landing') }}">Admin</a>
-    <a href="{{ url_for('admin.organizations_list') }}">Organizations</a>
-    <a href="{{ url_for('admin.users_list') }}">Users</a>
-  </nav>
-  <h1>Admin · Organizations</h1>
-  {% if form_error %}<div class="err">{{ form_error }}</div>{% endif %}
-  <h2>Create organization</h2>
-  <form class="create" method="POST" action="{{ url_for('admin.organizations_create') }}">
-    <input type="text" name="name" placeholder="Org name" required>
-    <input type="text" name="slug" placeholder="slug (auto from name)">
-    <button type="submit">Create</button>
+{% extends "base.html" %}
+{% block title %}Organizations · Admin — DLD{% endblock %}
+
+{% block extra_css %}
+  .admin-subnav { display:flex; gap:6px; margin-bottom:18px; }
+  .admin-subnav a {
+    padding:6px 12px; border-radius:var(--radius-md);
+    font-size:0.84rem; color:var(--shell-text-muted);
+    transition:background var(--transition-fast), color var(--transition-fast);
+  }
+  .admin-subnav a:hover { background:var(--shell-sunken); color:var(--shell-text); }
+  .admin-subnav a.active { background:var(--accent-soft); color:var(--accent); font-weight:500; }
+  .org-create-form { display:grid; grid-template-columns: 1fr 1fr auto; gap:10px; align-items:end; }
+  .org-create-form .form-group { margin-bottom:0; }
+  .org-row-name { font-weight:500; }
+  .org-row-name a { color:var(--accent); }
+  .org-row-name a:hover { text-decoration:underline; }
+  .empty-row td { color:var(--shell-text-dim); font-style:italic; text-align:center; padding:18px; }
+{% endblock %}
+
+{% block content %}
+<h1>Admin</h1>
+<p class="subtitle">Manage organizations, members, and the cross-org audit log.</p>
+
+<nav class="admin-subnav">
+  <a href="{{ url_for('admin.organizations_list') }}" class="active">Organizations</a>
+  <a href="{{ url_for('admin.users_list') }}">Users</a>
+  <a href="{{ url_for('admin.admin_audit_log') }}">Audit log</a>
+</nav>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+    <div class="flash {{ cat }}">{{ msg }}</div>
+  {% endfor %}
+{% endwith %}
+
+{% if form_error %}<div class="flash danger">{{ form_error }}</div>{% endif %}
+
+<div class="card">
+  <h3>Create organization</h3>
+  <form method="POST" action="{{ url_for('admin.organizations_create') }}" class="org-create-form">
+    <div class="form-group">
+      <label for="org-name">Name</label>
+      <input id="org-name" type="text" name="name" placeholder="Acme Church" required>
+    </div>
+    <div class="form-group">
+      <label for="org-slug">Slug <span class="text-dim text-xs">(optional — auto from name)</span></label>
+      <input id="org-slug" type="text" name="slug" placeholder="acme-church">
+    </div>
+    <button type="submit" class="btn btn-primary">Create</button>
   </form>
-  <h2>Existing organizations ({{ orgs|length }})</h2>
+</div>
+
+<div class="card">
+  <div class="flex justify-between items-center mb-md">
+    <h3 style="margin:0;">Organizations <span class="text-dim text-sm">({{ orgs|length }})</span></h3>
+  </div>
   <table>
-    <thead><tr><th>Name</th><th>Slug</th><th>Plan</th><th>Created</th><th>Disabled?</th><th></th></tr></thead>
+    <thead>
+      <tr><th>Name</th><th>Slug</th><th>Plan</th><th>Created</th><th>Status</th><th></th></tr>
+    </thead>
     <tbody>
       {% for o in orgs %}
       <tr>
-        <td><a href="{{ url_for('admin.organization_detail', org_id=o.id) }}">{{ o.name }}</a></td>
-        <td><code>{{ o.slug }}</code></td>
-        <td>{{ o.plan }}</td>
-        <td>{{ o.created_at }}</td>
-        <td>{{ 'Yes' if o.disabled_at else 'No' }}</td>
-        <td><a href="{{ url_for('admin.organization_detail', org_id=o.id) }}">Manage →</a></td>
+        <td class="org-row-name">
+          <a href="{{ url_for('admin.organization_detail', org_id=o.id) }}">{{ o.name }}</a>
+        </td>
+        <td><span class="mono">{{ o.slug }}</span></td>
+        <td><span class="badge badge-info">{{ o.plan }}</span></td>
+        <td class="text-muted text-sm">{{ o.created_at[:10] if o.created_at else '—' }}</td>
+        <td>
+          {% if o.disabled_at %}
+            <span class="badge badge-error">disabled</span>
+          {% else %}
+            <span class="badge badge-ok">active</span>
+          {% endif %}
+        </td>
+        <td><a href="{{ url_for('admin.organization_detail', org_id=o.id) }}" class="btn btn-sm btn-ghost">Manage →</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="6" style="color:#888;">No organizations yet.</td></tr>
+      <tr class="empty-row"><td colspan="6">No organizations yet — create one above.</td></tr>
       {% endfor %}
     </tbody>
   </table>
-</body></html>
+</div>
+{% endblock %}

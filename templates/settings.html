@@ -408,6 +408,106 @@
 </div>
 </div>
 
+{% if is_signed_in and current_org_id %}
+<!-- 🛡️ Two-factor authentication -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="twofa">
+        <span class="sec-icon">🛡️</span>
+        <span class="sec-title">Two-factor authentication</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="twofa">
+        <p class="hint" style="margin-top:8px;">Enroll an authenticator app (TOTP) or email codes, manage backup recovery codes.</p>
+        <p style="margin-top:8px;">
+            <a href="{{ url_for('twofa.settings_2fa') }}" class="btn btn-sm btn-ghost">Manage 2FA →</a>
+        </p>
+    </div>
+</div>
+</div>
+
+<!-- 🔒 Security & sessions -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="security">
+        <span class="sec-icon">🔒</span>
+        <span class="sec-title">Security & sessions</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="security">
+        <p class="hint" style="margin-top:8px;">New-device sign-in notifications{% if current_role == 'owner' %}, organization Require-2FA policy{% endif %}.</p>
+        <p style="margin-top:8px;">
+            <a href="{{ url_for('settings.security_get') }}" class="btn btn-sm btn-ghost">Open security settings →</a>
+        </p>
+    </div>
+</div>
+</div>
+
+{% if current_role in ('owner', 'manager') %}
+<!-- 👥 Members & invites -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="members">
+        <span class="sec-icon">👥</span>
+        <span class="sec-title">Members & invites</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="members">
+        <p class="hint" style="margin-top:8px;">
+            {% if current_role == 'owner' %}
+              Invite Owners, Managers, or Users. Change roles or remove members. Revoke pending invitations.
+            {% else %}
+              Invite Users into this org. Revoke pending invitations you sent.
+            {% endif %}
+        </p>
+        <p style="margin-top:8px;">
+            <a href="{{ url_for('members.members_page') }}" class="btn btn-sm btn-ghost">Manage members →</a>
+        </p>
+    </div>
+</div>
+</div>
+
+<!-- 📜 Audit log -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="audit">
+        <span class="sec-icon">📜</span>
+        <span class="sec-title">Audit log</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="audit">
+        <p class="hint" style="margin-top:8px;">Sign-ins, role changes, invites, recovery events, and uploads (active 365 days, then archived).</p>
+        <p style="margin-top:8px;">
+            <a href="{{ url_for('audit.audit_log_view') }}" class="btn btn-sm btn-ghost">View audit log →</a>
+        </p>
+    </div>
+</div>
+</div>
+{% endif %}
+
+<!-- 💻 Download agent -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="download">
+        <span class="sec-icon">💻</span>
+        <span class="sec-title">Download the agent</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="download">
+        <p class="hint" style="margin-top:8px;">Install the local upload agent on a new machine, re-install after wiping a laptop, or grab the download link to share.</p>
+        <p style="margin-top:8px;">
+            <a href="{{ url_for('download.landing') }}" class="btn btn-sm btn-ghost">Open download page →</a>
+        </p>
+    </div>
+</div>
+</div>
+{% endif %}
+
 <!-- Save the main settings form (which is closed above; submit it via form=) -->
 <div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
     <button type="submit" form="settings-form" class="btn btn-primary">💾 Save Settings</button>

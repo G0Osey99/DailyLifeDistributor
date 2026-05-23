@@ -388,13 +388,28 @@ def create_app() -> Flask:
         try:
             user = _us.get_user_by_id(uid)
             username = (user or {}).get("username")
+            is_program_owner = bool((user or {}).get("program_owner"))
         except Exception:
             username = None
+            is_program_owner = False
+        # Pick the current org's role for this user so the sidebar / settings
+        # can conditionally render owner-only entries.
+        current_role = None
+        try:
+            oid = _auth.current_org_id()
+            if oid is not None:
+                m = next((m for m in mems if m["org_id"] == oid), None)
+                if m:
+                    current_role = m.get("role")
+        except Exception:
+            current_role = None
         return {
             "current_memberships": mems,
             "current_org_id": _auth.current_org_id(),
             "current_username": username,
             "is_signed_in": signed_in,
+            "is_program_owner": is_program_owner,
+            "current_role": current_role,
         }
 
     @app.route("/health")

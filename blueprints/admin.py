@@ -167,8 +167,8 @@ def organization_invite(org_id: int):
             inviter_name="Program owner",
             role=role,
             accept_url=accept_url,
-            agent_win_url=_opt("download.download_for_os", os="windows"),
-            agent_mac_url=_opt("download.download_for_os", os="macos"),
+            agent_win_url=_opt("download.windows"),
+            agent_mac_url=_opt("download.macos"),
         )
         flash(f"Invitation sent to {email_addr}. (Accept URL: {accept_url})", "success")
     except Exception as e:

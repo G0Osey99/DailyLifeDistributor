@@ -1,11 +1,67 @@
 {% extends "base.html" %}
+{% block title %}Security — DLD{% endblock %}
+
+{% block extra_css %}
+  .pref-row {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 0; border-top:1px solid var(--shell-border);
+  }
+  .pref-row:first-child { border-top:none; padding-top:0; }
+  .pref-info { flex:1; padding-right:16px; }
+  .pref-info h4 { margin:0 0 4px; font-size:0.95rem; font-weight:600; }
+  .pref-info p { margin:0; color:var(--shell-text-muted); font-size:0.84rem; }
+{% endblock %}
+
 {% block content %}
-<h1>Security preferences</h1>
-<form method="post" action="/settings/security">
-  <label>
-    <input type="checkbox" name="notify_new_device" value="1" {% if notify_new_device %}checked{% endif %}>
-    Email me on new device sign-ins
-  </label>
-  <button type="submit">Save</button>
-</form>
+<h1>Security</h1>
+<p class="subtitle">Personal sign-in preferences and (for org Owners) organization-wide policy.</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+    <div class="flash {{ cat }}">{{ msg }}</div>
+  {% endfor %}
+{% endwith %}
+
+<div class="card">
+  <h3>Personal preferences</h3>
+  <form method="post" action="/settings/security">
+    <div class="pref-row">
+      <div class="pref-info">
+        <h4>Email me on new device sign-ins</h4>
+        <p>You'll get an email the first time we see a new (user, IP) combination — useful if someone else gets your password.</p>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" name="notify_new_device" value="1" {% if notify_new_device %}checked{% endif %}>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div style="margin-top:14px;">
+      <button type="submit" class="btn btn-primary">Save preferences</button>
+    </div>
+  </form>
+</div>
+
+{% if current_role == 'owner' %}
+<div class="card">
+  <h3>Organization policy</h3>
+  <p class="text-muted text-sm" style="margin-bottom:12px;">
+    Visible to Owners only. Changes apply org-wide.
+  </p>
+  <form method="post" action="/settings/org/require-2fa">
+    <div class="pref-row">
+      <div class="pref-info">
+        <h4>Require 2FA for all members</h4>
+        <p>When on, members without 2FA enrolled are blocked from uploads until they enroll. Sign-in still works so they can complete setup.</p>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" name="require_2fa" value="1" {% if require_2fa %}checked{% endif %}>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div style="margin-top:14px;">
+      <button type="submit" class="btn btn-primary">Save policy</button>
+    </div>
+  </form>
+</div>
+{% endif %}
 {% endblock %}

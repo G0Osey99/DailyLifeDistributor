@@ -1,11 +1,83 @@
-{% extends "base.html" %}
-{% block content %}
-<h1>Set a new password</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
-<form method="post" action="/recover/reset">
-  <input type="hidden" name="token" value="{{ token }}">
-  <label>New password (≥12 chars): <input type="password" name="password" minlength="12" required></label>
-  <label>Confirm: <input type="password" name="password2" minlength="12" required></label>
-  <button type="submit">Set password</button>
-</form>
-{% endblock %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set a new password — Daily Life Distributor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      --panel: oklch(1 0 0);
+      --border: oklch(0.91 0.005 80);
+      --border-strong: oklch(0.83 0.006 80);
+      --text: oklch(0.22 0.012 250);
+      --text-muted: oklch(0.5 0.012 250);
+      --accent: oklch(0.58 0.15 245);
+      --accent-hover: oklch(0.64 0.16 245);
+      --accent-soft: oklch(0.58 0.15 245 / 0.12);
+      --err: oklch(0.55 0.20 25);
+      --err-soft: oklch(0.65 0.20 25 / 0.14);
+    }
+    *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+    html, body { height:100%; }
+    body {
+      font-family:var(--font-sans); color:var(--text);
+      background:
+        radial-gradient(1100px 600px at 50% -10%, var(--accent-soft), transparent 60%),
+        oklch(0.96 0.004 80);
+      display:flex; align-items:center; justify-content:center;
+      min-height:100vh; padding:24px;
+      -webkit-font-smoothing:antialiased;
+    }
+    .card {
+      width:100%; max-width:400px;
+      background:var(--panel); border:1px solid var(--border);
+      border-radius:16px; padding:32px 30px 28px;
+      box-shadow: 0 1px 2px rgba(15,22,35,.04), 0 12px 32px rgba(15,22,35,.06), 0 32px 80px rgba(15,22,35,.08);
+    }
+    h1 { font-size:1.2rem; font-weight:600; margin-bottom:4px; }
+    .lede { color:var(--text-muted); font-size:0.86rem; margin-bottom:22px; }
+    label { display:block; font-weight:500; font-size:0.82rem; margin:14px 0 6px; }
+    input[type="password"] {
+      width:100%; padding:10px 12px;
+      background:var(--panel); color:var(--text);
+      border:1px solid var(--border-strong); border-radius:8px;
+      font:inherit; font-size:0.9rem; outline:none;
+      transition:border-color .15s, box-shadow .15s;
+    }
+    input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+    button {
+      width:100%; margin-top:20px; padding:11px;
+      background:var(--accent); color:#fff;
+      border:1px solid var(--accent); border-radius:8px;
+      font:inherit; font-weight:600; font-size:0.92rem; cursor:pointer;
+      transition:background .18s;
+    }
+    button:hover { background:var(--accent-hover); }
+    .error {
+      background:var(--err-soft); color:var(--err);
+      border-left:3px solid var(--err);
+      padding:10px 12px; border-radius:8px;
+      font-size:0.84rem; margin-bottom:14px;
+    }
+    .hint { font-size:0.78rem; color:var(--text-muted); margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Set a new password</h1>
+    <p class="lede">Pick something you don't use anywhere else. Once set, you'll need to enroll 2FA again on your next sign-in.</p>
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="/recover/reset">
+      <input type="hidden" name="token" value="{{ token }}">
+      <label for="r-pw1">New password</label>
+      <input id="r-pw1" type="password" name="password" minlength="12" required autofocus autocomplete="new-password" placeholder="At least 12 characters">
+      <div class="hint">Minimum 12 characters. Not in the common-password list.</div>
+      <label for="r-pw2">Confirm new password</label>
+      <input id="r-pw2" type="password" name="password2" minlength="12" required autocomplete="new-password" placeholder="Same again">
+      <button type="submit">Set password</button>
+    </form>
+  </div>
+</body>
+</html>

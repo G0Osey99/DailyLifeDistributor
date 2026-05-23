@@ -1,43 +1,68 @@
-<!DOCTYPE html>
-<html lang="en"><head>
-  <meta charset="utf-8">
-  <title>Admin · Users · Daily Life Distributor</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 24px auto; padding: 0 16px; color: #222; }
-    h1 { font-size: 1.4rem; margin-bottom: 16px; }
-    nav a { margin-right: 12px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
-    .pill { padding: 2px 8px; border-radius: 999px; background: #eef; font-size: 0.78rem; }
-    button { padding: 4px 10px; background: #c84; color: #fff; border: 0; border-radius: 4px; font: inherit; cursor: pointer; }
-  </style>
-</head><body>
-  <nav>
-    <a href="{{ url_for('admin.landing') }}">Admin</a>
-    <a href="{{ url_for('admin.organizations_list') }}">Organizations</a>
-    <a href="{{ url_for('admin.users_list') }}">Users</a>
-  </nav>
-  <h1>Admin · Users ({{ users|length }})</h1>
-  {% if notice %}<div>{{ notice }}</div>{% endif %}
+{% extends "base.html" %}
+{% block title %}Users · Admin — DLD{% endblock %}
+
+{% block extra_css %}
+  .admin-subnav { display:flex; gap:6px; margin-bottom:18px; }
+  .admin-subnav a {
+    padding:6px 12px; border-radius:var(--radius-md);
+    font-size:0.84rem; color:var(--shell-text-muted);
+  }
+  .admin-subnav a:hover { background:var(--shell-sunken); color:var(--shell-text); }
+  .admin-subnav a.active { background:var(--accent-soft); color:var(--accent); font-weight:500; }
+  .empty-row td { color:var(--shell-text-dim); font-style:italic; text-align:center; padding:18px; }
+{% endblock %}
+
+{% block content %}
+<h1>Admin</h1>
+<p class="subtitle">Cross-org user list. Force-reset clears <span class="mono">password_changed_at</span> so the user is forced to set a new password on next login.</p>
+
+<nav class="admin-subnav">
+  <a href="{{ url_for('admin.organizations_list') }}">Organizations</a>
+  <a href="{{ url_for('admin.users_list') }}" class="active">Users</a>
+  <a href="{{ url_for('admin.admin_audit_log') }}">Audit log</a>
+</nav>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+    <div class="flash {{ cat }}">{{ msg }}</div>
+  {% endfor %}
+{% endwith %}
+
+{% if notice %}<div class="flash info">{{ notice }}</div>{% endif %}
+
+<div class="card">
+  <h3>All users <span class="text-dim text-sm">({{ users|length }})</span></h3>
   <table>
-    <thead><tr><th>Username</th><th>Email</th><th>Program owner</th><th>Created</th><th>Last login</th><th>Pwd changed</th><th></th></tr></thead>
+    <thead>
+      <tr>
+        <th>Username</th><th>Email</th><th>Flags</th>
+        <th>Created</th><th>Last login</th><th>Pwd changed</th><th></th>
+      </tr>
+    </thead>
     <tbody>
       {% for u in users %}
       <tr>
         <td>{{ u.username }}</td>
-        <td>{{ u.email }}</td>
-        <td>{% if u.program_owner %}<span class="pill">OWNER</span>{% endif %}</td>
-        <td>{{ u.created_at }}</td>
-        <td>{{ u.last_login_at or '—' }}</td>
-        <td>{{ u.password_changed_at or 'NEVER' }}</td>
+        <td class="text-muted">{{ u.email }}</td>
         <td>
-          <form method="POST" action="{{ url_for('admin.users_force_reset') }}" style="display:inline;">
+          {% if u.program_owner %}<span class="badge badge-info">program-owner</span>{% endif %}
+        </td>
+        <td class="text-muted text-sm">{{ u.created_at[:10] if u.created_at else '—' }}</td>
+        <td class="text-muted text-sm">{{ u.last_login_at[:16].replace('T',' ') if u.last_login_at else '—' }}</td>
+        <td class="text-muted text-sm">
+          {% if u.password_changed_at %}{{ u.password_changed_at[:10] }}{% else %}<span class="text-warning">never</span>{% endif %}
+        </td>
+        <td>
+          <form method="POST" action="{{ url_for('admin.users_force_reset') }}" style="display:inline;" onsubmit="return confirm('Force a password reset for {{ u.username }}? They will be locked out until they pick a new one via the recovery flow.');">
             <input type="hidden" name="user_id" value="{{ u.id }}">
-            <button type="submit">Force reset</button>
+            <button type="submit" class="btn btn-sm btn-destructive">Force reset</button>
           </form>
         </td>
       </tr>
+      {% else %}
+      <tr class="empty-row"><td colspan="7">No users.</td></tr>
       {% endfor %}
     </tbody>
   </table>
-</body></html>
+</div>
+{% endblock %}

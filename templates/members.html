@@ -1,76 +1,120 @@
-<!doctype html>
-<html><head><meta charset="utf-8"><title>Members</title></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width:760px; margin:30px auto;">
+{% extends "base.html" %}
+{% block title %}Members — DLD{% endblock %}
 
-<h2>Members</h2>
+{% block extra_css %}
+  .invite-form { display:grid; grid-template-columns: 1fr auto auto; gap:10px; align-items:end; }
+  .invite-form .form-group { margin-bottom:0; }
+  .role-pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:0.72rem; font-weight:500; }
+  .role-pill.owner   { background:var(--accent-soft); color:var(--accent); }
+  .role-pill.manager { background:var(--warn-soft); color:var(--warn); }
+  .role-pill.user    { background:var(--shell-sunken); color:var(--shell-text-muted); }
+  .empty-row td { color:var(--shell-text-dim); font-style:italic; text-align:center; padding:18px; }
+  .row-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .row-actions select { padding:4px 8px; font-size:0.82rem; max-width:120px; }
+{% endblock %}
 
-{% with msgs = get_flashed_messages(with_categories=true) %}
-  {% if msgs %}
-    {% for cat, msg in msgs %}
-      <p style="color: {{ 'green' if cat == 'success' else '#a00' }};">{{ msg }}</p>
-    {% endfor %}
-  {% endif %}
+{% block content %}
+<h1>Members</h1>
+<p class="subtitle">People with access to this organization. Invite new members below; revoke pending invites in the bottom card.</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+    <div class="flash {{ cat }}">{{ msg }}</div>
+  {% endfor %}
 {% endwith %}
 
-<table border="1" cellpadding="6" cellspacing="0">
-  <tr><th>Username</th><th>Email</th><th>Role</th><th>Joined</th><th>Last login</th><th></th></tr>
-  {% for m in members %}
-  <tr>
-    <td>{{ m.username }}</td>
-    <td>{{ m.email }}</td>
-    <td>{{ m.role }}</td>
-    <td>{{ m.joined_at }}</td>
-    <td>{{ m.last_login_at or '—' }}</td>
-    <td>
-      {% if actor_role == 'owner' %}
-      <form method="post" action="{{ url_for('members.change_role', user_id=m.id) }}" style="display:inline;">
-        <select name="role">
-          <option value="user" {% if m.role=='user' %}selected{% endif %}>user</option>
-          <option value="manager" {% if m.role=='manager' %}selected{% endif %}>manager</option>
-          <option value="owner" {% if m.role=='owner' %}selected{% endif %}>owner</option>
-        </select>
-        <button>Update</button>
-      </form>
-      {% endif %}
-      <form method="post" action="{{ url_for('members.remove_member', user_id=m.id) }}" style="display:inline;"
-            onsubmit="return confirm('Remove {{ m.username }}?');">
-        <button>Remove</button>
-      </form>
-    </td>
-  </tr>
-  {% else %}
-  <tr><td colspan="6"><em>No members.</em></td></tr>
-  {% endfor %}
-</table>
-
-<h3>Invite</h3>
-<form method="post" action="{{ url_for('invitations.send_invite') }}">
-  <input type="email" name="email" required placeholder="email@example.com">
-  <select name="role">
-    <option value="user">user</option>
-    {% if actor_role == 'owner' %}
-      <option value="manager">manager</option>
-      <option value="owner">owner</option>
+<div class="card">
+  <h3>Invite a member</h3>
+  <p class="text-muted text-sm" style="margin-bottom:14px;">
+    {% if actor_role == 'manager' %}
+      Managers can invite Users only. To invite a Manager or Owner, ask an Owner.
+    {% else %}
+      Owners can invite Users, Managers, or other Owners.
     {% endif %}
-  </select>
-  <button>Send invite</button>
-</form>
+  </p>
+  <form method="POST" action="{{ url_for('invitations.send_invite') }}" class="invite-form">
+    <div class="form-group">
+      <label for="invite-email">Email address</label>
+      <input id="invite-email" type="email" name="email" placeholder="invitee@example.com" required>
+    </div>
+    <div class="form-group">
+      <label for="invite-role">Role</label>
+      <select id="invite-role" name="role">
+        <option value="user">User</option>
+        {% if actor_role == 'owner' %}
+          <option value="manager">Manager</option>
+          <option value="owner">Owner</option>
+        {% endif %}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Send invite</button>
+  </form>
+</div>
 
-<h3>Pending invitations</h3>
-<table border="1" cellpadding="6" cellspacing="0">
-  <tr><th>Email</th><th>Role</th><th>Created</th><th>Expires</th><th></th></tr>
-  {% for p in pending %}
-  <tr>
-    <td>{{ p.email }}</td><td>{{ p.role }}</td><td>{{ p.created_at }}</td><td>{{ p.expires_at }}</td>
-    <td>
-      <form method="post" action="{{ url_for('invitations.revoke', invitation_id=p.id) }}">
-        <button>Revoke</button>
-      </form>
-    </td>
-  </tr>
-  {% else %}
-  <tr><td colspan="5"><em>No pending invitations.</em></td></tr>
-  {% endfor %}
-</table>
+<div class="card">
+  <h3>Members <span class="text-dim text-sm">({{ members|length }})</span></h3>
+  <table>
+    <thead>
+      <tr><th>Username</th><th>Email</th><th>Role</th><th>Joined</th><th>Last login</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for m in members %}
+      <tr>
+        <td>{{ m.username }}</td>
+        <td class="text-muted">{{ m.email }}</td>
+        <td><span class="role-pill {{ m.role }}">{{ m.role }}</span></td>
+        <td class="text-muted text-sm">{{ m.joined_at[:10] if m.joined_at else '—' }}</td>
+        <td class="text-muted text-sm">{{ m.last_login_at[:16].replace('T',' ') if m.last_login_at else '—' }}</td>
+        <td>
+          <div class="row-actions">
+            {% if actor_role == 'owner' %}
+            <form method="POST" action="{{ url_for('members.change_role', user_id=m.id) }}" style="display:flex; gap:4px;">
+              <select name="role">
+                <option value="user"    {% if m.role=='user' %}selected{% endif %}>user</option>
+                <option value="manager" {% if m.role=='manager' %}selected{% endif %}>manager</option>
+                <option value="owner"   {% if m.role=='owner' %}selected{% endif %}>owner</option>
+              </select>
+              <button type="submit" class="btn btn-sm btn-ghost">Update</button>
+            </form>
+            {% endif %}
+            {% if actor_role == 'owner' or (actor_role == 'manager' and m.role == 'user') %}
+            <form method="POST" action="{{ url_for('members.remove_member', user_id=m.id) }}" style="display:inline;" onsubmit="return confirm('Remove {{ m.username }} from this org?');">
+              <button type="submit" class="btn btn-sm btn-destructive">Remove</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr class="empty-row"><td colspan="6">No members yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 
-</body></html>
+<div class="card">
+  <h3>Pending invitations <span class="text-dim text-sm">({{ pending|length }})</span></h3>
+  <table>
+    <thead>
+      <tr><th>Email</th><th>Role</th><th>Sent</th><th>Expires</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for p in pending %}
+      <tr>
+        <td>{{ p.email }}</td>
+        <td><span class="role-pill {{ p.role }}">{{ p.role }}</span></td>
+        <td class="text-muted text-sm">{{ p.created_at[:10] if p.created_at else '—' }}</td>
+        <td class="text-muted text-sm">{{ p.expires_at[:10] if p.expires_at else '—' }}</td>
+        <td>
+          <form method="POST" action="{{ url_for('invitations.revoke', invitation_id=p.id) }}" style="display:inline;" onsubmit="return confirm('Revoke this invitation?');">
+            <button type="submit" class="btn btn-sm btn-destructive">Revoke</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr class="empty-row"><td colspan="5">No pending invitations.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

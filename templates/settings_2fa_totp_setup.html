@@ -1,13 +1,42 @@
 {% extends "base.html" %}
+{% block title %}Set up TOTP — DLD{% endblock %}
+
+{% block extra_css %}
+  .qr-box { display:flex; gap:24px; flex-wrap:wrap; align-items:center; margin-bottom:18px; }
+  .qr-box img { width:200px; height:200px; background:#fff; padding:8px; border:1px solid var(--shell-border); border-radius:var(--radius-md); }
+  .qr-instructions { flex:1; min-width:240px; }
+  .verify-form { display:flex; gap:10px; align-items:end; }
+  .verify-form input[name="code"] { width:140px; font-family:var(--font-mono); letter-spacing:3px; font-size:1rem; text-align:center; }
+  .step-list { padding-left:18px; color:var(--shell-text-muted); }
+  .step-list li { margin-bottom:6px; }
+{% endblock %}
+
 {% block content %}
 <h1>Scan with your authenticator app</h1>
-<img src="/settings/2fa/qrcode.png" alt="TOTP QR code">
-<form method="post" action="/settings/2fa/verify-totp">
-  <label>Enter the 6-digit code from your app:
-    <input name="code" pattern="[0-9]{6}" required autofocus>
-  </label>
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  <button type="submit">Verify and enable</button>
-</form>
-<p><a href="/settings/2fa">Cancel</a></p>
+<p class="subtitle">Scan the QR code below with Authy, 1Password, Google Authenticator, or a similar app. Then enter the 6-digit code it shows to confirm.</p>
+
+<div class="card">
+  <div class="qr-box">
+    <img src="/settings/2fa/qrcode.png" alt="TOTP QR code">
+    <div class="qr-instructions">
+      <h3>Steps</h3>
+      <ol class="step-list">
+        <li>Open your authenticator app and tap "Add account".</li>
+        <li>Choose "Scan QR code" and point your camera at the image.</li>
+        <li>Your app will start generating a 6-digit code every 30 seconds.</li>
+        <li>Enter the current code below to finish enrolling.</li>
+      </ol>
+    </div>
+  </div>
+
+  <form method="post" action="/settings/2fa/verify-totp" class="verify-form">
+    <div class="form-group" style="margin-bottom:0;">
+      <label for="totp-code">Enter the 6-digit code</label>
+      <input id="totp-code" name="code" pattern="[0-9]{6}" required autofocus inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+    </div>
+    <button type="submit" class="btn btn-primary">Verify and enable</button>
+    <a href="/settings/2fa" class="btn btn-ghost">Cancel</a>
+  </form>
+  {% if error %}<div class="flash danger" style="margin-top:14px;">{{ error }}</div>{% endif %}
+</div>
 {% endblock %}

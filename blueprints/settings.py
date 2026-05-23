@@ -591,9 +591,20 @@ def security_get():
         return redirect(url_for("auth.login"))
     user = _db.get_user_by_id(uid)
     notify = bool(user.get("notify_new_device", 1)) if user else True
+    require_2fa = False
+    try:
+        from core import org_store as _os
+        from core import auth as _auth
+        oid = _auth.current_org_id()
+        if oid is not None:
+            org = _os.get_org_by_id(oid)
+            require_2fa = bool((org or {}).get("require_2fa"))
+    except Exception:
+        require_2fa = False
     return render_template(
         "settings_security.html",
         notify_new_device=notify,
+        require_2fa=require_2fa,
     )
 
 

@@ -1,20 +1,58 @@
 {% extends "base.html" %}
+{% block title %}Recovery codes — DLD{% endblock %}
+
+{% block extra_css %}
+  .codes-grid {
+    display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;
+    margin:14px 0 18px;
+  }
+  .codes-grid code {
+    display:block; padding:10px 14px;
+    background:var(--shell-sunken); border:1px solid var(--shell-border);
+    border-radius:var(--radius-md); font-family:var(--font-mono);
+    font-size:0.95rem; letter-spacing:0.04em; text-align:center;
+  }
+  .remaining-num { font-size:2rem; font-weight:600; color:var(--accent); }
+{% endblock %}
+
 {% block content %}
 {% if codes %}
 <h1>Save these recovery codes</h1>
-<p>Each code can be used once. Store them somewhere safe — you will not see them again.</p>
-<ul class="recovery-codes">
-  {% for c in codes %}<li><code>{{ c }}</code></li>{% endfor %}
-</ul>
-<form method="get" action="/settings/2fa/recovery-codes/download">
-  <button type="submit">Download as .txt</button>
-</form>
-<p><a href="/settings/2fa">Done</a></p>
+<p class="subtitle">Each code can be used once. Store them somewhere safe (password manager, sealed envelope) — they cannot be re-shown after you leave this page.</p>
+
+<div class="card">
+  <div class="flash warning" style="margin-bottom:14px;">
+    <strong>This is the only time you'll see these codes.</strong> Download or copy them now.
+  </div>
+  <div class="codes-grid">
+    {% for c in codes %}<code>{{ c }}</code>{% endfor %}
+  </div>
+  <div class="flex gap-sm">
+    <form method="get" action="/settings/2fa/recovery-codes/download" style="display:inline;">
+      <button type="submit" class="btn btn-primary">Download as .txt</button>
+    </form>
+    <a href="/settings/2fa" class="btn btn-secondary">I've saved them — done</a>
+  </div>
+</div>
+
 {% else %}
 <h1>Recovery codes</h1>
-<p>{{ remaining }} of 10 codes remaining. Codes cannot be re-displayed once generated.</p>
-<form method="post" action="/settings/2fa/recovery-codes/regenerate">
-  <button type="submit">Regenerate codes</button>
-</form>
+<p class="subtitle">Single-use codes you can sign in with if you lose your authenticator device. Generated 10 at a time.</p>
+
+<div class="card">
+  <div style="text-align:center; padding:18px 0;">
+    <div class="remaining-num">{{ remaining }}</div>
+    <div class="text-muted text-sm">of 10 codes remaining</div>
+  </div>
+  {% if remaining <= 2 %}
+  <div class="flash warning" style="margin-bottom:14px;">
+    Running low — regenerate a fresh batch and save them somewhere safe.
+  </div>
+  {% endif %}
+  <form method="post" action="/settings/2fa/recovery-codes/regenerate" onsubmit="return confirm('Regenerate codes? Any unused existing codes will be invalidated.');">
+    <button type="submit" class="btn btn-primary">Regenerate codes</button>
+    <a href="/settings/2fa" class="btn btn-ghost">← Back to 2FA</a>
+  </form>
+</div>
 {% endif %}
 {% endblock %}

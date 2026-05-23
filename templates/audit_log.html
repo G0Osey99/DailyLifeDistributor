@@ -1,39 +1,78 @@
 {% extends "base.html" %}
+{% block title %}Audit log — DLD{% endblock %}
+
+{% block extra_css %}
+  .filter-form { display:grid; grid-template-columns: repeat(4, 1fr) auto; gap:10px; align-items:end; }
+  .filter-form .form-group { margin-bottom:0; }
+  .filter-form input { font-size:0.84rem; }
+  .audit-table { font-size:0.84rem; }
+  .audit-table pre {
+    margin:0; font-family:var(--font-mono); font-size:0.74rem;
+    background:var(--shell-sunken); padding:6px 8px; border-radius:6px;
+    max-width:320px; max-height:120px; overflow:auto; white-space:pre-wrap;
+  }
+  .audit-action { font-family:var(--font-mono); font-size:0.78rem; }
+  .empty-row td { color:var(--shell-text-dim); font-style:italic; text-align:center; padding:18px; }
+{% endblock %}
+
 {% block content %}
-<h1>Audit log{% if cross_org %} (all organizations){% endif %}</h1>
+<h1>Audit log{% if cross_org %} <span class="text-dim text-sm">(all organizations)</span>{% endif %}</h1>
+<p class="subtitle">
+  {% if cross_org %}
+    Cross-org event stream visible to program-owners. Filter by action prefix or date range.
+  {% else %}
+    Events recorded within your organization. Filter to narrow the view.
+  {% endif %}
+</p>
 
-<form method="get" class="filters">
-  <label>Action prefix: <input name="action" value="{{ filters.action or '' }}" placeholder="upload."></label>
-  <label>Actor ID: <input name="actor" value="{{ filters.actor or '' }}"></label>
-  <label>Since: <input type="date" name="since" value="{{ filters.since or '' }}"></label>
-  <label>Until: <input type="date" name="until" value="{{ filters.until or '' }}"></label>
-  <button type="submit">Filter</button>
-</form>
+<div class="card">
+  <h3>Filters</h3>
+  <form method="get" class="filter-form">
+    <div class="form-group">
+      <label for="f-action">Action prefix</label>
+      <input id="f-action" name="action" value="{{ filters.action or '' }}" placeholder="e.g. user. or upload.">
+    </div>
+    <div class="form-group">
+      <label for="f-actor">Actor user id</label>
+      <input id="f-actor" name="actor" value="{{ filters.actor or '' }}" placeholder="(numeric)">
+    </div>
+    <div class="form-group">
+      <label for="f-since">Since</label>
+      <input id="f-since" type="date" name="since" value="{{ filters.since or '' }}">
+    </div>
+    <div class="form-group">
+      <label for="f-until">Until</label>
+      <input id="f-until" type="date" name="until" value="{{ filters.until or '' }}">
+    </div>
+    <button type="submit" class="btn btn-primary">Apply</button>
+  </form>
+</div>
 
-<table>
-  <thead>
-    <tr>
-      <th>When</th>
-      <th>Action</th>
-      <th>Actor</th>
-      <th>Target</th>
-      <th>Metadata</th>
-      <th>IP</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for r in rows %}
-    <tr>
-      <td>{{ r.created_at }}</td>
-      <td><code>{{ r.action }}</code></td>
-      <td>{{ r.actor_user_id }}</td>
-      <td>{{ r.target_type }}{% if r.target_id %} #{{ r.target_id }}{% endif %}</td>
-      <td>{% if r.metadata %}<pre>{{ r.metadata }}</pre>{% endif %}</td>
-      <td>{{ r.ip }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="6"><em>No events.</em></td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="card">
+  <h3>Events <span class="text-dim text-sm">({{ rows|length }})</span></h3>
+  <table class="audit-table">
+    <thead>
+      <tr>
+        <th>When</th><th>Action</th><th>Actor</th>
+        <th>Target</th><th>Metadata</th><th>IP</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="text-muted text-sm">{{ r.created_at[:19].replace('T', ' ') if r.created_at else '—' }}</td>
+        <td><span class="audit-action">{{ r.action }}</span></td>
+        <td class="text-muted">{{ r.actor_user_id or '—' }}</td>
+        <td class="text-muted text-sm">
+          {{ r.target_type or '' }}{% if r.target_id %} #{{ r.target_id }}{% endif %}
+        </td>
+        <td>{% if r.metadata %}<pre>{{ r.metadata }}</pre>{% endif %}</td>
+        <td class="text-muted text-sm mono">{{ r.ip or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr class="empty-row"><td colspan="6">No events match the current filters.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

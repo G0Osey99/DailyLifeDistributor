@@ -514,6 +514,40 @@ def create_app() -> Flask:
             "agent.release_manifest", "agent.release_binary",
         })
 
+    # Phase γ: nightly audit_log archive job at 03:00 UTC.
+    # Under TESTING we still build the scheduler so tests can inspect its
+    # job table, but we do NOT start it — runaway background timers in CI
+    # are a maintenance nightmare.
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        from core.audit_archive import archive_old_entries
+        sched = BackgroundScheduler(timezone="UTC")
+        sched.add_job(
+            archive_old_entries,
+            trigger=CronTrigger(hour=3, minute=0, timezone="UTC"),
+            id="audit_archive",
+            replace_existing=True,
+            max_instances=1,
+        )
+        # Suppress scheduler start under test runners (pytest sets
+        # PYTEST_CURRENT_TEST in the worker process) or when the operator
+        # explicitly disables it. Otherwise every test boot would start a
+        # background timer thread and the suite shutdown would warn.
+        _under_test = bool(
+            os.environ.get("PYTEST_CURRENT_TEST")
+            or os.environ.get("DLD_DISABLE_SCHEDULER")
+            or app.config.get("TESTING")
+        )
+        if not _under_test:
+            sched.start()
+        app.config["scheduler"] = sched
+    except Exception:
+        app.logger.warning(
+            "audit: APScheduler did not start; nightly archive will not run",
+            exc_info=True,
+        )
+
     # Startup orphan sweep: clear any media-upload temp dirs left behind by a
     # previous process (crash / restart). No run is active yet, so pass empty.
     try:

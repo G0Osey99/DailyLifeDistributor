@@ -14,8 +14,17 @@ from flask import (
     request, session, url_for,
 )
 
+from core import audit as _audit
 from core import db, invitations
 from core.permissions import _lookup_role, require_role
+
+
+def _req_ip() -> str:
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "")
+
+
+def _req_ua() -> str:
+    return request.headers.get("User-Agent", "")
 
 bp = Blueprint("members", __name__)
 
@@ -98,6 +107,7 @@ def change_role(user_id: int):
             "error",
         )
         return ("Sole-owner demotion blocked", 400)
+    old_role = target["role"]
     with db._get_conn() as conn:
         conn.execute(
             "UPDATE org_memberships SET role = ? "
@@ -105,6 +115,13 @@ def change_role(user_id: int):
             (new_role, user_id, org_id),
         )
         conn.commit()
+    _audit.write_event(
+        action="org.role_changed",
+        actor_user_id=actor_id, org_id=org_id,
+        target_type="user", target_id=user_id,
+        metadata={"from": old_role, "to": new_role},
+        ip=_req_ip(), ua=_req_ua(),
+    )
     flash("Role updated.", "success")
     return redirect(url_for("members.members_page"))
 
@@ -148,5 +165,11 @@ def remove_member(user_id: int):
             (user_id, org_id),
         )
         conn.commit()
+    _audit.write_event(
+        action="org.member_removed",
+        actor_user_id=actor_id, org_id=org_id,
+        target_type="user", target_id=user_id,
+        ip=_req_ip(), ua=_req_ua(),
+    )
     flash("Member removed.", "success")
     return redirect(url_for("members.members_page"))

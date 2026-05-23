@@ -84,10 +84,26 @@ def organizations_create():
             form_error=f"Slug {slug!r} already exists.",
             landing=False,
         ), 400
-    org_store.create_org(
+    new_org = org_store.create_org(
         name=name, slug=slug,
         created_by_user_id=auth.current_user_id(),
     )
+    try:
+        from core import audit as _audit
+        # `create_org` returns either an int or a dict depending on phase;
+        # handle both shapes defensively.
+        new_id = new_org if isinstance(new_org, int) else (new_org or {}).get("id")
+        _audit.write_event(
+            action="org.created",
+            actor_user_id=auth.current_user_id(),
+            org_id=new_id,
+            target_type="org", target_id=new_id,
+            metadata={"name": name, "slug": slug},
+            ip=request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+            ua=request.headers.get("User-Agent", ""),
+        )
+    except Exception:
+        pass
     return redirect(url_for("admin.organizations_list"))
 
 

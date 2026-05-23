@@ -11,15 +11,28 @@ def _have_yt_auth() -> bool:
     The legacy on-disk ``token.json`` / ``client_secrets.json`` files are
     shredded by ``scripts/migrate_secrets.py`` on first boot, so checking the
     filesystem always returns False even when creds are present.
+
+    Also verifies decryption works (SECRET_ENC_KEY is set + matches what
+    the stored secrets were written with). Without the master key the
+    rows are present but unreadable; we'd rather skip than die on a
+    MasterKeyError mid-test.
     """
     try:
         from core import secrets_store
     except Exception:
         return False
-    return (
+    if not (
         secrets_store.has_secret("youtube.token")
         and secrets_store.has_secret("youtube.client_secrets")
-    )
+    ):
+        return False
+    try:
+        return (
+            secrets_store.get_secret("youtube.token") is not None
+            and secrets_store.get_blob("youtube.client_secrets") is not None
+        )
+    except Exception:
+        return False
 
 
 @pytest.mark.skipif(not _have_yt_auth(), reason="YouTube OAuth secrets missing")

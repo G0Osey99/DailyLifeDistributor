@@ -22,14 +22,12 @@ import logging
 import os
 from datetime import date
 
-from playwright.sync_api import sync_playwright
-
 from core.calendar_refresh import ExternalItem, SessionExpiredError
-from core.playwright_session import chromium_launch_kwargs, _persist_session_blob
+from core.playwright_session import PlaywrightSession, has_session
 from core.refresh.rock_source import (
     _BASE_URL,
-    _HEADED,
     _SESSION_FILE,
+    _build_session_cfg,
     _channel_list_url,
     _expand_page_size,
     _looks_like_login,
@@ -114,8 +112,46 @@ def _rows_to_items(headers, rows, window_start: date, window_end: date,
     return out
 
 
+def _scrape_email_channel(page, guid: str, window_start: date,
+                          window_end: date, today: date) -> list[ExternalItem]:
+    """Drive one email channel's listing and emit ExternalItems."""
+    page.goto(_channel_list_url(guid), wait_until="domcontentloaded", timeout=60_000)
+    if _looks_like_login(page.url):
+        raise SessionExpiredError("redirected to login")
+    try:
+        page.wait_for_selector(".grid-table tbody tr", timeout=20_000)
+    except Exception:
+        log.warning("Rock email refresh: no rows for channel %s", guid)
+        return []
+    _expand_page_size(page)
+    page.wait_for_timeout(500)
+
+    data = page.evaluate("""
+        () => {
+          const heads = Array.from(
+            document.querySelectorAll('.grid-table thead th')
+          ).map(t => t.innerText.trim());
+          const rows = Array.from(document.querySelectorAll('.grid-table tbody tr'))
+            .map(tr => ({
+                id: tr.getAttribute('datakey') || '',
+                cells: Array.from(tr.cells).map(c => c.innerText.trim()),
+            }))
+            .filter(r => r.id);
+          return {heads, rows};
+        }
+    """)
+    headers = data.get("heads") or []
+    rows = data.get("rows") or []
+    log.info("Rock email refresh: channel %s yielded %d rows", guid, len(rows))
+    return _rows_to_items(
+        headers, rows, window_start, window_end, today, guid=guid)
+
+
 def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
-    if not _SESSION_FILE.exists():
+    # Guard on the encrypted store, not the on-disk file — see rock_source.fetch
+    # for the full reasoning. Post-migrate_secrets the plaintext file is
+    # shredded; has_session() also accepts an in-store blob.
+    if not has_session(str(_SESSION_FILE)):
         raise SessionExpiredError("rock_session.json missing")
 
     guids = _email_channel_guids()
@@ -123,46 +159,15 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
         return []
 
     today = date.today()
+    cfg = _build_session_cfg(_channel_list_url(guids[0]))
     out: list[ExternalItem] = []
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            **chromium_launch_kwargs("ROCK_CHROME_PATH", headless=not _HEADED))
-        ctx = browser.new_context(storage_state=str(_SESSION_FILE))
-        page = ctx.new_page()
-        try:
-            for guid in guids:
-                page.goto(_channel_list_url(guid), wait_until="domcontentloaded", timeout=60_000)
-                if _looks_like_login(page.url):
-                    raise SessionExpiredError("redirected to login")
-                try:
-                    page.wait_for_selector(".grid-table tbody tr", timeout=20_000)
-                except Exception:
-                    log.warning("Rock email refresh: no rows for channel %s", guid)
-                    continue
-                _expand_page_size(page)
-                page.wait_for_timeout(500)
-
-                data = page.evaluate("""
-                    () => {
-                      const heads = Array.from(
-                        document.querySelectorAll('.grid-table thead th')
-                      ).map(t => t.innerText.trim());
-                      const rows = Array.from(document.querySelectorAll('.grid-table tbody tr'))
-                        .map(tr => ({
-                            id: tr.getAttribute('datakey') || '',
-                            cells: Array.from(tr.cells).map(c => c.innerText.trim()),
-                        }))
-                        .filter(r => r.id);
-                      return {heads, rows};
-                    }
-                """)
-                headers = data.get("heads") or []
-                rows = data.get("rows") or []
-                log.info("Rock email refresh: channel %s yielded %d rows", guid, len(rows))
-                out.extend(_rows_to_items(
-                    headers, rows, window_start, window_end, today, guid=guid))
-            ctx.storage_state(path=str(_SESSION_FILE))
-            _persist_session_blob(str(_SESSION_FILE))
-        finally:
-            browser.close()
+    with PlaywrightSession(cfg) as sess:
+        page = sess.page
+        assert page is not None
+        if _looks_like_login(page.url):
+            raise SessionExpiredError("redirected to login")
+        for guid in guids:
+            out.extend(_scrape_email_channel(
+                page, guid, window_start, window_end, today))
+        # PlaywrightSession.__exit__ atomically saves + persists to store.
     return out

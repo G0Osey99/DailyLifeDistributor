@@ -9,10 +9,14 @@ from datetime import date, datetime
 from pathlib import Path
 
 import yaml
-from playwright.sync_api import sync_playwright
 
 from core.calendar_refresh import ExternalItem, SessionExpiredError
-from core.playwright_session import chromium_launch_kwargs, _persist_session_blob
+from core.playwright_session import (
+    PlaywrightSession,
+    SessionConfig,
+    has_session,
+    url_marker_login_check,
+)
 
 log = logging.getLogger(__name__)
 
@@ -91,75 +95,110 @@ def _expand_page_size(page) -> None:
         log.debug("Could not expand Rock page size: %s", exc)
 
 
+def _build_session_cfg(target_url: str) -> SessionConfig:
+    """Build a SessionConfig for the refresh source.
+
+    Used by both rock_source.fetch and rock_email_source.fetch — they share
+    the same session file (the user logs into Rock once). ``target_url`` is
+    the first channel listing PlaywrightSession should navigate to; per-guid
+    loops still call ``page.goto`` directly.
+    """
+    return SessionConfig(
+        name="rock",
+        session_file=str(_SESSION_FILE),
+        is_login_url=_looks_like_login,
+        target_url=target_url,
+        chrome_path_env="ROCK_CHROME_PATH",
+        default_headless=not _HEADED,
+        no_login_recovery=True,
+        default_timeout_ms=60_000,
+    )
+
+
+def _scrape_channel(page, guid: str, window_start: date,
+                    window_end: date) -> list[ExternalItem]:
+    """Load one channel's listing and emit ExternalItems.
+
+    Split out of ``fetch`` so ``rock_email_source`` can reuse the navigation
+    + login-detection + page-size-expansion plumbing without depending on
+    PlaywrightSession lifecycle details.
+    """
+    url = _channel_list_url(guid)
+    page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+    if _looks_like_login(page.url):
+        raise SessionExpiredError("redirected to login")
+    try:
+        page.wait_for_selector(".grid-table tbody tr", timeout=20_000)
+    except Exception:
+        log.warning("Rock refresh: no rows for channel %s", guid)
+        return []
+    _expand_page_size(page)
+    page.wait_for_timeout(500)
+
+    # Rock uses a non-standard `datakey` attribute (NOT `data-datakey`),
+    # so tr.dataset.datakey is undefined. Use getAttribute. The Title
+    # cell is index 0 and the Date cell is index 2 — verified via
+    # Playwright probe 2026-04-28 against /page/343.
+    rows = page.evaluate("""
+        () => {
+          return Array.from(document.querySelectorAll('.grid-table tbody tr'))
+            .map(tr => ({
+                id: tr.getAttribute('datakey') || '',
+                cells: Array.from(tr.cells).map(c => c.innerText.trim()),
+            }))
+            .filter(r => r.id);
+        }
+    """)
+    log.info("Rock refresh: channel %s yielded %d rows", guid, len(rows))
+
+    out: list[ExternalItem] = []
+    for r in rows:
+        cells = r["cells"]
+        title = cells[0] if cells else ""
+        date_text = cells[2] if len(cells) > 2 else ""
+        d = _parse_date(date_text)
+        if not d:
+            continue
+        if not (window_start <= d <= window_end):
+            continue
+        out.append(ExternalItem(
+            platform="rock",
+            external_id=str(r["id"]),
+            iso_date=d.isoformat(),
+            scheduled_time="",
+            title=title,
+            url=f"{_BASE_URL}/ContentChannelItem/{r['id']}",
+            status="active",
+            raw_json=json.dumps({"channel_guid": guid}),
+        ))
+    return out
+
+
 def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
-    if not _SESSION_FILE.exists():
+    # Guard on the encrypted store, not the on-disk file: PlaywrightSession
+    # removes the materialized file on exit and re-creates it from the store
+    # on enter, so a prior run leaves no file even though the session is fine.
+    # Post-migrate_secrets the plaintext rock_session.json is shredded — only
+    # the encrypted blob in the store exists. has_session() checks both.
+    if not has_session(str(_SESSION_FILE)):
         raise SessionExpiredError("rock_session.json missing")
 
     guids = _channel_guids()
     if not guids:
         return []
 
-    out: list[ExternalItem] = []
-    with sync_playwright() as p:
-        # Refresh runs unattended — default headless. Set ROCK_REFRESH_HEADED=1
-        # to debug. Saved session is reused either way.
-        browser = p.chromium.launch(
-            **chromium_launch_kwargs("ROCK_CHROME_PATH", headless=not _HEADED))
-        ctx = browser.new_context(storage_state=str(_SESSION_FILE))
-        page = ctx.new_page()
-        try:
-            for guid in guids:
-                url = _channel_list_url(guid)
-                page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-                if _looks_like_login(page.url):
-                    raise SessionExpiredError("redirected to login")
-                try:
-                    page.wait_for_selector(".grid-table tbody tr", timeout=20_000)
-                except Exception:
-                    log.warning("Rock refresh: no rows for channel %s", guid)
-                    continue
-                _expand_page_size(page)
-                page.wait_for_timeout(500)
+    cfg = _build_session_cfg(_channel_list_url(guids[0]))
 
-                # Rock uses a non-standard `datakey` attribute (NOT `data-datakey`),
-                # so tr.dataset.datakey is undefined. Use getAttribute. The Title
-                # cell is index 0 and the Date cell is index 2 — verified via
-                # Playwright probe 2026-04-28 against /page/343.
-                rows = page.evaluate("""
-                    () => {
-                      return Array.from(document.querySelectorAll('.grid-table tbody tr'))
-                        .map(tr => ({
-                            id: tr.getAttribute('datakey') || '',
-                            cells: Array.from(tr.cells).map(c => c.innerText.trim()),
-                        }))
-                        .filter(r => r.id);
-                    }
-                """)
-                log.info("Rock refresh: channel %s yielded %d rows", guid, len(rows))
-                for r in rows:
-                    cells = r["cells"]
-                    title = cells[0] if cells else ""
-                    date_text = cells[2] if len(cells) > 2 else ""
-                    d = _parse_date(date_text)
-                    if not d:
-                        continue
-                    if not (window_start <= d <= window_end):
-                        continue
-                    out.append(ExternalItem(
-                        platform="rock",
-                        external_id=str(r["id"]),
-                        iso_date=d.isoformat(),
-                        scheduled_time="",
-                        title=title,
-                        url=f"{_BASE_URL}/ContentChannelItem/{r['id']}",
-                        status="active",
-                        raw_json=json.dumps({"channel_guid": guid}),
-                    ))
-            # Re-save the (rolling) cookies AND push them back into the
-            # encrypted store, so the refreshed session survives a container
-            # restart — matching PlaywrightSession.__exit__'s persistence.
-            ctx.storage_state(path=str(_SESSION_FILE))
-            _persist_session_blob(str(_SESSION_FILE))
-        finally:
-            browser.close()
+    out: list[ExternalItem] = []
+    with PlaywrightSession(cfg) as sess:
+        page = sess.page
+        assert page is not None
+        # PlaywrightSession already navigated to the first guid; bail
+        # early if that hit a login redirect.
+        if _looks_like_login(page.url):
+            raise SessionExpiredError("redirected to login")
+        for guid in guids:
+            out.extend(_scrape_channel(page, guid, window_start, window_end))
+        # storage_state is re-saved + persisted to the encrypted store by
+        # PlaywrightSession.__exit__; no manual persist needed here.
     return out

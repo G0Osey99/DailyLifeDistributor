@@ -91,6 +91,99 @@ def test_set_blob_drops_non_utf8_silently_with_log():
     assert emitted == []
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 hardening — encrypted-at-rest + shutdown zeroize
+# ---------------------------------------------------------------------------
+
+
+def test_stored_values_are_encrypted_at_rest_not_plaintext():
+    """The raw self._d must contain ciphertext bytes, not plaintext strings.
+
+    A memory dump of the dict shouldn't reveal credentials directly.
+    """
+    plaintext = "ya29.A0Aabcdef-VERY-SECRET-TOKEN-123"
+    s = secrets_shim.Shim(initial={"youtube.token": plaintext})
+
+    # The raw stored value must NOT contain the plaintext.
+    raw = s._d["youtube.token"]
+    assert isinstance(raw, (bytes, bytearray)), "stored value must be bytes (ciphertext)"
+    assert plaintext.encode("utf-8") not in raw, (
+        "plaintext leaked into raw stored ciphertext"
+    )
+    # But the public API still returns the plaintext.
+    assert s.get_secret("youtube.token") == plaintext
+
+
+def test_stored_values_after_set_secret_are_ciphertext():
+    """set_secret should also encrypt — not just the initial seed."""
+    plaintext = "rock-session-cookie-supersecret"
+    s = secrets_shim.Shim(initial={}, emit=lambda _f: None)
+    s.set_secret("rock.session", plaintext)
+    raw = s._d["rock.session"]
+    assert plaintext.encode("utf-8") not in raw
+    assert s.get_secret("rock.session") == plaintext
+
+
+def test_shutdown_clears_dict_and_zeroizes():
+    """shutdown() must empty the in-memory dict so credentials don't linger."""
+    s = secrets_shim.Shim(initial={"a": "v1", "b": "v2"})
+    assert s.has_secret("a") and s.has_secret("b")
+    s.shutdown()
+    assert len(s._d) == 0
+    assert s.get_secret("a") is None
+    assert s.get_secret("b") is None
+    assert s.has_secret("a") is False
+
+
+def test_shutdown_is_idempotent():
+    """Calling shutdown twice must not raise."""
+    s = secrets_shim.Shim(initial={"k": "v"})
+    s.shutdown()
+    s.shutdown()  # must not raise
+    assert s.get_secret("k") is None
+
+
+def test_set_secret_after_shutdown_is_noop():
+    """Post-shutdown sets are dropped, with a warning."""
+    s = secrets_shim.Shim(initial={"k": "v"})
+    s.shutdown()
+    s.set_secret("new", "value")
+    assert s.has_secret("new") is False
+
+
+def test_existing_api_still_works_with_encryption():
+    """All existing methods must continue to work unchanged."""
+    emitted = []
+    s = secrets_shim.Shim(initial={"a": "initial"}, emit=emitted.append)
+
+    # get_secret
+    assert s.get_secret("a") == "initial"
+    assert s.get_secret("missing") is None
+
+    # set_secret
+    s.set_secret("a", "updated")
+    assert s.get_secret("a") == "updated"
+
+    # delete_secret
+    s.delete_secret("a")
+    assert s.get_secret("a") is None
+
+    # set_blob / get_blob roundtrip
+    s.set_blob("b", b'{"x":1}')
+    assert s.get_blob("b") == b'{"x":1}'
+    assert s.get_secret("b") == '{"x":1}'
+
+    # materialize_blob_to_tempfile
+    with s.materialize_blob_to_tempfile("b", suffix=".json") as path:
+        assert path is not None
+        with open(path) as f:
+            assert f.read() == '{"x":1}'
+
+    # All credentials_updated events were emitted.
+    types = [e["type"] for e in emitted]
+    assert all(t == "credentials_updated" for t in types)
+
+
 def test_install_exposes_all_blob_and_has_methods_on_synthetic_module():
     """install_as_core_secrets_store wires has_secret/get_blob/set_blob onto
     the synthetic core.secrets_store module so Playwright uploaders work."""

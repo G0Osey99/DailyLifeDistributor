@@ -21,8 +21,26 @@ def client(tmp_path, monkeypatch):
     import app as flask_app_module
     importlib.reload(flask_app_module)
     flask_app_module.app.config["TESTING"] = True
+    # Force-clear the process-wide relay so this test's "no agents online"
+    # baseline is real (previous tests may have left agents registered on
+    # the shared RELAY without unregistering).
+    from blueprints.agent import RELAY, _ACCOUNT
+    with RELAY._lock:
+        room = RELAY._rooms.get(_ACCOUNT)
+        if room:
+            room.agents.clear()
+            room.agent_names.clear()
+            room.agent_ips.clear()
     with flask_app_module.app.test_client() as c:
         yield c
+    # And clean up any agents this test registered, so the next test
+    # starts from a clean slate too.
+    with RELAY._lock:
+        room = RELAY._rooms.get(_ACCOUNT)
+        if room:
+            room.agents.clear()
+            room.agent_names.clear()
+            room.agent_ips.clear()
 
 
 def _login(c):

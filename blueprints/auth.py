@@ -60,11 +60,19 @@ def login_required(view):
     return wrapped
 
 
+def _legacy_enabled() -> bool:
+    return (os.environ.get("LEGACY_PASSWORD_ENABLED", "") or "").lower() in (
+        "1", "true", "yes",
+    )
+
+
 @bp.route("/login", methods=["GET"])
 def login():
     if is_authenticated():
         return redirect(url_for("scan.index"))
-    return render_template("login.html", error=None)
+    return render_template(
+        "login.html", error=None, legacy_enabled=_legacy_enabled(),
+    )
 
 
 @bp.route("/login", methods=["POST"])
@@ -74,15 +82,44 @@ def login_submit():
         return render_template(
             "login.html",
             error="Too many failed attempts. Try again later.",
+            legacy_enabled=_legacy_enabled(),
         ), 429
-    password = request.form.get("password", "")
-    if auth.verify_password(password):
-        auth.clear_failures(ip)
-        session[_SESSION_KEY] = True
-        session.permanent = True
-        return redirect(_safe_next(request.args.get("next", "")))
-    auth.record_failure(ip)
-    return render_template("login.html", error="Incorrect password."), 401
+
+    # Legacy path: the old shared-password form posts only a `password`
+    # field. We keep accepting it for one release behind LEGACY_PASSWORD_ENABLED.
+    username = (request.form.get("username") or "").strip()
+    password = request.form.get("password", "") or ""
+
+    if not username and _legacy_enabled():
+        if auth.verify_password(password):  # old shared-password verify
+            auth.clear_failures(ip)
+            session["authenticated"] = True
+            session.permanent = True
+            return redirect(_safe_next(request.args.get("next", "")))
+        auth.record_failure(ip)
+        return render_template(
+            "login.html", error="Incorrect password.",
+            legacy_enabled=True,
+        ), 401
+
+    # New path: username + password (Argon2id).
+    from core import user_store, org_store
+    user = user_store.get_user_by_username(username)
+    if user is None or not user_store.verify_password(user["id"], password):
+        auth.record_failure(ip)
+        return render_template(
+            "login.html", error="Incorrect username or password.",
+            legacy_enabled=_legacy_enabled(),
+        ), 401
+
+    auth.clear_failures(ip)
+    session.clear()
+    session["user_id"] = user["id"]
+    mems = org_store.list_memberships_for_user(user["id"])
+    session["current_org_id"] = mems[0]["org_id"] if mems else None
+    session.permanent = True
+    user_store.update_last_login_at(user["id"])
+    return redirect(_safe_next(request.args.get("next", "")))
 
 
 @bp.route("/logout", methods=["POST"])

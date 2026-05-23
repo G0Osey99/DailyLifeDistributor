@@ -186,6 +186,20 @@ def pair_redeem():
     if relinked:
         body["relinked"] = True
         body["previous_name"] = inherited_name
+        # Broadcast a `relinked` event to any currently-connected dashboard
+        # browser sockets so the UI can toast "Re-linked agent <new-name>
+        # (previously <old-name>)". Best-effort: if no browser is connected
+        # or the broadcast layer isn't wired up yet (tests that bypass
+        # register_sockets), the relink still completes — the toast is a
+        # bonus signal, not a guarantee.
+        try:
+            RELAY.broadcast_to_browsers(_ACCOUNT, "relinked", {
+                "device_id": device_id,
+                "new_name": name,
+                "previous_name": inherited_name,
+            })
+        except Exception:  # noqa: BLE001 — relink already happened; toast is best-effort
+            _log.debug("relinked broadcast failed", exc_info=True)
     return jsonify(body)
 
 

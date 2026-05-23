@@ -186,6 +186,64 @@
         }
     }
 
+    // ── Toast helpers (vanilla; no framework) ─────────────────────────────
+    function _showToast(text, opts) {
+        opts = opts || {};
+        const ms = typeof opts.ttlMs === "number" ? opts.ttlMs : 5000;
+        // Container is created lazily so the toast survives a page where
+        // index.html hasn't templated a slot in advance.
+        let host = document.getElementById("dld-toast-host");
+        if (!host) {
+            host = document.createElement("div");
+            host.id = "dld-toast-host";
+            host.setAttribute("role", "status");
+            host.setAttribute("aria-live", "polite");
+            host.style.cssText = (
+                "position:fixed;top:1rem;right:1rem;z-index:9999;" +
+                "display:flex;flex-direction:column;gap:0.5rem;" +
+                "pointer-events:none;max-width:24rem;"
+            );
+            document.body.appendChild(host);
+        }
+        const el = document.createElement("div");
+        el.className = "dld-toast";
+        el.style.cssText = (
+            "background:#222;color:#fff;padding:0.75rem 1rem;" +
+            "border-radius:0.5rem;box-shadow:0 4px 12px rgba(0,0,0,0.25);" +
+            "opacity:0;transition:opacity 250ms ease;" +
+            "pointer-events:auto;font-size:0.9rem;line-height:1.35;"
+        );
+        el.textContent = text;
+        host.appendChild(el);
+        // Defer to next frame so the transition fires.
+        requestAnimationFrame(() => { el.style.opacity = "1"; });
+        setTimeout(() => {
+            el.style.opacity = "0";
+            // Detach after the fade-out so we don't leak DOM nodes.
+            setTimeout(() => { el.remove(); }, 350);
+        }, ms);
+    }
+
+    function _onRelinked(payload) {
+        // Payload: {device_id, new_name, previous_name}. previous_name is the
+        // friendly name the user gave the old paired row; new_name is the
+        // freshly-paired row's name (which the server pre-fills with
+        // previous_name when relinked=true). We surface both so the user can
+        // tell at a glance which device this was about.
+        const newName = (payload && payload.new_name) || "device";
+        const prevName = (payload && payload.previous_name) || "(unnamed)";
+        // Same-name relinks are the common case and still worth surfacing —
+        // it confirms to the user that their reinstall worked.
+        const same = (newName === prevName);
+        const text = same
+            ? `Re-linked agent "${newName}".`
+            : `Re-linked agent "${newName}" (previously "${prevName}").`;
+        _showToast(text);
+        // Pick up the fresh device list so the chip + picker reflect the
+        // revoke-old/insert-new without needing a manual refresh.
+        _refreshOnlineDevices();
+    }
+
     // ── /agent/ws browser socket (presence frames) ────────────────────────
     (function _connectAgentSocket() {
         const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -204,6 +262,7 @@
                 try { msg = JSON.parse(e.data); } catch (_) { return; }
                 if (msg.type === "presence") onAgentPresence(msg.payload || {});
                 else if (msg.type === "whoami_pong") _onWhoamiPong(msg);
+                else if (msg.type === "relinked") _onRelinked(msg.payload || {});
             });
             ws.addEventListener("close", () => {
                 _agentState.agentSocket = null;

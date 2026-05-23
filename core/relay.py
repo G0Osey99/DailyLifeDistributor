@@ -144,6 +144,29 @@ class Relay:
         for s in sinks:
             s(msg)
 
+    def broadcast_to_browsers(self, account: str, event_type: str,
+                              payload: dict) -> None:
+        """Send a server-originated frame to every browser socket in *account*.
+
+        Used for one-off notifications the dashboard needs to surface (e.g.
+        a paired agent re-linking onto an existing HWID). Frame shape
+        matches the rest of the protocol: ``{"v": 1, "type": <event_type>,
+        "payload": {...}}``. The sink list is snapshotted under the lock so
+        a slow sink (or a sink that disconnects mid-broadcast) can't hold
+        the lock or break iteration for the other browsers.
+        """
+        msg = json.dumps({"v": 1, "type": event_type, "payload": payload})
+        with self._lock:
+            sinks = list(self._room(account).browsers.values())
+        for s in sinks:
+            try:
+                s(msg)
+            except Exception:
+                # A single broken sink mustn't take the broadcast down for
+                # the rest of the room. The websocket layer reaps closed
+                # connections on its own loop.
+                pass
+
 
 # ---------------------------------------------------------------------------
 # Module-level default relay + convenience send function

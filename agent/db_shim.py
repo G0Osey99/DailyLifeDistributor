@@ -1,10 +1,17 @@
 """Drop-in replacement for `core.db` on the agent.
 
-Implements only the calls bundled uploaders make at runtime
-(currently: record_image_use from uploaders/rock/orchestrator.py).
+Implements only the calls bundled uploaders make at runtime.
 Every other db.* attribute access raises NotImplementedError so
 future coupling surfaces loudly instead of silently failing on a
 SQLite file the agent doesn't have.
+
+Audit (Phase 3): ``grep -E "(from core import db|core\\.db\\.|_db\\.)" uploaders/``
+finds **one** call site — ``_db.record_image_use`` in
+``uploaders/rock/orchestrator.py``. The server records upload_history /
+sessions itself from the emitted success events, so no other db calls are
+needed on the agent path. If a future uploader adds ``record_email_send``,
+``record_post``, etc., add the corresponding event-emitting method below and
+wire it onto the synthetic module in ``install_as_core_db``.
 """
 from __future__ import annotations
 from typing import Callable

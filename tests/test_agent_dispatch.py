@@ -62,3 +62,28 @@ def test_filter_drops_row_entirely_when_all_platforms_done(temp_db):
     )
     summary = [{"date": "2026-05-22", "platforms": ["YouTube Video"]}]
     assert agent_dispatch.filter_done_rows(session_id="S1", summary=summary) == []
+
+
+def test_collect_credentials_pulls_needed_keys_only():
+    from core import agent_dispatch, secrets_store
+    # YouTube keys stored as kv secrets; session keys stored as blobs
+    # (playwright_session stores them under "playwright.<basename_no_ext>").
+    secrets_store.set_secret("youtube.token", '{"t":1}')
+    secrets_store.set_secret("youtube.client_secrets", '{"c":1}')
+    secrets_store.set_blob("playwright.rock_session", b'{"r":1}')
+    secrets_store.set_blob("playwright.simplecast_session", b'{"s":1}')
+    secrets_store.set_blob("playwright.vista_social_session", b'{"v":1}')
+    creds = agent_dispatch.collect_credentials(
+        platforms_in_use={"YouTube Video", "Rock"},
+    )
+    # Only the keys actually needed for selected platforms come through.
+    assert set(creds.keys()) == {
+        "youtube.token", "youtube.client_secrets", "playwright.rock_session",
+    }
+    assert creds["youtube.token"] == '{"t":1}'
+
+
+def test_collect_credentials_omits_missing_keys():
+    from core import agent_dispatch
+    # Nothing in store.
+    assert agent_dispatch.collect_credentials(platforms_in_use={"Rock"}) == {}

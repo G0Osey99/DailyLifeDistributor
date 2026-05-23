@@ -9,8 +9,58 @@ from __future__ import annotations
 import logging
 from typing import Any
 from core import db as _db
+from core import secrets_store as _ss
 
 _PROTOCOL_VERSION = 1
+
+# Which secrets_store keys each platform name requires.
+# Keys absent from the store are silently omitted from the envelope.
+# YouTube credentials are kv secrets (get_secret → str).
+# Playwright sessions are blobs (get_blob → bytes) stored under
+# "playwright.<basename_no_ext>" by core.playwright_session.
+# Real key strings confirmed:
+#   youtube.token / youtube.client_secrets  → uploaders/youtube_uploader.py:45-46
+#   playwright.rock_session                 → core/playwright_session.py:65-68 + :101
+#   playwright.simplecast_session           → core/playwright_session.py:65-68 + :99
+#   playwright.vista_social_session         → core/playwright_session.py:65-68 + :100
+_PLATFORM_KEYS: dict[str, tuple[str, ...]] = {
+    "YouTube Video":  ("youtube.token", "youtube.client_secrets"),
+    "YouTube Shorts": ("youtube.token", "youtube.client_secrets"),
+    "Rock":           ("playwright.rock_session",),
+    "Rock Email":     ("playwright.rock_session",),
+    "Simplecast":     ("playwright.simplecast_session",),
+    "Vista Social":   ("playwright.vista_social_session",),
+}
+
+
+def _fetch_credential(key: str) -> str | None:
+    """Return the credential string for *key*, regardless of storage kind.
+
+    kv secrets  → get_secret (str).
+    blob secrets → get_blob (bytes, decoded UTF-8).
+    Tries kv first; falls back to blob.  Returns None when neither is stored.
+    """
+    val = _ss.get_secret(key)
+    if val is not None:
+        return val
+    raw = _ss.get_blob(key)
+    if raw is not None:
+        return raw.decode("utf-8")
+    return None
+
+
+def collect_credentials(*, platforms_in_use: set[str]) -> dict[str, str]:
+    """Return only the secrets_store entries needed for the given platforms.
+    Missing keys are silently omitted."""
+    needed: set[str] = set()
+    for p in platforms_in_use:
+        needed.update(_PLATFORM_KEYS.get(p, ()))
+    out: dict[str, str] = {}
+    for key in sorted(needed):
+        val = _fetch_credential(key)
+        if val is not None:
+            out[key] = val
+    return out
 
 # Path fields removed from a serialized ReviewEntry before send; the agent
 # re-resolves them from its own scan map.

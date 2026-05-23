@@ -74,11 +74,26 @@ def test_login_with_no_memberships_sets_current_org_id_none(client):
         assert s.get("current_org_id") is None
 
 
-def test_login_user_with_unchanged_password_rejected(client):
-    # NEVER-CHANGED user: verify_password returns False (forces change).
+def test_login_user_with_unchanged_password_redirects_to_first_set(client):
+    # NEVER-CHANGED user (password_changed_at IS NULL): the seed password
+    # is accepted, but the user is routed to /login/first-password-set
+    # to pick a new one before getting a session.
     user_store.create_user(username="eve", email="e@x.com", password="originalpw!1234")
     resp = client.post(
         "/login",
         data={"username": "eve", "password": "originalpw!1234"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert "/login/first-password-set" in resp.headers.get("Location", "")
+    with client.session_transaction() as s:
+        assert s.get("user_id") is None
+
+
+def test_login_user_with_wrong_password_still_401(client):
+    user_store.create_user(username="eve", email="e@x.com", password="originalpw!1234")
+    resp = client.post(
+        "/login",
+        data={"username": "eve", "password": "WRONG!1234567"},
     )
     assert resp.status_code == 401

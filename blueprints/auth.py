@@ -106,7 +106,8 @@ def login_submit():
     # New path: username + password (Argon2id).
     from core import user_store, org_store
     user = user_store.get_user_by_username(username)
-    if user is None or not user_store.verify_password(user["id"], password):
+    pw_ok = user is not None and user_store.password_matches(user["id"], password)
+    if not pw_ok:
         auth.record_failure(ip)
         _audit_event_safe(
             action="user.login_failed",
@@ -120,6 +121,15 @@ def login_submit():
         ), 401
 
     auth.clear_failures(ip)
+
+    # Forced first-login password change: the seed password matched, but
+    # password_changed_at IS NULL — route to the "set your new password"
+    # page instead of granting a session.
+    if user_store.password_change_required(user["id"]):
+        tok = _issue_partial_token(user["id"])
+        return redirect(
+            url_for("auth.first_password_set_get") + f"?tok={tok}"
+        )
     # Phase γ: if the user has any 2FA enabled, hold the session as
     # "password-verified but 2FA-pending" and redirect to the second step.
     if user.get("totp_enabled") or user.get("email_2fa_enabled"):
@@ -279,6 +289,52 @@ def login_email_2fa_post():
             "login_email_2fa.html", tok=fresh_tok, error="Invalid code",
         ), 400
     _finalize_login(uid, "email")
+    return redirect("/")
+
+
+@bp.route("/login/first-password-set", methods=["GET"])
+def first_password_set_get():
+    tok = request.args.get("tok", "")
+    uid = _consume_partial_token(tok)
+    if uid is None:
+        return redirect(url_for("auth.login"))
+    # Re-mint so a refresh doesn't drop them.
+    fresh_tok = _issue_partial_token(uid)
+    return render_template("first_password_set.html", tok=fresh_tok, error=None)
+
+
+@bp.route("/login/first-password-set", methods=["POST"])
+def first_password_set_post():
+    tok = request.form.get("tok", "")
+    uid = _consume_partial_token(tok)
+    if uid is None:
+        return redirect(url_for("auth.login"))
+    new_pw = request.form.get("new_password", "") or ""
+    confirm = request.form.get("confirm_password", "") or ""
+    if new_pw != confirm:
+        fresh_tok = _issue_partial_token(uid)
+        return render_template(
+            "first_password_set.html", tok=fresh_tok,
+            error="Passwords do not match.",
+        ), 400
+    from core import passwords as _pw
+    err = _pw.validate_password(new_pw)
+    if err:
+        fresh_tok = _issue_partial_token(uid)
+        return render_template(
+            "first_password_set.html", tok=fresh_tok, error=err,
+        ), 400
+    from core import user_store
+    user_store.update_password(uid, new_pw)
+    _audit_event_safe(
+        action="user.password_changed",
+        actor_user_id=uid,
+        metadata={"reason": "first_login"},
+        ip=_client_ip(),
+        ua=request.headers.get("User-Agent", ""),
+    )
+    # Log them in (skip 2FA — they haven't enrolled yet on first login).
+    _finalize_login(uid, "first_password_set")
     return redirect("/")
 
 

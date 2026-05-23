@@ -204,6 +204,8 @@ def create_app() -> Flask:
         # login_required gate would loop the user back to /login).
         "auth.login_2fa_get", "auth.login_2fa_post",
         "auth.login_email_2fa_get", "auth.login_email_2fa_post",
+        # First-login forced password change — partial-token-gated, no session yet.
+        "auth.first_password_set_get", "auth.first_password_set_post",
     }
 
     _ALLOWED_HOSTS = {

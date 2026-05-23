@@ -101,6 +101,29 @@ def verify_password(user_id: int, plaintext: str) -> bool:
         return False
 
 
+def password_matches(user_id: int, plaintext: str) -> bool:
+    """Argon2id verify WITHOUT the password_changed_at gate.
+
+    Used by the login flow to detect "right password, but the user must set a
+    new one before they can be admitted" — i.e. the bootstrap-seeded
+    program-owner on first login. Callers must still gate on
+    `password_changed_at IS NOT NULL` before granting a session.
+    """
+    user = get_user_by_id(user_id)
+    if not user:
+        return False
+    try:
+        _hasher.verify(user["password_hash"], plaintext)
+        return True
+    except (VerifyMismatchError, InvalidHash):
+        return False
+
+
+def password_change_required(user_id: int) -> bool:
+    user = get_user_by_id(user_id)
+    return bool(user) and user["password_changed_at"] is None
+
+
 def update_password(user_id: int, new_plaintext: str) -> None:
     """Set a new password and flip password_changed_at=now()."""
     pw_hash = hash_password(new_plaintext)

@@ -53,7 +53,10 @@ jobs:
               info = json.load(open(os.path.join(d, "build-info.json")))
               info["url"] = f"https://autoalert.pro/agent/releases/{info['filename']}"
               builds[info["platform"]] = info
-              for b in glob.glob(os.path.join(d, "dld-agent-*")):
+              # actions/upload-artifact preserves the dist/ prefix, so the
+              # binaries land at artifacts/agent-<os>/dist/dld-agent-* —
+              # recurse with ** to find them.
+              for b in glob.glob(os.path.join(d, "**", "dld-agent-*"), recursive=True):
                   shutil.move(b, os.path.join("release-payload", os.path.basename(b)))
           version = os.environ["GITHUB_REF_NAME"].removeprefix("agent-v")
           manifest = {"version": version, "builds": builds}

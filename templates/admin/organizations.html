@@ -30,18 +30,19 @@
   </form>
   <h2>Existing organizations ({{ orgs|length }})</h2>
   <table>
-    <thead><tr><th>Name</th><th>Slug</th><th>Plan</th><th>Created</th><th>Disabled?</th></tr></thead>
+    <thead><tr><th>Name</th><th>Slug</th><th>Plan</th><th>Created</th><th>Disabled?</th><th></th></tr></thead>
     <tbody>
       {% for o in orgs %}
       <tr>
-        <td>{{ o.name }}</td>
+        <td><a href="{{ url_for('admin.organization_detail', org_id=o.id) }}">{{ o.name }}</a></td>
         <td><code>{{ o.slug }}</code></td>
         <td>{{ o.plan }}</td>
         <td>{{ o.created_at }}</td>
         <td>{{ 'Yes' if o.disabled_at else 'No' }}</td>
+        <td><a href="{{ url_for('admin.organization_detail', org_id=o.id) }}">Manage →</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="5" style="color:#888;">No organizations yet.</td></tr>
+      <tr><td colspan="6" style="color:#888;">No organizations yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>

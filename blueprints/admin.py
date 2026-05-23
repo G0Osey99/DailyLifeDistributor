@@ -32,13 +32,9 @@ def _slugify(s: str) -> str:
 @bp.route("", methods=["GET"])
 @require_program_owner
 def landing():
-    orgs = org_store.list_orgs()
-    return render_template(
-        "admin/organizations.html",
-        orgs=orgs,
-        form_error=None,
-        landing=True,
-    )
+    # /admin is just the entry point — point it at the org list so it
+    # doesn't render the same page under two URLs.
+    return redirect(url_for("admin.organizations_list"))
 
 
 @bp.route("/organizations", methods=["GET"])
@@ -105,6 +101,96 @@ def organizations_create():
     except Exception:
         pass
     return redirect(url_for("admin.organizations_list"))
+
+
+@bp.route("/organizations/<int:org_id>", methods=["GET"])
+@require_program_owner
+def organization_detail(org_id: int):
+    """Admin view of one org: members + pending invites + invite form."""
+    from core import db as _db, invitations as _inv
+    from flask import abort
+    org = org_store.get_org_by_id(org_id)
+    if not org:
+        abort(404)
+    with _db._get_conn() as c:
+        members = [dict(r) for r in c.execute(
+            """SELECT u.id, u.username, u.email, m.role, m.joined_at,
+                      u.last_login_at, u.program_owner
+               FROM org_memberships m
+               JOIN users u ON u.id = m.user_id
+               WHERE m.org_id = ?
+               ORDER BY m.role, m.joined_at""",
+            (org_id,),
+        ).fetchall()]
+    pending = _inv.list_pending_invitations(org_id)
+    return render_template(
+        "admin/organization_detail.html",
+        org=org, members=members, pending=pending,
+        form_error=None,
+    )
+
+
+@bp.route("/organizations/<int:org_id>/invite", methods=["POST"])
+@require_program_owner
+def organization_invite(org_id: int):
+    """Program-owner invites a user into any org."""
+    from core import invitations as _inv, email as _email
+    from flask import abort, current_app, flash
+    org = org_store.get_org_by_id(org_id)
+    if not org:
+        abort(404)
+    email_addr = (request.form.get("email") or "").strip().lower()
+    role = (request.form.get("role") or "user").strip().lower()
+    if not email_addr or "@" not in email_addr:
+        flash("Enter a valid email address.", "error")
+        return redirect(url_for("admin.organization_detail", org_id=org_id))
+    if role not in ("owner", "manager", "user"):
+        flash("Invalid role.", "error")
+        return redirect(url_for("admin.organization_detail", org_id=org_id))
+    inv_id, raw_token = _inv.create_invitation(
+        org_id=org_id, inviter_user_id=auth.current_user_id(),
+        email=email_addr, role=role,
+    )
+    accept_url = url_for(
+        "invitations.accept_get", token=raw_token, _external=True,
+    )
+
+    def _opt(endpoint: str, **kwargs) -> str:
+        if endpoint in current_app.view_functions:
+            return url_for(endpoint, _external=True, **kwargs)
+        return ""
+
+    try:
+        _email.send(
+            "invite", to=email_addr,
+            org_name=org["name"],
+            inviter_name="Program owner",
+            role=role,
+            accept_url=accept_url,
+            agent_win_url=_opt("download.download_for_os", os="windows"),
+            agent_mac_url=_opt("download.download_for_os", os="macos"),
+        )
+        flash(f"Invitation sent to {email_addr}. (Accept URL: {accept_url})", "success")
+    except Exception as e:
+        # Email send failed (no Resend key, network blip, etc). The invite
+        # row is committed — surface the accept URL so the admin can
+        # forward it manually until Resend is configured.
+        flash(
+            f"Invite created but email send failed ({e}). "
+            f"Accept URL: {accept_url}",
+            "warning",
+        )
+    return redirect(url_for("admin.organization_detail", org_id=org_id))
+
+
+@bp.route("/organizations/<int:org_id>/invitations/<int:invitation_id>/revoke", methods=["POST"])
+@require_program_owner
+def organization_revoke_invite(org_id: int, invitation_id: int):
+    from core import invitations as _inv
+    from flask import flash
+    _inv.revoke_invitation(invitation_id)
+    flash("Invitation revoked.", "success")
+    return redirect(url_for("admin.organization_detail", org_id=org_id))
 
 
 @bp.route("/users", methods=["GET"])

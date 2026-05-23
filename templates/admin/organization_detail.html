@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="utf-8">
+  <title>Admin · {{ org.name }} · Daily Life Distributor</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 24px auto; padding: 0 16px; color: #222; }
+    h1 { font-size: 1.4rem; margin-bottom: 8px; }
+    h2 { font-size: 1.1rem; margin: 24px 0 8px; }
+    nav a { margin-right: 12px; }
+    .sub { color: #666; font-size: 0.86rem; margin-bottom: 14px; }
+    .sub code { background: #f3f3f3; padding: 1px 6px; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 0.92rem; }
+    .empty { color: #888; font-style: italic; }
+    .role-owner   { background: #e3eeff; color: #214fa6; padding: 2px 8px; border-radius: 10px; font-size: 0.78rem; }
+    .role-manager { background: #fff0d6; color: #8a5800; padding: 2px 8px; border-radius: 10px; font-size: 0.78rem; }
+    .role-user    { background: #f0f0f0; color: #555; padding: 2px 8px; border-radius: 10px; font-size: 0.78rem; }
+    form { display: flex; gap: 8px; align-items: center; margin: 8px 0 0; flex-wrap: wrap; }
+    input[type=email], select { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font: inherit; }
+    button { padding: 7px 14px; background: #215fd6; color: #fff; border: 0; border-radius: 6px; font: inherit; cursor: pointer; }
+    button.danger { background: #c33; }
+    .flash { padding: 9px 12px; border-radius: 6px; margin: 12px 0; font-size: 0.88rem; }
+    .flash.success { background: #e6f5ea; color: #1c6b3a; border: 1px solid #b9e1c8; }
+    .flash.warning { background: #fff3d6; color: #8a5800; border: 1px solid #f1d68b; word-break: break-all; }
+    .flash.error   { background: #fde; color: #900; border: 1px solid #f5b5b5; }
+    .accept-url { font-family: ui-monospace, Menlo, monospace; font-size: 0.78rem; word-break: break-all; }
+  </style>
+</head><body>
+  <nav>
+    <a href="{{ url_for('admin.organizations_list') }}">← All organizations</a>
+    <a href="{{ url_for('admin.users_list') }}">Users</a>
+    <a href="{{ url_for('admin.admin_audit_log') }}">Audit log</a>
+  </nav>
+
+  <h1>{{ org.name }}</h1>
+  <div class="sub">
+    <code>{{ org.slug }}</code> · plan <code>{{ org.plan }}</code> · created {{ org.created_at }}
+    {% if org.disabled_at %} · <span style="color:#c33;">disabled {{ org.disabled_at }}</span>{% endif %}
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+    <div class="flash {{ cat }}">{{ msg }}</div>
+  {% endfor %}
+  {% endwith %}
+
+  <h2>Invite a member</h2>
+  <p class="sub">A signed invitation link is emailed via Resend. If Resend isn't configured, the link is shown here so you can deliver it out-of-band.</p>
+  <form method="POST" action="{{ url_for('admin.organization_invite', org_id=org.id) }}">
+    <input type="email" name="email" placeholder="invitee@example.com" required>
+    <select name="role">
+      <option value="user">User</option>
+      <option value="manager">Manager</option>
+      <option value="owner">Owner</option>
+    </select>
+    <button type="submit">Send invite</button>
+  </form>
+
+  <h2>Members ({{ members|length }})</h2>
+  <table>
+    <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Joined</th><th>Last login</th></tr></thead>
+    <tbody>
+      {% for m in members %}
+      <tr>
+        <td>{{ m.username }}{% if m.program_owner %} <span style="color:#888;">(program-owner)</span>{% endif %}</td>
+        <td>{{ m.email }}</td>
+        <td><span class="role-{{ m.role }}">{{ m.role }}</span></td>
+        <td>{{ m.joined_at }}</td>
+        <td>{{ m.last_login_at or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">No members yet — send an invite above.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Pending invitations ({{ pending|length }})</h2>
+  <table>
+    <thead><tr><th>Email</th><th>Role</th><th>Sent</th><th>Expires</th><th></th></tr></thead>
+    <tbody>
+      {% for p in pending %}
+      <tr>
+        <td>{{ p.email }}</td>
+        <td><span class="role-{{ p.role }}">{{ p.role }}</span></td>
+        <td>{{ p.created_at }}</td>
+        <td>{{ p.expires_at }}</td>
+        <td>
+          <form method="POST" action="{{ url_for('admin.organization_revoke_invite', org_id=org.id, invitation_id=p.id) }}" style="display:inline;">
+            <button class="danger" type="submit">Revoke</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">No pending invitations.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body></html>

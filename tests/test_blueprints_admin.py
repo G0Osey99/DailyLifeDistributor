@@ -40,12 +40,12 @@ def test_admin_landing_requires_program_owner(app):
         assert resp.status_code == 403
 
 
-def test_admin_landing_ok_for_program_owner(app):
+def test_admin_landing_redirects_to_org_list(app):
     with app.test_client() as c:
         _owner_login(c)
-        resp = c.get("/admin")
-        assert resp.status_code == 200
-        assert b"Admin" in resp.data or b"admin" in resp.data
+        resp = c.get("/admin", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/admin/organizations" in resp.headers.get("Location", "")
 
 
 def test_admin_organizations_list(app):

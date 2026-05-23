@@ -310,6 +310,23 @@ def create_app() -> Flask:
         """Make youtube_authenticated available in all templates (used by navbar)."""
         return {"youtube_authenticated": _cached_yt_authenticated()}
 
+    @app.context_processor
+    def _inject_membership_context():
+        # Multi-tenant phase α: header switch-org dropdown only renders when
+        # the user has more than one membership.
+        from core import auth as _auth, org_store as _os
+        uid = _auth.current_user_id()
+        if uid is None:
+            return {"current_memberships": [], "current_org_id": None}
+        try:
+            mems = _os.list_memberships_for_user(uid)
+        except Exception:
+            mems = []
+        return {
+            "current_memberships": mems,
+            "current_org_id": _auth.current_org_id(),
+        }
+
     @app.route("/health")
     def _health():
         """Lightweight readiness probe for on-call diagnosis.

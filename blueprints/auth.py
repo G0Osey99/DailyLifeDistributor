@@ -125,4 +125,26 @@ def login_submit():
 @bp.route("/logout", methods=["POST"])
 def logout():
     session.pop(_SESSION_KEY, None)
+    session.pop("user_id", None)
+    session.pop("current_org_id", None)
     return redirect(url_for("auth.login"))
+
+
+@bp.route("/account/switch_org", methods=["POST"])
+def switch_org():
+    if not is_authenticated():
+        return redirect(url_for("auth.login"))
+    try:
+        new_org_id = int(request.form.get("org_id") or 0)
+    except ValueError:
+        new_org_id = 0
+    if not new_org_id:
+        return redirect(request.referrer or url_for("scan.index"))
+    from core import org_store
+    uid = auth.current_user_id()
+    mem = org_store.get_membership(user_id=uid, org_id=new_org_id)
+    if mem is None:
+        from flask import abort
+        abort(403)
+    session["current_org_id"] = new_org_id
+    return redirect(request.referrer or url_for("scan.index"))

@@ -16,6 +16,15 @@
 {% endblock %}
 
 {% block content %}
+{% if cross_org %}
+<nav class="admin-subnav" style="display:flex; gap:6px; margin-bottom:18px;">
+  <a href="{{ url_for('admin.organizations_list') }}" style="padding:6px 12px; border-radius:var(--radius-md); font-size:0.84rem; color:var(--shell-text-muted);">Organizations</a>
+  <a href="{{ url_for('admin.users_list') }}" style="padding:6px 12px; border-radius:var(--radius-md); font-size:0.84rem; color:var(--shell-text-muted);">Users</a>
+  <a href="{{ url_for('admin.admin_audit_log') }}" style="padding:6px 12px; border-radius:var(--radius-md); font-size:0.84rem; background:var(--accent-soft); color:var(--accent); font-weight:500;">Audit log</a>
+</nav>
+{% else %}
+<p style="margin-bottom:14px;"><a href="{{ url_for('settings.settings') }}" class="btn btn-ghost btn-sm">← Back to Settings</a></p>
+{% endif %}
 <h1>Audit log{% if cross_org %} <span class="text-dim text-sm">(all organizations)</span>{% endif %}</h1>
 <p class="subtitle">
   {% if cross_org %}

@@ -16,6 +16,7 @@
 {% endblock %}
 
 {% block content %}
+<p style="margin-bottom:14px;"><a href="{{ url_for('twofa.settings_2fa') }}" class="btn btn-ghost btn-sm">← Back to 2FA</a></p>
 {% if codes %}
 <h1>Save these recovery codes</h1>
 <p class="subtitle">Each code can be used once. Store them somewhere safe (password manager, sealed envelope) — they cannot be re-shown after you leave this page.</p>

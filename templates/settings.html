@@ -409,103 +409,81 @@
 </div>
 
 {% if is_signed_in and current_org_id %}
-<!-- 🛡️ Two-factor authentication -->
-<div class="settings-section">
-<div class="section-card">
-    <div class="section-card-header" data-section="twofa">
-        <span class="sec-icon">🛡️</span>
-        <span class="sec-title">Two-factor authentication</span>
-        <span class="sec-dot ok"></span>
-        <span class="sec-chevron">▼</span>
-    </div>
-    <div class="section-card-body" data-body="twofa">
-        <p class="hint" style="margin-top:8px;">Enroll an authenticator app (TOTP) or email codes, manage backup recovery codes.</p>
-        <p style="margin-top:8px;">
-            <a href="{{ url_for('twofa.settings_2fa') }}" class="btn btn-sm btn-ghost">Manage 2FA →</a>
-        </p>
-    </div>
-</div>
-</div>
+<style>
+  .nav-tile {
+    display:flex; align-items:center; gap:16px;
+    padding:18px 22px; margin-bottom:12px;
+    background:var(--shell-panel); border:1px solid var(--shell-border);
+    border-radius:var(--radius-xl); text-decoration:none;
+    transition:border-color var(--transition-normal), box-shadow var(--transition-normal), transform var(--transition-fast);
+  }
+  .nav-tile:hover {
+    border-color:var(--accent);
+    box-shadow:0 4px 14px var(--accent-soft);
+  }
+  .nav-tile:active { transform:scale(0.998); }
+  .nav-tile-icon { font-size:1.4rem; flex-shrink:0; }
+  .nav-tile-body { flex:1; }
+  .nav-tile-title { font-weight:600; font-size:0.98rem; color:var(--shell-text); margin-bottom:2px; }
+  .nav-tile-sub { font-size:0.82rem; color:var(--shell-text-muted); }
+  .nav-tile-arrow { color:var(--shell-text-dim); font-size:1.1rem; flex-shrink:0; transition:transform var(--transition-fast), color var(--transition-fast); }
+  .nav-tile:hover .nav-tile-arrow { color:var(--accent); transform:translateX(2px); }
+</style>
 
-<!-- 🔒 Security & sessions -->
-<div class="settings-section">
-<div class="section-card">
-    <div class="section-card-header" data-section="security">
-        <span class="sec-icon">🔒</span>
-        <span class="sec-title">Security & sessions</span>
-        <span class="sec-dot ok"></span>
-        <span class="sec-chevron">▼</span>
+<h2 style="margin-top:32px; margin-bottom:14px; font-size:1.05rem;">Account & organization</h2>
+
+<a href="{{ url_for('twofa.settings_2fa') }}" class="nav-tile">
+    <span class="nav-tile-icon">🛡️</span>
+    <div class="nav-tile-body">
+        <div class="nav-tile-title">Two-factor authentication</div>
+        <div class="nav-tile-sub">Enroll an authenticator app (TOTP) or email codes; manage backup recovery codes.</div>
     </div>
-    <div class="section-card-body" data-body="security">
-        <p class="hint" style="margin-top:8px;">New-device sign-in notifications{% if current_role == 'owner' %}, organization Require-2FA policy{% endif %}.</p>
-        <p style="margin-top:8px;">
-            <a href="{{ url_for('settings.security_get') }}" class="btn btn-sm btn-ghost">Open security settings →</a>
-        </p>
+    <span class="nav-tile-arrow">→</span>
+</a>
+
+<a href="{{ url_for('settings.security_get') }}" class="nav-tile">
+    <span class="nav-tile-icon">🔒</span>
+    <div class="nav-tile-body">
+        <div class="nav-tile-title">Security & sessions</div>
+        <div class="nav-tile-sub">New-device sign-in notifications{% if current_role == 'owner' %}, organization Require-2FA policy{% endif %}.</div>
     </div>
-</div>
-</div>
+    <span class="nav-tile-arrow">→</span>
+</a>
 
 {% if current_role in ('owner', 'manager') %}
-<!-- 👥 Members & invites -->
-<div class="settings-section">
-<div class="section-card">
-    <div class="section-card-header" data-section="members">
-        <span class="sec-icon">👥</span>
-        <span class="sec-title">Members & invites</span>
-        <span class="sec-dot ok"></span>
-        <span class="sec-chevron">▼</span>
-    </div>
-    <div class="section-card-body" data-body="members">
-        <p class="hint" style="margin-top:8px;">
+<a href="{{ url_for('members.members_page') }}" class="nav-tile">
+    <span class="nav-tile-icon">👥</span>
+    <div class="nav-tile-body">
+        <div class="nav-tile-title">Members & invites</div>
+        <div class="nav-tile-sub">
             {% if current_role == 'owner' %}
-              Invite Owners, Managers, or Users. Change roles or remove members. Revoke pending invitations.
+              Invite Owners, Managers, or Users. Change roles, remove members, revoke pending invitations.
             {% else %}
               Invite Users into this org. Revoke pending invitations you sent.
             {% endif %}
-        </p>
-        <p style="margin-top:8px;">
-            <a href="{{ url_for('members.members_page') }}" class="btn btn-sm btn-ghost">Manage members →</a>
-        </p>
+        </div>
     </div>
-</div>
-</div>
+    <span class="nav-tile-arrow">→</span>
+</a>
 
-<!-- 📜 Audit log -->
-<div class="settings-section">
-<div class="section-card">
-    <div class="section-card-header" data-section="audit">
-        <span class="sec-icon">📜</span>
-        <span class="sec-title">Audit log</span>
-        <span class="sec-dot ok"></span>
-        <span class="sec-chevron">▼</span>
+<a href="{{ url_for('audit.audit_log_view') }}" class="nav-tile">
+    <span class="nav-tile-icon">📜</span>
+    <div class="nav-tile-body">
+        <div class="nav-tile-title">Audit log</div>
+        <div class="nav-tile-sub">Sign-ins, role changes, invites, recovery events, uploads (active 365 days, then archived).</div>
     </div>
-    <div class="section-card-body" data-body="audit">
-        <p class="hint" style="margin-top:8px;">Sign-ins, role changes, invites, recovery events, and uploads (active 365 days, then archived).</p>
-        <p style="margin-top:8px;">
-            <a href="{{ url_for('audit.audit_log_view') }}" class="btn btn-sm btn-ghost">View audit log →</a>
-        </p>
-    </div>
-</div>
-</div>
+    <span class="nav-tile-arrow">→</span>
+</a>
 {% endif %}
 
-<!-- 💻 Download agent -->
-<div class="settings-section">
-<div class="section-card">
-    <div class="section-card-header" data-section="download">
-        <span class="sec-icon">💻</span>
-        <span class="sec-title">Download the agent</span>
-        <span class="sec-dot ok"></span>
-        <span class="sec-chevron">▼</span>
+<a href="{{ url_for('download.landing') }}" class="nav-tile">
+    <span class="nav-tile-icon">💻</span>
+    <div class="nav-tile-body">
+        <div class="nav-tile-title">Download the agent</div>
+        <div class="nav-tile-sub">Install the local upload agent on a new machine, re-install after wiping a laptop, or grab the link to share.</div>
     </div>
-    <div class="section-card-body" data-body="download">
-        <p class="hint" style="margin-top:8px;">Install the local upload agent on a new machine, re-install after wiping a laptop, or grab the download link to share.</p>
-        <p style="margin-top:8px;">
-            <a href="{{ url_for('download.landing') }}" class="btn btn-sm btn-ghost">Open download page →</a>
-        </p>
-    </div>
-</div>
-</div>
+    <span class="nav-tile-arrow">→</span>
+</a>
 {% endif %}
 
 <!-- Save the main settings form (which is closed above; submit it via form=) -->

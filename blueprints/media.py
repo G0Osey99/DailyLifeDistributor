@@ -268,6 +268,10 @@ def _run_batch_worker(job_id, run_id, dates, summary, file_paths,
     """Background worker: run one batch, stream events, delete its temp files."""
     job = upload_jobs.get_job(job_id)
     q = job["queue"] if job else None
+    # Cooperative cancel: register_job created an Event keyed by job_id.
+    # Forward it into run_batch so POST /upload/<id>/cancel short-circuits
+    # remaining row dispatches in this worker thread.
+    cancel_event = upload_jobs.get_cancel_event(job_id)
 
     def emit(payload):
         if q is not None:
@@ -282,6 +286,7 @@ def _run_batch_worker(job_id, run_id, dates, summary, file_paths,
             consumed = upload_jobs.run_batch(
                 dates=dates, summary=summary, file_paths=file_paths,
                 session_id=session_id, emit=emit, entries_snapshot=entries_snapshot,
+                cancel_event=cancel_event,
             ) or set()
     except Exception as exc:  # noqa: BLE001 — surface to the SSE consumer
         emit({"type": "error", "message": f"Batch run crashed: {exc}"})

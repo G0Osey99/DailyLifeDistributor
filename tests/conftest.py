@@ -153,6 +153,15 @@ def _reset_relay_and_dispatch_singletons():
                 _ad._jobs.clear()
         except Exception:
             pass
+        # Per-job cancel events live in core.upload_jobs (web-path cancel).
+        # Stale entries leak across tests if we don't reset between them.
+        try:
+            from core import upload_jobs as _uj
+            with _uj._JOBS_LOCK:
+                _uj._jobs.clear()
+                _uj._cancel_events.clear()
+        except Exception:
+            pass
 
     _clear()
     yield

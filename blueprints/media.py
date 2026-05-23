@@ -382,7 +382,10 @@ def batch_run():
                 session_id=session.session_id,
                 summary=summary,
                 entries=entries_snapshot,
-                elements={},
+                elements={
+                    iso: entry.elements.to_dict()
+                    for iso, entry in entries_snapshot.items()
+                },
                 config={"max_workers": _max_workers},
             )
         except agent_dispatch.NoAgentOnlineError:

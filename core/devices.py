@@ -105,6 +105,15 @@ def list_devices() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def get_device_name(device_id: str) -> str | None:
+    """Return the human-readable name for *device_id*, or None if not found."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT name FROM agent_devices WHERE id = ?", (device_id,)
+        ).fetchone()
+    return row["name"] if row else None
+
+
 def most_recently_seen_online(freshness_seconds: int = 60, now: float | None = None) -> dict | None:
     """Return the device dict whose last_seen_at is the largest among
     non-revoked devices, provided it is within freshness_seconds of now.

@@ -274,14 +274,20 @@ def start(
     config: dict,
 ) -> str:
     """Filter done rows, bundle credentials, build the envelope, and send
-    it through the relay to the chosen agent. Returns the new job_id."""
+    it through the relay to the chosen agent. Returns the new job_id.
+
+    *elements* is a dict mapping iso_date -> UploadElements.to_dict().
+    Each row receives its own per-date elements slice; rows whose iso_date
+    is absent from the map fall back to an empty dict (all defaults apply
+    on the agent side).
+    """
     job_id = _uuid.uuid4().hex
     rows = filter_done_rows(session_id=session_id, summary=summary)
     if not rows:
         _logger.info("agent_dispatch.start(job=%s): nothing to do", job_id)
         return job_id
     for r in rows:
-        r["elements"] = elements
+        r["elements"] = elements.get(r["iso_date"], {})
     platforms_in_use: set[str] = set()
     for r in rows:
         platforms_in_use.update(r["platforms"])

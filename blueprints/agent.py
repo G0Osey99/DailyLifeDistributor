@@ -82,7 +82,8 @@ def register_sockets(sock) -> None:
                                  "payload": {"reason": "unauthorized"}}))
             return
         touch_device(device_id)
-        RELAY.register_agent(_ACCOUNT, device_id, ws.send)
+        _device_name = devices.get_device_name(device_id)
+        RELAY.register_agent(_ACCOUNT, device_id, ws.send, device_name=_device_name)
         try:
             while True:
                 msg = ws.receive()

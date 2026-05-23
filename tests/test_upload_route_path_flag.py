@@ -114,6 +114,47 @@ def test_upload_path_agent_dispatches_to_agent_dispatch(
     assert called, "agent_dispatch.start was not invoked"
 
 
+def test_upload_path_agent_passes_real_elements(monkeypatch, tmp_path):
+    """elements dict passed to agent_dispatch.start reflects per-entry UploadElements."""
+    from core.session_state import ReviewEntry, UploadElements, session as _session
+
+    # Build a fake entry with non-default elements (sc_enabled=False to verify
+    # the dict carries real field values, not just defaults).
+    fake_elements = UploadElements(sc_enabled=False)
+    fake_entry = ReviewEntry(date="2026-01-01", display_date="Jan 1, 2026",
+                              elements=fake_elements)
+
+    client, _app = _make_client(monkeypatch, tmp_path, hybrid_enabled=True)
+
+    # Override the empty entries/get_summary stubs with real data for this test.
+    monkeypatch.setattr(_session, "entries", {"2026-01-01": fake_entry}, raising=False)
+    monkeypatch.setattr(_session, "get_summary",
+                        lambda: [{"date": "2026-01-01", "iso_date": "2026-01-01",
+                                  "platforms": ["Simplecast"]}],
+                        raising=False)
+
+    from core import agent_dispatch
+    captured: dict = {}
+
+    def _fake_start(**kw):
+        captured.update(kw)
+        return "JY"
+
+    monkeypatch.setattr(agent_dispatch, "start", _fake_start)
+
+    r = client.post("/media/batch/run?path=agent", json=_BATCH_BODY)
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+    elements = captured.get("elements", {})
+    assert elements, "elements must be non-empty when entries exist"
+    entry_elements = elements.get("2026-01-01", {})
+    assert entry_elements, "elements dict must be keyed by iso_date"
+    # Verify the real field value propagated (not just defaults).
+    assert entry_elements.get("sc_enabled") is False, (
+        "UploadElements.sc_enabled=False must appear in the elements dict"
+    )
+
+
 def test_upload_path_web_keeps_running_run_batch(monkeypatch, client):
     """No path flag → existing web path: background thread with run_batch launched."""
     import blueprints.media as media_mod

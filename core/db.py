@@ -383,6 +383,20 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_upload_history_user "
             "ON upload_history(user_id)"
         )
+        # Multi-tenant phase δ: per-org per-platform soft mutex used by the
+        # web upload dispatch. Primary key (org_id, platform) gives us a
+        # single holder per pair; expires_at lets a stale lock auto-release
+        # 30 minutes after acquisition.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS platform_locks (
+                org_id INTEGER NOT NULL,
+                platform TEXT NOT NULL,
+                locked_by_user_id INTEGER NOT NULL,
+                locked_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY (org_id, platform)
+            )
+        """)
         conn.commit()
 
 

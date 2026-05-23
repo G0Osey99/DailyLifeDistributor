@@ -39,6 +39,10 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    # softprops/action-gh-release needs write access to create the Release.
+    # The SCP-to-VPS step doesn't need it but inherits the permissions block.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -63,15 +67,11 @@ jobs:
           with open("release-payload/manifest.json", "w") as f:
               json.dump(manifest, f, indent=2)
           PY
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          body: "agent ${{ github.ref_name }} � see docs/release-runbook.md for details"
-          files: release-payload/**
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # SCP to VPS runs FIRST because it's the critical path — the agent's
+      # auto-update reads only from autoalert.pro. The GitHub Release publish
+      # below is purely human-convenience; if it fails (e.g. permission drift),
+      # continue-on-error keeps the workflow green so the agent fleet still
+      # gets the update.
       - name: SCP to VPS
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -80,3 +80,13 @@ jobs:
           echo "$VPS_SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
           scp -i ~/.ssh/id_ed25519 release-payload/* ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:~/dld-releases/
+      - name: Publish GitHub Release
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: "agent ${{ github.ref_name }} — see docs/release-runbook.md for details"
+          files: release-payload/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

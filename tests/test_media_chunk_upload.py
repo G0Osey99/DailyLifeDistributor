@@ -12,7 +12,7 @@ def client(temp_db, monkeypatch, tmp_path):
     # Reset the module-level run lock / active-run map between tests (the
     # blueprint module is a process singleton).
     from blueprints import media
-    media._run_lock = ms.RunLock()
+    media._run_lock = ms.PerUserRunLock()
     media._runs.clear()
     auth.reset_lockouts()
     auth.set_password("pw")

@@ -49,11 +49,28 @@ _MAX_CHUNK = 95 * 1024 * 1024
 # cumulative total. Overridable via DLD_MAX_RUN_BYTES.
 _MAX_RUN_BYTES = int(os.environ.get("DLD_MAX_RUN_BYTES", str(40 * 1024 * 1024 * 1024)))
 
-# One upload run at a time across the process. The lock holder is the run_id;
-# `_runs` maps an active run_id to its RunDir + per-file reassembly state.
-_run_lock = ms.RunLock()
+# Multi-tenant phase δ: per-user upload run lock so two users in the same
+# (or different) org can run web uploads concurrently. The same user still
+# gets one run at a time. `_runs` maps an active run_id to its RunDir +
+# per-file reassembly state (still process-global because run_ids are unique).
+_run_lock = ms.PerUserRunLock()
 _runs: dict[str, dict] = {}
 _runs_guard = threading.Lock()
+
+
+def _session_user_id() -> int:
+    """Return the logged-in user_id from the Flask session, or 0 for
+    legacy single-tenant boots where /media/* runs before auth is wired.
+
+    A non-int user_id can't occur via the auth blueprint but might during
+    early migration boots; coerce defensively so the lock dict's keys
+    stay typed.
+    """
+    uid = flask_session.get("user_id")
+    try:
+        return int(uid) if uid is not None else 0
+    except (TypeError, ValueError):
+        return 0
 
 
 def _active_run(run_id: str) -> dict | None:
@@ -155,8 +172,11 @@ def mapping():
 
 @bp.route("/media/run/init", methods=["POST"])
 def run_init():
-    """Acquire the single run lock + allocate a temp dir. 409 if one is active."""
-    if _run_lock.holder() is not None:
+    """Acquire the per-user run lock + allocate a temp dir. 409 if the
+    *current user* already has a run active. Other users' runs do not
+    block (multi-tenant phase δ)."""
+    uid = _session_user_id()
+    if _run_lock.holder(uid) is not None:
         return jsonify({"error": "An upload is already running"}), 409
     data = request.get_json(silent=True) or {}
     try:
@@ -166,11 +186,12 @@ def run_init():
     if total_bytes and not ms.has_free_space(total_bytes):
         return jsonify({"error": "Not enough free disk space for this run"}), 507
     run = ms.RunDir.allocate()
-    if not _run_lock.acquire(run.run_id):
+    if not _run_lock.acquire(uid, run.run_id):
         run.cleanup()
         return jsonify({"error": "An upload is already running"}), 409
     with _runs_guard:
-        _runs[run.run_id] = {"dir": run, "files": {}, "bytes_total": 0}
+        _runs[run.run_id] = {"dir": run, "files": {}, "bytes_total": 0,
+                             "user_id": uid}
     return jsonify({"run_id": run.run_id})
 
 
@@ -255,12 +276,18 @@ def upload_chunk():
 
 
 def _release_run(run_id: str) -> None:
-    """Release the run lock and remove + clean its temp dir."""
+    """Release the per-user run lock and remove + clean its temp dir."""
     with _runs_guard:
         rec = _runs.pop(run_id, None)
     if rec is not None:
         rec["dir"].cleanup()
-    _run_lock.release(run_id)
+        uid = int(rec.get("user_id") or 0)
+    else:
+        # The lock might still be held even if the runs dict has no record
+        # (defensive: stale release / race during shutdown). Reverse-lookup
+        # the user_id so we can still release the per-user slot.
+        uid = _run_lock.user_for_run(run_id) or 0
+    _run_lock.release(uid, run_id)
 
 
 def _run_batch_worker(job_id, run_id, dates, summary, file_paths,

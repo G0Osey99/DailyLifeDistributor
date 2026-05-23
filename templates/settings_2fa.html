@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Two-factor authentication</h1>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<section>
+  <h2>Authenticator app: {{ "enabled" if totp_enabled else "disabled" }}</h2>
+  {% if totp_enabled %}
+    <form method="post" action="/settings/2fa/disable">
+      <input type="hidden" name="method" value="totp">
+      <label>Enter current 6-digit code to confirm:
+        <input name="code" pattern="[0-9]{6}" required>
+      </label>
+      <button type="submit">Disable TOTP</button>
+    </form>
+  {% else %}
+    <form method="post" action="/settings/2fa/enable-totp">
+      <button type="submit">Enable TOTP</button>
+    </form>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Email codes: {{ "enabled" if email_2fa_enabled else "disabled" }}</h2>
+  {% if email_2fa_enabled %}
+    <form method="post" action="/settings/2fa/disable">
+      <input type="hidden" name="method" value="email">
+      <button type="submit">Disable email codes</button>
+    </form>
+  {% else %}
+    <form method="post" action="/settings/2fa/enable-email">
+      <button type="submit">Enable email codes</button>
+    </form>
+  {% endif %}
+</section>
+
+<p><a href="/settings/2fa/recovery-codes">Recovery codes</a></p>
+{% endblock %}

@@ -199,6 +199,11 @@ def create_app() -> Flask:
     _PUBLIC_ENDPOINTS = {
         "auth.login", "auth.login_submit", "_health", "static",
         "invitations.accept_get", "invitations.accept_post",
+        # Phase γ: second-factor screens (the session isn't fully
+        # authenticated until the second factor is verified, so a
+        # login_required gate would loop the user back to /login).
+        "auth.login_2fa_get", "auth.login_2fa_post",
+        "auth.login_email_2fa_get", "auth.login_email_2fa_post",
     }
 
     _ALLOWED_HOSTS = {
@@ -404,6 +409,21 @@ def create_app() -> Flask:
     from blueprints.members import bp as members_bp
     app.register_blueprint(invitations_bp)
     app.register_blueprint(members_bp)
+
+    # Multi-tenant phase γ: 2FA, audit log, account recovery.
+    from blueprints.twofa import bp as twofa_bp
+    from blueprints.audit import bp as audit_bp
+    from blueprints.recovery import bp as recovery_bp
+    app.register_blueprint(twofa_bp)
+    app.register_blueprint(audit_bp)
+    app.register_blueprint(recovery_bp)
+    # The /recover form is reachable without a session (a user who's lost
+    # everything can't log in to ask for help). The reset POST is also
+    # token-gated, not session-gated.
+    _PUBLIC_ENDPOINTS.update({
+        "recovery.recover_form", "recovery.recover_submit",
+        "recovery.reset_form", "recovery.reset_submit",
+    })
 
     # --- Rate limiter (Phase 3 hardening) -----------------------------------
     # Configured here on the app object so the agent blueprint can import the

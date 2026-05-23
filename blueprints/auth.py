@@ -6,8 +6,9 @@ import urllib.parse
 from functools import wraps
 
 from flask import (
-    Blueprint, redirect, render_template, request, session, url_for,
+    Blueprint, current_app, redirect, render_template, request, session, url_for,
 )
+from itsdangerous import URLSafeTimedSerializer
 
 from core import auth
 
@@ -107,27 +108,178 @@ def login_submit():
     user = user_store.get_user_by_username(username)
     if user is None or not user_store.verify_password(user["id"], password):
         auth.record_failure(ip)
+        _audit_event_safe(
+            action="user.login_failed",
+            metadata={"username": username},
+            ip=ip,
+            ua=request.headers.get("User-Agent", ""),
+        )
         return render_template(
             "login.html", error="Incorrect username or password.",
             legacy_enabled=_legacy_enabled(),
         ), 401
 
     auth.clear_failures(ip)
+    # Phase γ: if the user has any 2FA enabled, hold the session as
+    # "password-verified but 2FA-pending" and redirect to the second step.
+    if user.get("totp_enabled") or user.get("email_2fa_enabled"):
+        tok = _issue_partial_token(user["id"])
+        if user.get("totp_enabled"):
+            return redirect(url_for("auth.login_2fa_get") + f"?tok={tok}")
+        return redirect(url_for("auth.login_email_2fa_get") + f"?tok={tok}")
+    # No 2FA — finalize session immediately.
     session.clear()
     session["user_id"] = user["id"]
     mems = org_store.list_memberships_for_user(user["id"])
     session["current_org_id"] = mems[0]["org_id"] if mems else None
     session.permanent = True
     user_store.update_last_login_at(user["id"])
+    _audit_event_safe(
+        action="user.login",
+        actor_user_id=user["id"],
+        ip=ip,
+        ua=request.headers.get("User-Agent", ""),
+    )
+    _notify_new_device_safe(user["id"], ip, request.headers.get("User-Agent", ""))
     return redirect(_safe_next(request.args.get("next", "")))
 
 
 @bp.route("/logout", methods=["POST"])
 def logout():
+    uid = session.get("user_id")
+    if uid:
+        _audit_event_safe(
+            action="user.logout",
+            actor_user_id=uid,
+            ip=_client_ip(),
+            ua=request.headers.get("User-Agent", ""),
+        )
     session.pop(_SESSION_KEY, None)
     session.pop("user_id", None)
     session.pop("current_org_id", None)
     return redirect(url_for("auth.login"))
+
+
+# ---------- Phase γ: 2FA second-step + new-device notifications ----------
+
+def _issue_partial_token(user_id: int) -> str:
+    s = URLSafeTimedSerializer(current_app.secret_key, salt="2fa-pending")
+    return s.dumps({"uid": user_id})
+
+
+def _consume_partial_token(tok: str) -> int | None:
+    s = URLSafeTimedSerializer(current_app.secret_key, salt="2fa-pending")
+    try:
+        data = s.loads(tok, max_age=300)
+        return int(data["uid"])
+    except Exception:
+        return None
+
+
+def _audit_event_safe(**kw) -> None:
+    """Best-effort audit write — never propagate to the request handler."""
+    try:
+        from core import audit as _audit
+        _audit.write_event(**kw)
+    except Exception:  # pragma: no cover
+        pass
+
+
+def _notify_new_device_safe(user_id: int, ip: str, ua: str) -> None:
+    try:
+        from core import login_notifications as _ln
+        _ln.notify_if_new_device(user_id, ip, ua)
+    except Exception:  # pragma: no cover
+        pass
+
+
+def _finalize_login(user_id: int, second_factor: str) -> None:
+    """Mint the post-2FA session + emit audit + new-device email."""
+    from core import org_store, user_store
+    session.clear()
+    session["user_id"] = user_id
+    mems = org_store.list_memberships_for_user(user_id)
+    session["current_org_id"] = mems[0]["org_id"] if mems else None
+    session.permanent = True
+    try:
+        user_store.update_last_login_at(user_id)
+    except Exception:
+        pass
+    _audit_event_safe(
+        action="user.login",
+        actor_user_id=user_id,
+        metadata={"second_factor": second_factor},
+        ip=_client_ip(),
+        ua=request.headers.get("User-Agent", ""),
+    )
+    _notify_new_device_safe(
+        user_id, _client_ip(), request.headers.get("User-Agent", ""),
+    )
+
+
+@bp.route("/login/2fa", methods=["GET"])
+def login_2fa_get():
+    tok = request.args.get("tok", "")
+    uid = _consume_partial_token(tok)
+    if uid is None:
+        return redirect(url_for("auth.login"))
+    return render_template("login_2fa.html", tok=tok)
+
+
+@bp.route("/login/2fa", methods=["POST"])
+def login_2fa_post():
+    tok = request.form.get("tok", "")
+    uid = _consume_partial_token(tok)
+    if uid is None:
+        return redirect(url_for("auth.login"))
+    code = (request.form.get("code") or "").strip()
+    from core import db as _db
+    from core import recovery as _recovery
+    from core import totp as _totp
+    user = _db.get_user_by_id(uid)
+    enc = user.get("totp_secret_encrypted") if user else None
+    secret = _totp.decrypt_secret_from_storage(enc) if enc else None
+    used = None
+    if secret and _totp.verify_totp(secret, code):
+        used = "totp"
+    elif _recovery.verify_recovery_code(uid, code):
+        used = "recovery_code"
+    if not used:
+        return render_template("login_2fa.html", tok=tok, error="Invalid code"), 400
+    _finalize_login(uid, used)
+    return redirect("/")
+
+
+@bp.route("/login/email-2fa", methods=["GET"])
+def login_email_2fa_get():
+    tok = request.args.get("tok", "")
+    uid = _consume_partial_token(tok)
+    if uid is None:
+        return redirect(url_for("auth.login"))
+    # Re-mint the partial token so a refresh of this page doesn't drop the
+    # user back to /login (the token is single-use by intent of consume()).
+    fresh_tok = _issue_partial_token(uid)
+    from core import email_2fa as _email_2fa
+    _email_2fa.generate_login_code(uid)
+    return render_template("login_email_2fa.html", tok=fresh_tok)
+
+
+@bp.route("/login/email-2fa", methods=["POST"])
+def login_email_2fa_post():
+    tok = request.form.get("tok", "")
+    uid = _consume_partial_token(tok)
+    if uid is None:
+        return redirect(url_for("auth.login"))
+    code = (request.form.get("code") or "").strip()
+    from core import email_2fa as _email_2fa
+    if not _email_2fa.verify_login_code(uid, code):
+        # Re-issue a token so the form can retry without redirecting to /login.
+        fresh_tok = _issue_partial_token(uid)
+        return render_template(
+            "login_email_2fa.html", tok=fresh_tok, error="Invalid code",
+        ), 400
+    _finalize_login(uid, "email")
+    return redirect("/")
 
 
 @bp.route("/account/switch_org", methods=["POST"])

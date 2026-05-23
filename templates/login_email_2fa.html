@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Check your email</h1>
+<p>We sent a 6-digit code to your email. It expires in 10 minutes.</p>
+<form method="post" action="/login/email-2fa">
+  <input type="hidden" name="tok" value="{{ tok }}">
+  <label>Code: <input name="code" pattern="[0-9]{6}" required autofocus autocomplete="one-time-code"></label>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <button type="submit">Continue</button>
+</form>
+{% endblock %}

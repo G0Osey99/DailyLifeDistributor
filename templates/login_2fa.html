@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Two-factor authentication</h1>
+<form method="post" action="/login/2fa">
+  <input type="hidden" name="tok" value="{{ tok }}">
+  <label>Enter the 6-digit code from your app, or a recovery code:
+    <input name="code" required autofocus autocomplete="one-time-code">
+  </label>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <button type="submit">Continue</button>
+</form>
+{% endblock %}

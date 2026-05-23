@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Scan with your authenticator app</h1>
+<img src="/settings/2fa/qrcode.png" alt="TOTP QR code">
+<form method="post" action="/settings/2fa/verify-totp">
+  <label>Enter the 6-digit code from your app:
+    <input name="code" pattern="[0-9]{6}" required autofocus>
+  </label>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <button type="submit">Verify and enable</button>
+</form>
+<p><a href="/settings/2fa">Cancel</a></p>
+{% endblock %}

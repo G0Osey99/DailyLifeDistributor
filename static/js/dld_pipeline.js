@@ -550,10 +550,54 @@
         if (el) el.insertAdjacentHTML("beforeend", html);
     }
 
+    // Wire the cancel button to POST /upload/<job_id>/cancel. Only shown
+    // for agent-path jobs (the server returns 404 for web-only-path job
+    // ids today — cancel for those is a future addition).
+    function _setupCancelUI(jobId) {
+        const wrap = $("#upload-cancel-wrap");
+        const btn = $("#upload-cancel-btn");
+        const status = $("#upload-cancel-status");
+        if (!wrap || !btn) return () => {};
+        if (_uploadPath() !== "agent") {
+            wrap.hidden = true;
+            return () => {};
+        }
+        wrap.hidden = false;
+        if (status) status.textContent = "";
+        btn.disabled = false;
+        async function onClick() {
+            if (!confirm("Cancel this upload? In-flight rows will finish; pending rows will be skipped.")) return;
+            btn.disabled = true;
+            if (status) status.textContent = "Cancelling…";
+            try {
+                const r = await fetch(`/upload/${encodeURIComponent(jobId)}/cancel`, {
+                    method: "POST",
+                    credentials: "same-origin",
+                });
+                if (!r.ok) {
+                    const d = await r.json().catch(() => ({}));
+                    if (status) status.textContent = `Cancel failed: ${d.error || r.status}`;
+                    btn.disabled = false;
+                    return;
+                }
+                if (status) status.textContent = "Cancel sent — waiting for the agent to wind down.";
+            } catch (err) {
+                if (status) status.textContent = `Cancel error: ${err && err.message || err}`;
+                btn.disabled = false;
+            }
+        }
+        btn.addEventListener("click", onClick);
+        return function teardown() {
+            btn.removeEventListener("click", onClick);
+            wrap.hidden = true;
+        };
+    }
+
     // Resolves to {ok}. ok is false on a stream/connection error or a
     // batch-level crash (an `error` event with no date/platform). Per-row
     // errors are logged but don't fail the batch (continue-and-report).
     function consumeStream(jobId) {
+        const teardownCancel = _setupCancelUI(jobId);
         return new Promise((resolve) => {
             let batchError = false;
             const es = new EventSource(`/upload/stream?job_id=${encodeURIComponent(jobId)}`);
@@ -563,18 +607,24 @@
                 if (d.type === "success") {
                     logProgress(`<div class="text-sm" style="color:var(--ok)">✓ ${esc(d.date)} — ${esc(d.platform)}</div>`);
                 } else if (d.type === "error") {
-                    logProgress(`<div class="text-sm" style="color:var(--err)">✗ ${esc(d.date || "")} — ${esc(d.platform || "")}: ${esc(d.message || "")}</div>`);
+                    const tag = d.error_type === "cancelled" ? "⊘ cancelled" : "✗";
+                    logProgress(`<div class="text-sm" style="color:var(--err)">${tag} ${esc(d.date || "")} — ${esc(d.platform || "")}: ${esc(d.message || "")}</div>`);
                     if (!d.date && !d.platform) batchError = true;  // batch-level crash
                 } else if (d.type === "skip") {
                     logProgress(`<div class="text-sm text-dim">↷ ${esc(d.date || "")} — ${esc(d.platform || "")} (skipped)</div>`);
                 } else if (d.type === "needs_manual") {
                     logProgress(`<div class="text-sm" style="color:var(--warn)">⚠ ${esc(d.date || "")} — ${esc(d.platform || "")} needs manual action</div>`);
                 }
-                if (d.type === "done") { es.close(); resolve({ ok: !batchError }); }
+                if (d.type === "done") {
+                    es.close();
+                    teardownCancel();
+                    resolve({ ok: !batchError });
+                }
             };
             es.onerror = () => {
                 es.close();  // close immediately so it can't auto-reconnect
                 logProgress('<div class="text-sm" style="color:var(--err)">⚠ Lost connection to the upload stream.</div>');
+                teardownCancel();
                 resolve({ ok: false });
             };
         });

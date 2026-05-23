@@ -279,3 +279,52 @@ def client_user(app):
 def client_owner_b(app):
     """Owner of org_id=2 (cross-org isolation tests)."""
     return _make_role_client(app, "owner", oid=2, suffix="_b")
+
+
+# ---------- Multi-tenant phase γ: email capture + db handle fixtures ----------
+
+@pytest.fixture
+def captured_emails(monkeypatch):
+    """Patch core.email.send so every call is recorded into a list.
+
+    Returned list contains dicts shaped like
+    ``{"template": name, "to": addr, "vars": {...}}``. Phase γ tests assert
+    on captured 2FA codes, recovery links, and new-device notifications
+    without ever talking to Resend.
+    """
+    captured: list[dict] = []
+
+    def _capture(name, to, **vars):
+        captured.append({"template": name, "to": to, "vars": dict(vars)})
+        return True
+
+    from core import email as _email
+    monkeypatch.setattr(_email, "send", _capture)
+    # Also patch the recovery_request + recovery + login_notifications + email_2fa
+    # modules if they have already imported `send` directly with `from core.email
+    # import send`. We touch the symbol on each module-as-namespace where present.
+    for modname in (
+        "core.recovery_request",
+        "core.recovery",
+        "core.login_notifications",
+        "core.email_2fa",
+        "blueprints.recovery",
+    ):
+        try:
+            mod = __import__(modname, fromlist=["*"])
+        except Exception:
+            continue
+        if hasattr(mod, "_email"):
+            monkeypatch.setattr(mod._email, "send", _capture, raising=False)
+    yield captured
+
+
+@pytest.fixture
+def db():
+    """Return the live ``core.db`` module bound to the per-test temp DB.
+
+    The autouse ``_isolate_state_db`` fixture has already redirected
+    ``core.db._DB_PATH`` to a temp file before this runs.
+    """
+    from core import db as _db
+    return _db

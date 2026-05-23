@@ -1,0 +1,10 @@
+<!doctype html>
+<html><body>
+<p>A member of your organization has requested account recovery.</p>
+<ul>
+  <li><b>Username:</b> {{ requester_username }}</li>
+  <li><b>Email:</b> {{ requester_email }}</li>
+  <li><b>Note:</b> {{ note }}</li>
+</ul>
+<p><a href="{{ approve_url }}">Approve recovery</a> (expires in 48 hours)</p>
+</body></html>

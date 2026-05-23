@@ -1,0 +1,11 @@
+<!doctype html>
+<html><body>
+<p>A new sign-in was just detected:</p>
+<ul>
+  <li>When: {{ when }}</li>
+  <li>IP: {{ ip }}</li>
+  <li>Device: {{ ua }}</li>
+</ul>
+<p>If this wasn't you, <a href="{{ reset_url }}">change your password now</a>.</p>
+<p><a href="{{ settings_url }}">Turn off these alerts</a></p>
+</body></html>

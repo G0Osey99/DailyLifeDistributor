@@ -1,0 +1,10 @@
+A member of your organization has requested account recovery.
+
+Username: {{ requester_username }}
+Email:    {{ requester_email }}
+Note:     {{ note }}
+
+If this looks legitimate, approve here (expires in 48 hours):
+{{ approve_url }}
+
+— Daily Life Distributor

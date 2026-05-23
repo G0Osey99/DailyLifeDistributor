@@ -1,0 +1,8 @@
+Good news — your recovery request was approved by {{ approver_username }}.
+
+Set a new password here (expires in 1 hour):
+{{ reset_url }}
+
+After resetting, you'll need to set up 2FA again.
+
+— Daily Life Distributor

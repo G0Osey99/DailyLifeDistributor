@@ -1,0 +1,10 @@
+A new sign-in to your Daily Life Distributor account was just detected.
+
+When:        {{ when }}
+IP address:  {{ ip }}
+Device:      {{ ua }}
+
+If this was you, no action is needed. If not, change your password immediately:
+{{ reset_url }}
+
+You can turn off these alerts at {{ settings_url }}.

@@ -1,0 +1,7 @@
+Your Daily Life Distributor login code is:
+
+  {{ code }}
+
+This code expires in 10 minutes. If you didn't request it, you can ignore this email.
+
+— Daily Life Distributor

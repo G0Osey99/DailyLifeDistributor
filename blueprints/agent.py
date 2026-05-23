@@ -184,6 +184,35 @@ def _session_key() -> str:
     return session.get("user_id") or session.get("_id") or request.remote_addr or "anon"
 
 
+def _client_ip() -> str:
+    """Return the *real* client IP for the current Flask request.
+
+    Cloudflare strips client-supplied CF-Connecting-IP and sets it to the
+    actual client; on the hosted deploy that's the only trustworthy value
+    (request.remote_addr is the Caddy container). Locally we fall back
+    through standard proxy headers and finally request.remote_addr.
+
+    Used in two places:
+      1. Recording the agent's connect IP at WebSocket handshake.
+      2. Computing same_network in /agent/devices/online.
+
+    Both compare strings; the only constraint is consistency between
+    "what the agent sees" and "what the browser sees" — Cloudflare
+    routes both through the same CF-Connecting-IP normalization, so a
+    browser + agent on the same LAN match on the egress IP.
+    """
+    cf = (request.headers.get("CF-Connecting-IP") or "").strip()
+    if cf:
+        return cf
+    xff = (request.headers.get("X-Forwarded-For") or "").strip()
+    if xff:
+        # First entry is the original client; the rest are proxies.
+        first = xff.split(",", 1)[0].strip()
+        if first:
+            return first
+    return request.remote_addr or "unknown"
+
+
 def attach_limits(app, limiter) -> None:
     """Apply rate limits to pair_new + pair_redeem after blueprint registration.
 
@@ -259,7 +288,13 @@ def register_sockets(sock) -> None:
             return
         touch_device(device_id)
         _device_name = devices.get_device_name(device_id)
-        RELAY.register_agent(_ACCOUNT, device_id, ws.send, device_name=_device_name)
+        # Capture the client IP at handshake so the dashboard can later
+        # compute same_network for the device picker. _client_ip() honors
+        # CF-Connecting-IP behind Cloudflare and X-Forwarded-For elsewhere.
+        _connect_ip = _client_ip()
+        RELAY.register_agent(_ACCOUNT, device_id, ws.send,
+                             device_name=_device_name,
+                             connect_ip=_connect_ip)
 
         # Per-connection message bucket — paired-but-malicious agents
         # can't flood the relay.

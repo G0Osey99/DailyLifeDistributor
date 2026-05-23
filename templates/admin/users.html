@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="utf-8">
+  <title>Admin · Users · Daily Life Distributor</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 24px auto; padding: 0 16px; color: #222; }
+    h1 { font-size: 1.4rem; margin-bottom: 16px; }
+    nav a { margin-right: 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+    .pill { padding: 2px 8px; border-radius: 999px; background: #eef; font-size: 0.78rem; }
+    button { padding: 4px 10px; background: #c84; color: #fff; border: 0; border-radius: 4px; font: inherit; cursor: pointer; }
+  </style>
+</head><body>
+  <nav>
+    <a href="{{ url_for('admin.landing') }}">Admin</a>
+    <a href="{{ url_for('admin.organizations_list') }}">Organizations</a>
+    <a href="{{ url_for('admin.users_list') }}">Users</a>
+  </nav>
+  <h1>Admin · Users ({{ users|length }})</h1>
+  {% if notice %}<div>{{ notice }}</div>{% endif %}
+  <table>
+    <thead><tr><th>Username</th><th>Email</th><th>Program owner</th><th>Created</th><th>Last login</th><th>Pwd changed</th><th></th></tr></thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.username }}</td>
+        <td>{{ u.email }}</td>
+        <td>{% if u.program_owner %}<span class="pill">OWNER</span>{% endif %}</td>
+        <td>{{ u.created_at }}</td>
+        <td>{{ u.last_login_at or '—' }}</td>
+        <td>{{ u.password_changed_at or 'NEVER' }}</td>
+        <td>
+          <form method="POST" action="{{ url_for('admin.users_force_reset') }}" style="display:inline;">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <button type="submit">Force reset</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body></html>

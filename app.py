@@ -360,6 +360,10 @@ def create_app() -> Flask:
     app.register_blueprint(remote_login_bp)
     app.register_blueprint(media_bp)
 
+    # Multi-tenant phase α: program-owner admin pages.
+    from blueprints.admin import bp as admin_bp
+    app.register_blueprint(admin_bp)
+
     # --- Rate limiter (Phase 3 hardening) -----------------------------------
     # Configured here on the app object so the agent blueprint can import the
     # shared instance. In-memory storage is fine for the single-instance VPS

@@ -68,22 +68,36 @@ class AgentConnection:
         self.ws.send(json.dumps(message))
 
     def run_once(self, on_message: Callable[[dict], None]) -> bool:
-        """Receive one message and dispatch it. Returns False when closed or
-        when the shutdown event has been set.
+        """Receive one message and dispatch it. Returns False when the
+        connection has closed or the shutdown event has been set.
 
         Uses a short polling timeout (_RECV_POLL_INTERVAL) instead of
         ``timeout=None`` so the loop can notice a shutdown request even when
         the server is idle and no messages are arriving.
+
+        Distinguishes poll timeout from disconnect:
+          - ``receive(timeout=...)`` returning ``None`` is the poll-timeout
+            signal (no data arrived within the window). We continue the
+            inner loop so the shutdown event can fire and idle ticks
+            don't cause spurious reconnects.
+          - A real disconnect raises ``simple_websocket.ConnectionClosed``
+            (or ``ConnectionError``); we catch those and return False so
+            the outer loop in ``agent/main.run()`` reconnects.
 
         Handles ``pending_results_ack`` internally: clears the acked keys
         from ``agent.dispatch._pending_results`` before invoking on_message
         so callers don't need to know about the reconciliation protocol.
         """
         while not self._shutdown.is_set():
-            raw = self.ws.receive(timeout=_RECV_POLL_INTERVAL)
-            if raw is None:
-                # None means the connection was closed cleanly.
+            try:
+                raw = self.ws.receive(timeout=_RECV_POLL_INTERVAL)
+            except (simple_websocket.ConnectionClosed,
+                    simple_websocket.ConnectionError):
+                # Real disconnect — caller will reconnect.
                 return False
+            if raw is None:
+                # Poll timeout: loop and re-check shutdown event.
+                continue
             msg = json.loads(raw)
             if isinstance(msg, dict) and msg.get("type") == "pending_results_ack":
                 # C3: clear the acked keys from the module-level singleton.

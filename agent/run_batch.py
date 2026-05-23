@@ -6,13 +6,20 @@ from emitted success events).
 B4: skeleton + parallel pool (real dispatch added in B5/B6).
 B5: circuit breaker + email-after-YT ordering.
 B6: real per-platform dispatch into bundled uploaders.
+Phase 3: per-run YT state (no module-level mutation between runs),
+         circuit_breaker.reset_all() at the start of each run, and a
+         Rock-Email guard that mirrors core/upload_jobs._dispatch_upload —
+         when YT was expected but returned no URL, error out instead of
+         calling rock_schedule_email with a blank link.
 """
 from __future__ import annotations
 
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
+from core import circuit_breaker
 from core.circuit_breaker import get_breaker
 
 try:
@@ -32,33 +39,37 @@ _INFRA_FAILURES = (
 
 _logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
-# Per-run YouTube-done signalling (reset at the start of each run())
+# Per-run state — created fresh in run(), threaded through _run_one /
+# _dispatch_upload so two sequential runs cannot leak _yt_done / _yt_url
+# from one job into the next.
 # ---------------------------------------------------------------------------
-_yt_done: dict[int, threading.Event] = {}   # row_idx -> Event
-_yt_url: dict[int, str | None] = {}          # row_idx -> watch_url or None
-_yt_lock = threading.Lock()
 
 
-def _reset_yt_state() -> None:
-    global _yt_done, _yt_url
-    with _yt_lock:
-        _yt_done = {}
-        _yt_url = {}
+@dataclass
+class _YtState:
+    """Per-run YouTube-done signalling.
 
+    Module-level state is wrong here: a second run() call would otherwise
+    inherit the previous run's Events and watch URLs, so a Rock Email row
+    in run B could immediately resolve _wait_yt against run A's result.
+    """
+    done: dict[int, threading.Event] = field(default_factory=dict)
+    url: dict[int, str | None] = field(default_factory=dict)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
-def _record_yt_result(row_idx: int, watch_url: str | None) -> None:
-    with _yt_lock:
-        _yt_url[row_idx] = watch_url
-        ev = _yt_done.setdefault(row_idx, threading.Event())
-        ev.set()
+    def record(self, row_idx: int, watch_url: str | None) -> None:
+        with self.lock:
+            self.url[row_idx] = watch_url
+            ev = self.done.setdefault(row_idx, threading.Event())
+            ev.set()
 
-
-def _wait_yt(row_idx: int, timeout: float = 1800.0) -> str | None:
-    with _yt_lock:
-        ev = _yt_done.setdefault(row_idx, threading.Event())
-    ev.wait(timeout=timeout)
-    return _yt_url.get(row_idx)
+    def wait(self, row_idx: int, timeout: float = 1800.0) -> str | None:
+        with self.lock:
+            ev = self.done.setdefault(row_idx, threading.Event())
+        ev.wait(timeout=timeout)
+        return self.url.get(row_idx)
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +96,8 @@ def _breaker_for(platform: str, cb_cfg: dict):
 # _run_one — per (platform, row) worker with breaker + email-after-YT
 # ---------------------------------------------------------------------------
 
-def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict) -> None:
+def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
+             yt_state: _YtState) -> None:
     breaker = _breaker_for(platform, cb_cfg)
     if not breaker.allow():
         emit({"type": "event", "event": "error", "platform": platform,
@@ -94,10 +106,13 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict) -> None:
         return
 
     # Rock Email must wait for this date's YouTube Video result (if present).
-    if platform == "Rock Email" and "YouTube Video" in row.get("platforms", []):
-        watch = _wait_yt(row["row_idx"])
+    yt_expected = (platform == "Rock Email"
+                   and "YouTube Video" in row.get("platforms", []))
+    if yt_expected:
+        watch = yt_state.wait(row["row_idx"])
         row = dict(row)   # shallow copy so we don't mutate the shared row
         row["yt_watch_url"] = watch
+        row["_yt_expected"] = True
 
     captured: list = []
     try:
@@ -112,11 +127,11 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict) -> None:
                      for f in captured if f.get("event") == "success"),
                     None,
                 )
-                _record_yt_result(row["row_idx"], url)
+                yt_state.record(row["row_idx"], url)
         else:
             # No success event — treat as data failure (neutral to breaker).
             if platform == "YouTube Video":
-                _record_yt_result(row["row_idx"], None)
+                yt_state.record(row["row_idx"], None)
 
     except _INFRA_FAILURES as e:
         breaker.record_failure()
@@ -124,7 +139,7 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict) -> None:
               "row_idx": row["row_idx"], "iso_date": row["iso_date"],
               "error": str(e)})
         if platform == "YouTube Video":
-            _record_yt_result(row["row_idx"], None)
+            yt_state.record(row["row_idx"], None)
 
     except Exception as e:
         # Data failure — neutral to breaker.
@@ -132,7 +147,7 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict) -> None:
               "row_idx": row["row_idx"], "iso_date": row["iso_date"],
               "error": str(e)})
         if platform == "YouTube Video":
-            _record_yt_result(row["row_idx"], None)
+            yt_state.record(row["row_idx"], None)
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +156,20 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict) -> None:
 
 def run(*, envelope: dict, paths: dict, emit) -> None:
     """Execute the job plan. `paths` is {iso_date: {kind: local_path}}.
-    `emit` is called once per event frame (dict)."""
-    _reset_yt_state()
+    `emit` is called once per event frame (dict).
+
+    Phase 3:
+      - Per-run _YtState (no module-level mutation between calls).
+      - circuit_breaker.reset_all() at the top so a breaker tripped by a
+        previous run doesn't open-circuit the new one. The registry is
+        process-global; per-run resets are a safe default for a single-
+        agent fleet where the operator may have fixed the broken session
+        between runs.
+    """
+    # Drop any breakers tripped by a previous run on this process.
+    circuit_breaker.reset_all()
+
+    yt_state = _YtState()
 
     rows = envelope["rows"]
     config = envelope.get("config", {})
@@ -161,7 +188,8 @@ def run(*, envelope: dict, paths: dict, emit) -> None:
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = [
             ex.submit(_run_one, platform, row, emit, paths,
-                      row.get("_config_circuit_breaker") or cb_cfg)
+                      row.get("_config_circuit_breaker") or cb_cfg,
+                      yt_state)
             for (platform, row) in tasks
         ]
         for f in futures:
@@ -261,8 +289,19 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
         watch_url = (row.get("yt_watch_url")
                      or getattr(e, "youtube_watch_url", None)
                      or "")
-        result = rock_schedule_email(e, youtube_watch_url=watch_url,
-                                     elements=elements)
+        # Mirror core/upload_jobs._dispatch_upload: when YT was expected for
+        # this date but didn't return a URL, abort instead of calling
+        # rock_schedule_email with a blank link (which would produce a draft
+        # email pointing at nothing).
+        if row.get("_yt_expected") and not watch_url:
+            result = {
+                "success": False,
+                "error": ("YouTube Video upload did not produce a watch URL "
+                          "for this date; cannot schedule the Daily Life email."),
+            }
+        else:
+            result = rock_schedule_email(e, youtube_watch_url=watch_url,
+                                         elements=elements)
 
     elif platform == "Vista Social":
         e.youtube_video_path = p.get("video")

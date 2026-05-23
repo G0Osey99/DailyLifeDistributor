@@ -14,6 +14,7 @@ from flask import Blueprint, abort, jsonify, request, send_file
 from blueprints.auth import is_authenticated as _is_authenticated
 from core import devices
 from core import relay as _relay_mod
+from core import agent_dispatch as _agent_dispatch
 from core.devices import touch_device, verify_device_token
 
 bp = Blueprint("agent", __name__)
@@ -68,6 +69,9 @@ _ACCOUNT = "default"
 
 def register_sockets(sock) -> None:
     """Register the agent + browser WebSocket routes on a flask_sock.Sock."""
+    # Wire the process-wide relay so agent_dispatch.send_to_device works
+    # without importing blueprints (which would create a circular dependency).
+    _relay_mod.set_default_relay(RELAY, account=_ACCOUNT)
 
     @sock.route("/agent/socket")
     def agent_socket(ws):
@@ -78,7 +82,8 @@ def register_sockets(sock) -> None:
                                  "payload": {"reason": "unauthorized"}}))
             return
         touch_device(device_id)
-        RELAY.register_agent(_ACCOUNT, device_id, ws.send)
+        _device_name = devices.get_device_name(device_id)
+        RELAY.register_agent(_ACCOUNT, device_id, ws.send, device_name=_device_name)
         try:
             while True:
                 msg = ws.receive()
@@ -86,6 +91,19 @@ def register_sockets(sock) -> None:
                     break
                 if len(msg) > _MAX_MESSAGE_BYTES:
                     break
+                # Route frames that target the server (event, and future
+                # credentials_updated / image_used / pending_results_chunk).
+                # on_frame handles unrecognised types as a debug no-op so
+                # adding new types in A7/A8/A9 is a small switch addition.
+                try:
+                    frame = _json.loads(msg)
+                    ftype = frame.get("type") if isinstance(frame, dict) else None
+                    if ftype in ("event", "credentials_updated",
+                                 "image_used", "pending_results_chunk"):
+                        _agent_dispatch.on_frame(frame)
+                        continue
+                except Exception:
+                    pass
                 RELAY.route_from_agent(_ACCOUNT, msg)
         finally:
             RELAY.unregister_agent(_ACCOUNT, device_id)

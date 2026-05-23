@@ -54,6 +54,14 @@
         display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
     }
     .auth-banner-text { flex: 1; min-width: 200px; }
+
+    /* ── Agent chip ─────────────────────────────────────────────────── */
+    .agent-chip { display: inline-flex; gap: .5em; padding: .25em .5em;
+                  border-radius: 999px; background: #e8f4ff; font-size: .85em;
+                  align-items: center; margin-left: .5em; vertical-align: middle; }
+    .agent-chip__toggle { font-size: .75em; opacity: .7; }
+    .agent-chip[data-path="web"] { background: #f0f0f0; }
+    .agent-chip[data-path="web"] .agent-chip__label { text-decoration: line-through; opacity: .6; }
 {% endblock %}
 
 {% block content %}
@@ -198,6 +206,10 @@
         <div id="customize-list" style="display:flex; flex-direction:column; gap:14px;"></div>
     </div>
     <button type="button" id="upload-btn" class="btn btn-primary btn-lg btn-full">⬆ Upload selected dates</button>
+    <span id="agent-chip" class="agent-chip" hidden>
+        <span class="agent-chip__label">via agent: <span id="agent-chip-name">…</span></span>
+        <a href="#" class="agent-chip__toggle" id="agent-chip-toggle">use web instead</a>
+    </span>
     <div id="upload-progress" style="margin-top:16px;"></div>
 </div>
 {% endblock %}

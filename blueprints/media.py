@@ -365,7 +365,35 @@ def batch_run():
 
     job_id = str(uuid.uuid4())
     upload_jobs.reap_stale_jobs()
-    upload_jobs.register_job(job_id)
+    job = upload_jobs.register_job(job_id)
+
+    # Phase 3: route to the local agent if the dashboard chose that path.
+    use_agent = (
+        request.args.get("path") == "agent"
+        and os.environ.get("HYBRID_AGENT_ENABLED", "").lower() == "true"
+    )
+    if use_agent:
+        from core import agent_dispatch
+        from core.config import load_config as _load_config
+        _cfg = _load_config()
+        _max_workers = (_cfg.get("upload") or {}).get("max_workers", 4)
+        try:
+            job_id = agent_dispatch.start(
+                session_id=session.session_id,
+                summary=summary,
+                entries=entries_snapshot,
+                elements={
+                    iso: entry.elements.to_dict()
+                    for iso, entry in entries_snapshot.items()
+                },
+                config={"max_workers": _max_workers},
+            )
+        except agent_dispatch.NoAgentOnlineError:
+            upload_jobs.drop_job(job_id)
+            return jsonify({"error": "no_agent_online"}), 409
+        agent_dispatch.register_job(job_id=job_id, sse_queue=job["queue"],
+                                    session_id=session.session_id)
+        return jsonify({"job_id": job_id})
 
     app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
     try:

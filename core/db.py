@@ -293,6 +293,52 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_audit_actor_time "
             "ON audit_log(actor_user_id, created_at)"
         )
+        # Phase γ: 2FA + audit log additions.
+        # users.totp_enabled — boolean flag separate from totp_secret_encrypted
+        # so we can disable without dropping the secret (and vice versa).
+        ucols = {r[1] for r in conn.execute(
+            "PRAGMA table_info('users')").fetchall()}
+        if "totp_enabled" not in ucols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0"
+            )
+        if "notify_new_device" not in ucols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN notify_new_device INTEGER NOT NULL DEFAULT 1"
+            )
+        # recovery_requests.note — free-text "what happened" context from the user.
+        rrcols = {r[1] for r in conn.execute(
+            "PRAGMA table_info('recovery_requests')").fetchall()}
+        if "note" not in rrcols:
+            conn.execute("ALTER TABLE recovery_requests ADD COLUMN note TEXT")
+        # Email 2FA single-use codes (10-min TTL, bcrypt-hashed).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS email_2fa_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                code_hash TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_email_2fa_codes_user "
+            "ON email_2fa_codes(user_id, used_at)"
+        )
+        # Login-from-new-device sighting log: emits an email on first
+        # (user_id, ip) pair so a stolen credential triggers a heads-up.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS login_ip_sightings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                ip TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                UNIQUE(user_id, ip)
+            )
+        """)
         # Idempotent ALTER for the new external_id column on upload_history
         cols = [r[1] for r in conn.execute("PRAGMA table_info('upload_history')").fetchall()]
         if "external_id" not in cols:
@@ -631,6 +677,330 @@ def get_history(session_id: str | None = None, limit: int = 100) -> list[dict]:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---------- Phase γ: 2FA + audit log helpers ----------
+# Thin pass-throughs so blueprints can call `core.db.get_user_by_id(...)`
+# without importing `core.user_store` — the plan and the new modules
+# both speak directly to `core.db`.
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    from core import user_store
+    return user_store.get_user_by_id(user_id)
+
+
+def get_user_by_username(username: str) -> dict | None:
+    from core import user_store
+    return user_store.get_user_by_username(username)
+
+
+def get_membership(user_id: int, org_id: int) -> dict | None:
+    from core import org_store
+    return org_store.get_membership(user_id=user_id, org_id=org_id)
+
+
+def get_org(org_id: int) -> dict | None:
+    with _get_conn() as c:
+        row = c.execute(
+            "SELECT * FROM organizations WHERE id=?", (org_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_user_totp(user_id: int, encrypted_secret: str | None, enabled: bool) -> None:
+    with _get_conn() as c:
+        c.execute(
+            "UPDATE users SET totp_secret_encrypted=?, totp_enabled=? WHERE id=?",
+            (encrypted_secret, 1 if enabled else 0, user_id),
+        )
+        c.commit()
+
+
+def set_user_email_2fa(user_id: int, enabled: bool) -> None:
+    with _get_conn() as c:
+        c.execute(
+            "UPDATE users SET email_2fa_enabled=? WHERE id=?",
+            (1 if enabled else 0, user_id),
+        )
+        c.commit()
+
+
+def insert_recovery_code(*, user_id: int, code_hash: str, created_at: str) -> int:
+    with _get_conn() as c:
+        cur = c.execute(
+            "INSERT INTO recovery_codes (user_id, code_hash, created_at) "
+            "VALUES (?, ?, ?)",
+            (user_id, code_hash, created_at),
+        )
+        c.commit()
+        return cur.lastrowid
+
+
+def list_recovery_codes(user_id: int) -> list[dict]:
+    with _get_conn() as c:
+        rows = c.execute(
+            "SELECT id, code_hash, used_at, created_at "
+            "FROM recovery_codes WHERE user_id=? ORDER BY id",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_recovery_code_used(code_id: int) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as c:
+        c.execute(
+            "UPDATE recovery_codes SET used_at=? WHERE id=? AND used_at IS NULL",
+            (now, code_id),
+        )
+        c.commit()
+
+
+def delete_recovery_codes(user_id: int) -> None:
+    with _get_conn() as c:
+        c.execute("DELETE FROM recovery_codes WHERE user_id=?", (user_id,))
+        c.commit()
+
+
+def insert_email_2fa_code(*, user_id: int, code_hash: str, expires_at: str, created_at: str) -> int:
+    with _get_conn() as c:
+        cur = c.execute(
+            "INSERT INTO email_2fa_codes "
+            "(user_id, code_hash, expires_at, created_at) VALUES (?,?,?,?)",
+            (user_id, code_hash, expires_at, created_at),
+        )
+        c.commit()
+        return cur.lastrowid
+
+
+def get_unused_email_2fa_codes(user_id: int) -> list[dict]:
+    with _get_conn() as c:
+        rows = c.execute(
+            "SELECT id, code_hash, expires_at FROM email_2fa_codes "
+            "WHERE user_id=? AND used_at IS NULL ORDER BY id DESC",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_email_2fa_code_used(code_id: int) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as c:
+        c.execute(
+            "UPDATE email_2fa_codes SET used_at=? WHERE id=?",
+            (now, code_id),
+        )
+        c.commit()
+
+
+def insert_audit_event(*, org_id, actor_user_id, action, target_type, target_id,
+                       metadata, ip, user_agent, created_at) -> int:
+    with _get_conn() as c:
+        cur = c.execute(
+            "INSERT INTO audit_log (org_id, actor_user_id, action, target_type, "
+            "target_id, metadata, ip, user_agent, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (org_id, actor_user_id, action, target_type, target_id,
+             metadata, ip, user_agent, created_at),
+        )
+        c.commit()
+        return cur.lastrowid
+
+
+def list_audit_events(
+    *,
+    org_id: int | None = None,
+    limit: int = 100,
+    actor_user_id: int | None = None,
+    action_prefix: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict]:
+    sql = "SELECT * FROM audit_log WHERE 1=1"
+    args: list = []
+    if org_id is not None:
+        sql += " AND org_id=?"; args.append(org_id)
+    if actor_user_id is not None:
+        sql += " AND actor_user_id=?"; args.append(actor_user_id)
+    if action_prefix:
+        sql += " AND action LIKE ?"; args.append(action_prefix + "%")
+    if since:
+        sql += " AND created_at>=?"; args.append(since)
+    if until:
+        sql += " AND created_at<=?"; args.append(until)
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    args.append(limit)
+    with _get_conn() as c:
+        rows = c.execute(sql, args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def archive_audit_batch(cutoff_iso: str, batch_size: int) -> int:
+    with _get_conn() as c:
+        rows = c.execute(
+            "SELECT id FROM audit_log WHERE created_at<? ORDER BY id LIMIT ?",
+            (cutoff_iso, batch_size),
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        c.execute(
+            f"INSERT INTO audit_log_archive "
+            f"  (id, org_id, actor_user_id, action, target_type, target_id, "
+            f"   metadata, ip, user_agent, created_at) "
+            f"SELECT id, org_id, actor_user_id, action, target_type, target_id, "
+            f"       metadata, ip, user_agent, created_at "
+            f"FROM audit_log WHERE id IN ({placeholders})",
+            ids,
+        )
+        c.execute(f"DELETE FROM audit_log WHERE id IN ({placeholders})", ids)
+        c.commit()
+        return len(ids)
+
+
+def list_audit_archive(limit: int = 100) -> list[dict]:
+    with _get_conn() as c:
+        rows = c.execute(
+            "SELECT * FROM audit_log_archive ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_recovery_request(*, user_id: int, requested_at: str, expires_at: str, note: str) -> int:
+    with _get_conn() as c:
+        cur = c.execute(
+            "INSERT INTO recovery_requests "
+            "(user_id, requested_at, expires_at, note) VALUES (?,?,?,?)",
+            (user_id, requested_at, expires_at, note),
+        )
+        c.commit()
+        return cur.lastrowid
+
+
+def count_recovery_requests_since(user_id: int, since_iso: str) -> int:
+    with _get_conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS c FROM recovery_requests "
+            "WHERE user_id=? AND requested_at>=?",
+            (user_id, since_iso),
+        ).fetchone()
+    return int(row["c"])
+
+
+def list_org_owners_for_user(user_id: int) -> list[dict]:
+    with _get_conn() as c:
+        rows = c.execute(
+            "SELECT DISTINCT u.* FROM users u "
+            "JOIN org_memberships om2 ON om2.user_id = u.id AND om2.role='owner' "
+            "WHERE om2.org_id IN ("
+            "  SELECT org_id FROM org_memberships WHERE user_id=?"
+            ")",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_recovery_request(rid: int) -> dict | None:
+    with _get_conn() as c:
+        row = c.execute(
+            "SELECT * FROM recovery_requests WHERE id=?", (rid,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_recovery_requests() -> list[dict]:
+    with _get_conn() as c:
+        rows = c.execute(
+            "SELECT * FROM recovery_requests ORDER BY id DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_recovery_request_approve(rid: int, approver_user_id: int, approved_at: str, token: str) -> None:
+    import hashlib
+    h = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with _get_conn() as c:
+        c.execute(
+            "UPDATE recovery_requests "
+            "SET approver_user_id=?, approved_at=?, password_reset_token_hash=? "
+            "WHERE id=?",
+            (approver_user_id, approved_at, h, rid),
+        )
+        c.commit()
+
+
+def consume_recovery_request(rid: int) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as c:
+        c.execute(
+            "UPDATE recovery_requests SET consumed_at=? WHERE id=?",
+            (now, rid),
+        )
+        c.commit()
+
+
+def user_owns_any_org_with(approver_id: int, target_user_id: int) -> bool:
+    with _get_conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM org_memberships a "
+            "JOIN org_memberships b ON a.org_id = b.org_id "
+            "WHERE a.user_id=? AND a.role='owner' AND b.user_id=? LIMIT 1",
+            (approver_id, target_user_id),
+        ).fetchone()
+    return row is not None
+
+
+def get_login_ip_sighting(user_id: int, ip: str) -> dict | None:
+    with _get_conn() as c:
+        row = c.execute(
+            "SELECT * FROM login_ip_sightings WHERE user_id=? AND ip=?",
+            (user_id, ip),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_login_ip_sighting(user_id: int, ip: str, now_iso: str) -> bool:
+    """Insert-or-update; returns True iff this is a brand-new (user, ip) pair."""
+    with _get_conn() as c:
+        existing = c.execute(
+            "SELECT 1 FROM login_ip_sightings WHERE user_id=? AND ip=?",
+            (user_id, ip),
+        ).fetchone()
+        if existing is None:
+            c.execute(
+                "INSERT INTO login_ip_sightings "
+                "(user_id, ip, first_seen, last_seen) VALUES (?,?,?,?)",
+                (user_id, ip, now_iso, now_iso),
+            )
+            c.commit()
+            return True
+        c.execute(
+            "UPDATE login_ip_sightings SET last_seen=? WHERE user_id=? AND ip=?",
+            (now_iso, user_id, ip),
+        )
+        c.commit()
+        return False
+
+
+def set_user_notify_new_device(user_id: int, enabled: bool) -> None:
+    with _get_conn() as c:
+        c.execute(
+            "UPDATE users SET notify_new_device=? WHERE id=?",
+            (1 if enabled else 0, user_id),
+        )
+        c.commit()
+
+
+def set_org_require_2fa(org_id: int, enabled: bool) -> None:
+    with _get_conn() as c:
+        c.execute(
+            "UPDATE organizations SET require_2fa=? WHERE id=?",
+            (1 if enabled else 0, org_id),
+        )
+        c.commit()
 
 
 def get_history_for_window(iso_start: str, iso_end: str) -> list[dict]:

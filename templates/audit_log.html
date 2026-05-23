@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Audit log{% if cross_org %} (all organizations){% endif %}</h1>
+
+<form method="get" class="filters">
+  <label>Action prefix: <input name="action" value="{{ filters.action or '' }}" placeholder="upload."></label>
+  <label>Actor ID: <input name="actor" value="{{ filters.actor or '' }}"></label>
+  <label>Since: <input type="date" name="since" value="{{ filters.since or '' }}"></label>
+  <label>Until: <input type="date" name="until" value="{{ filters.until or '' }}"></label>
+  <button type="submit">Filter</button>
+</form>
+
+<table>
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Action</th>
+      <th>Actor</th>
+      <th>Target</th>
+      <th>Metadata</th>
+      <th>IP</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.created_at }}</td>
+      <td><code>{{ r.action }}</code></td>
+      <td>{{ r.actor_user_id }}</td>
+      <td>{{ r.target_type }}{% if r.target_id %} #{{ r.target_id }}{% endif %}</td>
+      <td>{% if r.metadata %}<pre>{{ r.metadata }}</pre>{% endif %}</td>
+      <td>{{ r.ip }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6"><em>No events.</em></td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

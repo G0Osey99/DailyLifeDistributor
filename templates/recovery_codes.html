@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+{% if codes %}
+<h1>Save these recovery codes</h1>
+<p>Each code can be used once. Store them somewhere safe — you will not see them again.</p>
+<ul class="recovery-codes">
+  {% for c in codes %}<li><code>{{ c }}</code></li>{% endfor %}
+</ul>
+<form method="get" action="/settings/2fa/recovery-codes/download">
+  <button type="submit">Download as .txt</button>
+</form>
+<p><a href="/settings/2fa">Done</a></p>
+{% else %}
+<h1>Recovery codes</h1>
+<p>{{ remaining }} of 10 codes remaining. Codes cannot be re-displayed once generated.</p>
+<form method="post" action="/settings/2fa/recovery-codes/regenerate">
+  <button type="submit">Regenerate codes</button>
+</form>
+{% endif %}
+{% endblock %}

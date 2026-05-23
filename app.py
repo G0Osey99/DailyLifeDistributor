@@ -199,6 +199,11 @@ def create_app() -> Flask:
     _PUBLIC_ENDPOINTS = {
         "auth.login", "auth.login_submit", "_health", "static",
         "invitations.accept_get", "invitations.accept_post",
+        # Phase γ: second-factor screens (the session isn't fully
+        # authenticated until the second factor is verified, so a
+        # login_required gate would loop the user back to /login).
+        "auth.login_2fa_get", "auth.login_2fa_post",
+        "auth.login_email_2fa_get", "auth.login_email_2fa_post",
     }
 
     _ALLOWED_HOSTS = {
@@ -233,6 +238,48 @@ def create_app() -> Flask:
         if wants_json:
             abort(401)
         return redirect(url_for("auth.login", next=request.path))
+
+    # Phase γ: enforce org-level "Require 2FA" on protected paths.
+    # We deliberately exempt LEGACY_PASSWORD_ENABLED sessions (no user_id)
+    # so the existing test suite + ops rollback path don't trip this gate.
+    _ENFORCE_2FA_PATHS = ("/", "/upload", "/media/", "/review", "/confirm")
+    _EXEMPT_2FA_PATHS = (
+        "/settings/2fa", "/settings/security", "/logout", "/static",
+        "/login", "/recover",
+    )
+
+    @app.before_request
+    def _enforce_2fa():
+        uid = None
+        try:
+            from flask import session as _sess
+            uid = _sess.get("user_id")
+        except Exception:
+            return
+        if not uid:
+            return
+        org_id = _sess.get("current_org_id")
+        if not org_id:
+            return
+        try:
+            org = _db.get_org(org_id)
+        except Exception:
+            return
+        if not org or not org.get("require_2fa"):
+            return
+        try:
+            user = _db.get_user_by_id(uid)
+        except Exception:
+            return
+        if not user:
+            return
+        if user.get("totp_enabled") or user.get("email_2fa_enabled"):
+            return
+        p = request.path
+        if any(p.startswith(e) for e in _EXEMPT_2FA_PATHS):
+            return
+        if any(p == g or p.startswith(g) for g in _ENFORCE_2FA_PATHS):
+            return redirect(url_for("twofa.settings_2fa"))
 
     @app.before_request
     def _csrf_same_origin():
@@ -405,6 +452,21 @@ def create_app() -> Flask:
     app.register_blueprint(invitations_bp)
     app.register_blueprint(members_bp)
 
+    # Multi-tenant phase γ: 2FA, audit log, account recovery.
+    from blueprints.twofa import bp as twofa_bp
+    from blueprints.audit import bp as audit_bp
+    from blueprints.recovery import bp as recovery_bp
+    app.register_blueprint(twofa_bp)
+    app.register_blueprint(audit_bp)
+    app.register_blueprint(recovery_bp)
+    # The /recover form is reachable without a session (a user who's lost
+    # everything can't log in to ask for help). The reset POST is also
+    # token-gated, not session-gated.
+    _PUBLIC_ENDPOINTS.update({
+        "recovery.recover_form", "recovery.recover_submit",
+        "recovery.reset_form", "recovery.reset_submit",
+    })
+
     # --- Rate limiter (Phase 3 hardening) -----------------------------------
     # Configured here on the app object so the agent blueprint can import the
     # shared instance. In-memory storage is fine for the single-instance VPS
@@ -451,6 +513,40 @@ def create_app() -> Flask:
             "agent.pair_redeem", "agent_socket",
             "agent.release_manifest", "agent.release_binary",
         })
+
+    # Phase γ: nightly audit_log archive job at 03:00 UTC.
+    # Under TESTING we still build the scheduler so tests can inspect its
+    # job table, but we do NOT start it — runaway background timers in CI
+    # are a maintenance nightmare.
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        from core.audit_archive import archive_old_entries
+        sched = BackgroundScheduler(timezone="UTC")
+        sched.add_job(
+            archive_old_entries,
+            trigger=CronTrigger(hour=3, minute=0, timezone="UTC"),
+            id="audit_archive",
+            replace_existing=True,
+            max_instances=1,
+        )
+        # Suppress scheduler start under test runners (pytest sets
+        # PYTEST_CURRENT_TEST in the worker process) or when the operator
+        # explicitly disables it. Otherwise every test boot would start a
+        # background timer thread and the suite shutdown would warn.
+        _under_test = bool(
+            os.environ.get("PYTEST_CURRENT_TEST")
+            or os.environ.get("DLD_DISABLE_SCHEDULER")
+            or app.config.get("TESTING")
+        )
+        if not _under_test:
+            sched.start()
+        app.config["scheduler"] = sched
+    except Exception:
+        app.logger.warning(
+            "audit: APScheduler did not start; nightly archive will not run",
+            exc_info=True,
+        )
 
     # Startup orphan sweep: clear any media-upload temp dirs left behind by a
     # previous process (crash / restart). No run is active yet, so pass empty.

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Account recovery</h1>
+{% if message %}<p class="success">{{ message }}</p>{% endif %}
+<p>If you've lost your password, your 2FA device, AND your recovery codes, submit this form. An owner of your organization will be emailed; once they approve, you'll get a password-reset link.</p>
+<form method="post" action="/recover">
+  <label>Username: <input name="username" required></label>
+  <label>What happened? <textarea name="note" rows="4" required></textarea></label>
+  <button type="submit">Submit recovery request</button>
+</form>
+{% endblock %}

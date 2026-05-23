@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Set a new password</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/recover/reset">
+  <input type="hidden" name="token" value="{{ token }}">
+  <label>New password (≥12 chars): <input type="password" name="password" minlength="12" required></label>
+  <label>Confirm: <input type="password" name="password2" minlength="12" required></label>
+  <button type="submit">Set password</button>
+</form>
+{% endblock %}

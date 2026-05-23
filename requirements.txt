@@ -26,3 +26,10 @@ qrcode[pil]>=7.4,<8
 resend>=0.7,<3
 itsdangerous>=2.1,<3
 flask-wtf>=1.2,<2
+# Phase γ: 2FA + audit log.
+# bcrypt for backup recovery codes + email-2FA codes (cost-resistant hashing).
+# APScheduler for the nightly audit_log archive job.
+# freezegun is test-only — pinned here for reproducibility.
+bcrypt>=4.1,<5
+apscheduler>=3.10,<4
+freezegun>=1.4,<2

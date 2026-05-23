@@ -41,6 +41,12 @@ _env = Environment(
 _SUBJECTS = {
     "welcome": "Welcome to {org_name} on Daily Life Distributor",
     "invite": "You've been invited to {org_name} on Daily Life Distributor",
+    # Phase γ: 2FA, recovery, password reset, new-device notifications.
+    "2fa_code": "Your Daily Life Distributor login code",
+    "recovery_request": "A recovery request needs your approval",
+    "recovery_approved": "Your recovery request was approved",
+    "password_reset": "Reset your Daily Life Distributor password",
+    "login_new_device": "New sign-in to your Daily Life Distributor account",
 }
 
 _FROM_ADDR = os.environ.get(

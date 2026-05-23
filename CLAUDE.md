@@ -49,6 +49,13 @@ mapping lives in the Flask session (see the browser-streaming pipeline below).
 
 The legacy `SIMPLECAST_API_KEY` / `SIMPLECAST_SHOW_ID` variables are no longer used — the REST integration was retired (see SimpleCast section below).
 
+**Hybrid agent (opt-in):**
+- `HYBRID_AGENT_ENABLED` — set to `"true"` on the server (`.env` for the
+  Flask app, plus the docker-compose env block on the VPS) to enable the
+  agent path. The dashboard's Agent chip + `?path=agent` query on
+  `/media/batch/run` are no-ops without this flag, so unsetting it is a
+  safe full-disable switch even with paired devices online.
+
 ## Architecture Overview
 
 This is a single-file Flask app (`app.py`) backed by `core/` modules and two uploaders, with a small SQLite database for session/history persistence.
@@ -191,6 +198,51 @@ its email row, so the wait never deadlocks — it only holds a worker slot.)
 The email channel is **opt-in**: `platforms.rock_email` defaults `false`.
 Element toggles: `rock_email_enabled`, `rock_email_thumbnail`.
 
+## Hybrid upload agent (Phase 3)
+
+The hybrid agent is an opt-in, locally-run companion to the hosted web app.
+Its job is to take the same per-row upload plan the server builds and run the
+bundled uploaders **on the user's own machine** — so YouTube uploads happen
+from the home network's outbound bandwidth and Playwright session cookies
+(SimpleCast / Vista Social / Rock) live on the user's USB instead of the
+VPS volume.
+
+**Web vs. agent path choice.** The dashboard shows an "Agent" chip when
+`HYBRID_AGENT_ENABLED=true` is set on the server and a paired device is
+currently online. The user picks the path before clicking Upload; the
+browser sends `?path=agent` to `/media/batch/run`, the server's
+`blueprints/media.py:batch_run` switches branches, and an `agent_dispatch.start`
+call replaces the in-process `_run_batch_worker` thread.
+
+**Data flow (one batch):**
+1. Browser does the usual chunked upload to `/media/upload/chunk` for the
+   run's reassembly handshake (the agent path doesn't consume those files —
+   `_release_run` deletes them as soon as the dispatch returns).
+2. Server builds a `job_plan` envelope (rows + paths + platform elements +
+   credentials snapshot) and pushes it to the paired agent via the relay
+   (`core/relay.py` -> `wss://.../agent/socket`).
+3. Agent's `agent/main.py:_on_message` receives the `job_plan`, spawns a
+   daemon worker thread (so the receive loop stays under Cloudflare's
+   ~100s idle timeout), and routes to `agent/dispatch.py:handle_job_plan`.
+4. `handle_job_plan` installs the credentials + db shims
+   (`agent/secrets_shim.py`, `agent/db_shim.py`) so the bundled uploaders
+   (which `from core import secrets_store` / `from core import db`) see
+   the envelope's secrets and emit instead of writing to a SQLite file.
+5. `agent/run_batch.py:run()` resets the breakers, builds a per-run YT
+   state, and dispatches each `(row, platform)` through the same
+   uploader code paths the web server uses.
+6. Every emitted event frame flows back over the WebSocket to
+   `core/relay.py`, then into the per-job SSE queue that the dashboard's
+   `/upload/stream` is reading — so the UI looks identical to the web path.
+7. `pending_results` + `EventBuffer` (in `agent/dispatch.py`) cover the
+   "agent reconnects mid-job" case: success rows accumulate locally and
+   replay in the next hello frame; the server applies them idempotently.
+
+**Single-job invariant.** The agent runs one job at a time. A second
+`job_plan` arriving while one is in flight is rejected with a synthetic
+`error` event (`agent busy with job <prev_id>`); per-job state lives
+inside the worker thread.
+
 ## Key Files
 
 | File | Purpose |
@@ -220,3 +272,12 @@ Element toggles: `rock_email_enabled`, `rock_email_thumbnail`.
 | `rock_session.json` | Saved Rock browser session (shared by both Rock channels; migrated to encrypted store) |
 | `templates/login.html` | Shared password login form |
 | `templates/history.html` | History page rendered from `upload_history` |
+| `core/agent_dispatch.py` | Server-side fan-out to the paired agent over the relay: `start` returns a job_id; `register_job` wires the agent's event stream into the existing per-job SSE queue; `NoAgentOnlineError` on no online agent |
+| `core/relay.py` | WebSocket relay (browser ↔ agent over `/agent/socket`); message routing, hello/pending_results reconciliation, idle reaper |
+| `blueprints/agent.py` | Pairing + WebSocket endpoints (`/agent/pair`, `/agent/socket`, `/agent/status`, etc.); device list management |
+| `agent/main.py` | Agent entrypoint: pair → connect → message loop. Spawns `handle_job_plan` on a daemon thread so the receive loop stays responsive; single-job invariant via `_active_job_id` |
+| `agent/dispatch.py` | `handle_job_plan`: installs the credential + db shims, resolves local paths, drives `run_batch.run`, ships every event back through the transport. Also hosts `EventBuffer` (bounded reconnect replay) and `PendingResults` (hello-frame success replay) |
+| `agent/run_batch.py` | Agent-side `run()`: per-run YT state (`_YtState`), `circuit_breaker.reset_all()` at the top, per-platform dispatch into the bundled uploaders, Rock-Email guard when YT was expected but produced no URL |
+| `agent/secrets_shim.py` | In-memory drop-in for `core.secrets_store`. Surfaces `get/set/delete_secret`, `get/set_blob`, `has_secret`, `materialize_blob_to_tempfile`; every mutation emits a `credentials_updated` event so the server stays the source of truth |
+| `agent/db_shim.py` | In-memory drop-in for `core.db`. Implements only `record_image_use` (the one call uploaders make); everything else raises `NotImplementedError` to surface new coupling loudly |
+| `agent/remote_session.py` | Headless remote-login bridge used when the operator re-authenticates a Playwright session from the web UI while the agent runs the actual login |

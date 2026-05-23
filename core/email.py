@@ -40,6 +40,7 @@ _env = Environment(
 # Subject lines per template (one source of truth so render+send agree).
 _SUBJECTS = {
     "welcome": "Welcome to {org_name} on Daily Life Distributor",
+    "invite": "You've been invited to {org_name} on Daily Life Distributor",
 }
 
 _FROM_ADDR = os.environ.get(

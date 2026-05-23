@@ -1,8 +1,16 @@
 <!DOCTYPE html>
-<html><body style="font-family: -apple-system, sans-serif;">
+<html><body style="font-family: -apple-system, sans-serif; max-width: 560px; margin: 0 auto;">
   <h2>Welcome to {{ org_name }} on Daily Life Distributor</h2>
   <p>Hi {{ username }},</p>
-  <p>Your account is ready. Sign in at
-     <a href="https://autoalert.pro/login">autoalert.pro</a>.</p>
-  <p>— Daily Life Distributor</p>
+  <p>Your account is ready{% if role %} as a <strong>{{ role }}</strong>{% endif %}.
+     Sign in at
+     <a href="{{ dashboard_url|default('https://autoalert.pro/login', true) }}">{{ dashboard_url|default('autoalert.pro', true) }}</a>.</p>
+  {% if agent_win_url and agent_mac_url %}
+  <p>Don&rsquo;t forget to install the agent on the machine you&rsquo;ll upload from:</p>
+  <p>
+    <a href="{{ agent_win_url }}">Download for Windows</a> &nbsp;|&nbsp;
+    <a href="{{ agent_mac_url }}">Download for macOS</a>
+  </p>
+  {% endif %}
+  <p>&mdash; Daily Life Distributor</p>
 </body></html>

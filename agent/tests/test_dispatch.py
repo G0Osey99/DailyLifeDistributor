@@ -46,7 +46,7 @@ def test_handle_job_plan_installs_creds_and_runs_then_emits_done(monkeypatch):
     # Stub run_batch to emit a couple of canonical frames then done.
     seen = {}
 
-    def _fake_run(*, envelope, paths, emit):
+    def _fake_run(*, envelope, paths, emit, cancel_event=None):
         seen["envelope_job"] = envelope["job_id"]
         seen["paths"] = paths
         emit({"type": "event", "event": "start", "platform": "YouTube Video",
@@ -75,7 +75,7 @@ def test_handle_job_plan_stamps_job_id_on_frames_that_already_have_it(monkeypatc
     """Frames that already carry job_id must not be double-stamped."""
     monkeypatch.setattr(dispatch, "_resolve_paths", lambda rows: {})
 
-    def _fake_run(*, envelope, paths, emit):
+    def _fake_run(*, envelope, paths, emit, cancel_event=None):
         emit({"type": "event", "event": "done", "job_id": "J1"})
 
     monkeypatch.setattr(dispatch, "_run_batch_run", _fake_run)
@@ -92,7 +92,7 @@ def test_handle_job_plan_emits_error_and_done_on_run_batch_crash(monkeypatch):
     """If run_batch raises, dispatch catches it, emits error + done."""
     monkeypatch.setattr(dispatch, "_resolve_paths", lambda rows: {})
 
-    def _crash(*, envelope, paths, emit):
+    def _crash(*, envelope, paths, emit, cancel_event=None):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(dispatch, "_run_batch_run", _crash)
@@ -110,7 +110,7 @@ def test_handle_job_plan_calls_shim_shutdown_on_success(monkeypatch):
     in handle_job_plan's finally block so credentials don't linger."""
     monkeypatch.setattr(dispatch, "_resolve_paths", lambda rows: {})
     monkeypatch.setattr(dispatch, "_run_batch_run",
-                        lambda *, envelope, paths, emit: None)
+                        lambda *, envelope, paths, emit, cancel_event=None: None)
 
     shims_returned = []
     real_install = dispatch._sshim.install_as_core_secrets_store
@@ -135,7 +135,7 @@ def test_handle_job_plan_calls_shim_shutdown_even_on_crash(monkeypatch):
     """Crash path must also call shim.shutdown() (finally semantics)."""
     monkeypatch.setattr(dispatch, "_resolve_paths", lambda rows: {})
 
-    def _crash(*, envelope, paths, emit):
+    def _crash(*, envelope, paths, emit, cancel_event=None):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(dispatch, "_run_batch_run", _crash)

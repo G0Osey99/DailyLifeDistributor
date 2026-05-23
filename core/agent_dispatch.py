@@ -94,20 +94,30 @@ _jobs: dict[str, dict] = {}
 _jobs_lock = _threading.RLock()
 
 
-def register_job(*, job_id: str, sse_queue, session_id: str | None = None) -> None:
+def register_job(*, job_id: str, sse_queue, session_id: str | None = None,
+                 device_id: str | None = None) -> None:
     """Register an SSE queue for *job_id* so on_frame can route events to it.
 
     *session_id* is optional; when provided, ``success`` events will be
     written to ``upload_history`` via :func:`core.db.record_upload`.
+
+    *device_id* is optional; recorded so :func:`cancel_job` knows which
+    agent to forward the cancel frame to. Web-only-path jobs leave it
+    None (cancel for those is a future addition).
     """
     with _jobs_lock:
-        _jobs[job_id] = {"queue": sse_queue, "session_id": session_id}
+        _jobs[job_id] = {
+            "queue": sse_queue,
+            "session_id": session_id,
+            "device_id": device_id,
+        }
 
 
 def drop_job(job_id: str) -> None:
     """Remove a job from the registry (call when the SSE stream closes)."""
     with _jobs_lock:
         _jobs.pop(job_id, None)
+        _job_dispatch_map.pop(job_id, None)
 
 
 def _job(job_id: str) -> dict | None:
@@ -118,9 +128,11 @@ def _job(job_id: str) -> dict | None:
 def on_frame(frame: dict) -> None:
     """Route an incoming relay frame to the appropriate SSE queue.
 
-    Currently handles type ``event``; other types (credentials_updated,
-    image_used, pending_results_chunk) are logged as debug no-ops so that
-    adding them in A7/A8/A9 is a small switch addition here.
+    Handles ``event``, ``credentials_updated``, and ``image_used`` types.
+    Pending results are sent in-band on the agent's hello frame
+    (``pending_results``) and ingested in ``blueprints/agent.py``; there
+    is no separate ``pending_results_chunk`` wire type.
+    Unknown types are logged at debug and dropped.
     """
     ftype = frame.get("type")
     if ftype == "event":
@@ -387,9 +399,68 @@ def start(
     # The dashboard chip still shows device_name because the presence
     # broadcast carries it separately.
     _relay.send_to_device(device["id"], envelope)
+    # Remember which device received this job so cancel_job() can route
+    # the cancel frame to the right room. media.py calls register_job()
+    # immediately after start() and inherits this device_id from the
+    # dispatch_map; the explicit device_id kwarg on register_job is the
+    # canonical path. The dispatch_map is a thin fallback for callers
+    # that don't (yet) pass device_id through.
+    with _jobs_lock:
+        _job_dispatch_map[job_id] = device["id"]
     _logger.info("agent_dispatch.start(job=%s, device_id=%s, name=%s, rows=%d)",
                  job_id, device["id"], device.get("name"), len(rows))
     return job_id
+
+
+# Snapshot of job_id -> device_id at dispatch time, populated by start()
+# and consumed by cancel_job() if register_job didn't carry the device_id.
+_job_dispatch_map: dict[str, str] = {}
+
+
+class JobNotFoundError(Exception):
+    """Raised when cancel_job can't locate a target for the given id."""
+
+
+class AgentOfflineError(Exception):
+    """Raised when cancel_job can't reach the target agent (room missing)."""
+
+
+def cancel_job(job_id: str) -> None:
+    """Send a ``cancel_job`` frame to the agent that owns *job_id*.
+
+    Routing precedence:
+      1. The device_id stored in the active-jobs registry (set by
+         register_job's device_id kwarg) — this is the supported path.
+      2. The dispatch-time snapshot recorded by ``start()`` — covers
+         the brief window between dispatch and SSE registration.
+
+    Raises:
+      JobNotFoundError: no record of this job_id.
+      AgentOfflineError: the target agent isn't currently connected to
+        the relay. The job may still complete on the agent if it stays
+        connected internally; this only reports that the cancel control
+        message couldn't be delivered right now.
+
+    Web-only-path jobs aren't supported here yet (their thread lives on
+    the server and isn't reachable via the agent relay). The caller is
+    responsible for rejecting cancel for those before invoking this.
+    """
+    device_id: str | None = None
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is not None:
+            device_id = job.get("device_id")
+        if device_id is None:
+            device_id = _job_dispatch_map.get(job_id)
+    if device_id is None:
+        raise JobNotFoundError(f"no record of job_id={job_id!r}")
+    frame = {"v": 1, "type": "cancel_job", "job_id": job_id}
+    try:
+        _relay.send_to_device(device_id, frame)
+    except ValueError as exc:
+        # send_to_device raises ValueError when the device room is missing.
+        raise AgentOfflineError(str(exc)) from exc
+    _logger.info("cancel_job(job=%s) → device_id=%s", job_id, device_id)
 
 
 # ---------------------------------------------------------------------------

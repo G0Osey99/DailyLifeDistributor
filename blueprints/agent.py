@@ -152,16 +152,55 @@ def pair_redeem():
         hwid_hash = hwid_hash[:128]
     if hostname and len(hostname) > 64:
         hostname = hostname[:64]
+    # Re-link UX: if the agent reports an hwid_hash that already matches
+    # an existing non-revoked device, the user almost certainly reinstalled
+    # on the same hardware. Revoke the stale row + carry its friendly name
+    # over to the new row so the dashboard's device picker doesn't fill up
+    # with abandoned duplicates. The user still has to enter the pairing
+    # code, so consent is unchanged.
+    relinked = False
+    inherited_name = None
+    if hwid_hash:
+        prior = devices.find_by_hwid(hwid_hash)
+        if prior and not prior.get("revoked"):
+            # Carry the old friendly name (the agent only knows its
+            # system hostname; users typically renamed it post-pair).
+            inherited_name = prior.get("name")
+            devices.revoke_device(prior["id"])
+            relinked = True
+
+    name = (data.get("name") or "device").strip()
+    if relinked and inherited_name:
+        name = inherited_name
+
     result = devices.redeem_pairing_code(
         (data.get("code") or "").strip(),
-        (data.get("name") or "device").strip(),
+        name,
         hwid_hash=hwid_hash,
         hostname=hostname,
     )
     if result is None:
         return jsonify({"error": "invalid or expired code"}), 400
     device_id, token = result
-    return jsonify({"device_id": device_id, "token": token})
+    body = {"device_id": device_id, "token": token}
+    if relinked:
+        body["relinked"] = True
+        body["previous_name"] = inherited_name
+        # Broadcast a `relinked` event to any currently-connected dashboard
+        # browser sockets so the UI can toast "Re-linked agent <new-name>
+        # (previously <old-name>)". Best-effort: if no browser is connected
+        # or the broadcast layer isn't wired up yet (tests that bypass
+        # register_sockets), the relink still completes — the toast is a
+        # bonus signal, not a guarantee.
+        try:
+            RELAY.broadcast_to_browsers(_ACCOUNT, "relinked", {
+                "device_id": device_id,
+                "new_name": name,
+                "previous_name": inherited_name,
+            })
+        except Exception:  # noqa: BLE001 — relink already happened; toast is best-effort
+            _log.debug("relinked broadcast failed", exc_info=True)
+    return jsonify(body)
 
 
 @bp.route("/agent/devices", methods=["GET"])
@@ -214,6 +253,43 @@ def list_devices_online():
 def revoke_device(device_id):
     devices.revoke_device(device_id)
     return jsonify({"ok": True})
+
+
+@bp.route("/agent/devices/<device_id>/name", methods=["POST"])
+def rename_device(device_id):
+    """Update the user-friendly name for *device_id*.
+
+    Session-auth-gated by the global ``_require_auth`` before_request hook
+    (this endpoint is NOT in ``_PUBLIC_ENDPOINTS``). The agent-reported
+    hostname is immutable; this only edits the ``name`` column rendered in
+    the device picker / management UI.
+
+    Body: ``{"name": "Studio Mac"}`` (1..64 chars after trimming).
+    Returns ``{"ok": true, "device": {...row...}}`` on success,
+    ``{"error": "..."}`` with 400 / 404 / 410 on validation / not-found /
+    revoked.
+    """
+    data = request.get_json(silent=True) or {}
+    raw = data.get("name", "")
+    try:
+        ok = devices.set_device_name(device_id, raw)
+    except devices.DeviceNameEmpty:
+        return jsonify({"error": "name must not be empty"}), 400
+    except devices.DeviceNameTooLong:
+        return jsonify({
+            "error": f"name must be at most {devices.DEVICE_NAME_MAX_LEN} chars"
+        }), 400
+    if not ok:
+        # Either missing or revoked. Disambiguate with a SELECT.
+        rows = devices.list_devices()
+        match = next((r for r in rows if r["id"] == device_id), None)
+        if match is None:
+            return jsonify({"error": "device not found"}), 404
+        # Found but revoked.
+        return jsonify({"error": "device is revoked"}), 410
+    rows = devices.list_devices()
+    updated = next((r for r in rows if r["id"] == device_id), None)
+    return jsonify({"ok": True, "device": updated})
 
 
 def _session_key() -> str:
@@ -359,12 +435,16 @@ def register_sockets(sock) -> None:
                             "payload": {"reason": "rate_limit_exceeded"},
                         }))
                     except Exception:
-                        pass
+                        _log.debug(
+                            "agent_socket: rate-limit notice send failed "
+                            "for device=%s",
+                            device_id[:8] if device_id else "?",
+                            exc_info=True,
+                        )
                     break
-                # Route frames that target the server (event, and future
-                # credentials_updated / image_used / pending_results_chunk).
-                # on_frame handles unrecognised types as a debug no-op so
-                # adding new types in A7/A8/A9 is a small switch addition.
+                # Route frames that target the server (event,
+                # credentials_updated, image_used). on_frame logs unrecognised
+                # types at debug and drops them.
                 try:
                     frame = _json.loads(msg)
                     ftype = frame.get("type") if isinstance(frame, dict) else None
@@ -386,11 +466,21 @@ def register_sockets(sock) -> None:
                         # Don't continue — hello also needs to reach the relay
                         # for presence tracking (fall through to route_from_agent).
                     elif ftype in ("event", "credentials_updated",
-                                   "image_used", "pending_results_chunk"):
+                                   "image_used"):
                         _agent_dispatch.on_frame(frame)
                         continue
                 except Exception:
-                    pass
+                    # A malformed frame (bad JSON, unexpected shape, or a
+                    # transient bug in on_frame) must not bring the socket
+                    # down — we fall through to route_from_agent so the
+                    # browser can still see legitimate broadcasts. Log at
+                    # debug with exc_info so triage has a stack on the
+                    # rare occasions an operator pulls logs.
+                    _log.debug(
+                        "agent_socket frame dispatch raised for device=%s",
+                        device_id[:8] if device_id else "?",
+                        exc_info=True,
+                    )
                 RELAY.route_from_agent(_ACCOUNT, msg)
         finally:
             RELAY.unregister_agent(_ACCOUNT, device_id)

@@ -97,7 +97,22 @@ def _breaker_for(platform: str, cb_cfg: dict):
 # ---------------------------------------------------------------------------
 
 def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
-             yt_state: _YtState) -> None:
+             yt_state: _YtState,
+             cancel_event: "threading.Event | None" = None) -> None:
+    # Check cancellation BEFORE acquiring any platform resources (browser
+    # launch, OAuth refresh, etc). In-flight rows that already passed this
+    # gate are allowed to finish — cancellation is best-effort cooperative,
+    # not a hard kill.
+    if cancel_event is not None and cancel_event.is_set():
+        emit({"type": "event", "event": "error", "platform": platform,
+              "row_idx": row["row_idx"], "iso_date": row["iso_date"],
+              "error_type": "cancelled",
+              "error": "job cancelled before dispatch"})
+        if platform == "YouTube Video":
+            # Wake any Rock Email row blocked on this date's YouTube result.
+            yt_state.record(row["row_idx"], None)
+        return
+
     breaker = _breaker_for(platform, cb_cfg)
     if not breaker.allow():
         emit({"type": "event", "event": "error", "platform": platform,
@@ -154,9 +169,17 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
 # run() — public entry point
 # ---------------------------------------------------------------------------
 
-def run(*, envelope: dict, paths: dict, emit) -> None:
+def run(*, envelope: dict, paths: dict, emit,
+        cancel_event: "threading.Event | None" = None) -> None:
     """Execute the job plan. `paths` is {iso_date: {kind: local_path}}.
     `emit` is called once per event frame (dict).
+
+    *cancel_event* (optional): a threading.Event the dispatcher sets when
+    a ``cancel_job`` frame arrives from the server. Each pending task
+    checks it before dispatching; in-flight tasks finish normally. New
+    rows past the gate emit an ``error`` event with ``error_type:
+    cancelled``. Backward compatible — callers that pass nothing get
+    today's behaviour unchanged.
 
     Phase 3:
       - Per-run _YtState (no module-level mutation between calls).
@@ -189,7 +212,7 @@ def run(*, envelope: dict, paths: dict, emit) -> None:
         futures = [
             ex.submit(_run_one, platform, row, emit, paths,
                       row.get("_config_circuit_breaker") or cb_cfg,
-                      yt_state)
+                      yt_state, cancel_event)
             for (platform, row) in tasks
         ]
         for f in futures:

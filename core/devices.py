@@ -151,6 +151,50 @@ def get_device_name(device_id: str) -> str | None:
     return row["name"] if row else None
 
 
+# Max characters for a user-friendly device name. Mirrors the cap the
+# pairing endpoint enforces on incoming hostnames so renames can't bloat
+# the row beyond what was allowed at creation time.
+DEVICE_NAME_MAX_LEN = 64
+
+
+class DeviceNameTooLong(ValueError):
+    """Raised when set_device_name is called with a name exceeding the cap."""
+
+
+class DeviceNameEmpty(ValueError):
+    """Raised when set_device_name is called with an empty/whitespace name."""
+
+
+def set_device_name(device_id: str, name: str) -> bool:
+    """Update the user-friendly *name* for *device_id*.
+
+    Returns True if a row was updated, False if no matching non-revoked
+    device exists. Hostname (the agent-reported system name) is left
+    untouched — only the human-editable ``name`` column changes.
+
+    Raises:
+      DeviceNameEmpty: if *name* is empty or whitespace-only.
+      DeviceNameTooLong: if *name* exceeds DEVICE_NAME_MAX_LEN chars.
+    """
+    if not isinstance(name, str):
+        raise DeviceNameEmpty("name must be a non-empty string")
+    trimmed = name.strip()
+    if not trimmed:
+        raise DeviceNameEmpty("name must not be empty")
+    if len(trimmed) > DEVICE_NAME_MAX_LEN:
+        raise DeviceNameTooLong(
+            f"name exceeds {DEVICE_NAME_MAX_LEN} chars"
+        )
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE agent_devices SET name = ? "
+            "WHERE id = ? AND revoked = 0",
+            (trimmed, device_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def most_recently_seen_online(freshness_seconds: int = 60, now: float | None = None) -> dict | None:
     """Return the device dict whose last_seen_at is the largest among
     non-revoked devices, provided it is within freshness_seconds of now.

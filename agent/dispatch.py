@@ -24,6 +24,48 @@ _logger = logging.getLogger(__name__)
 _run_batch_run = _rb.run
 
 
+# ---------------------------------------------------------------------------
+# Cooperative cancel — one Event per active job_id
+# ---------------------------------------------------------------------------
+# The server sends ``{"type": "cancel_job", "job_id": "..."}`` over the
+# control plane when the user clicks "Cancel" in the dashboard. The agent's
+# main.py routes that frame to ``signal_cancel`` here; handle_job_plan
+# registers a fresh Event keyed by job_id before launching run_batch and
+# clears it on completion.
+_cancel_events: dict[str, _thr.Event] = {}
+_cancel_lock = _thr.RLock()
+
+
+def _register_cancel(job_id: str) -> "_thr.Event":
+    """Create and register a fresh cancel Event for *job_id*."""
+    evt = _thr.Event()
+    with _cancel_lock:
+        _cancel_events[job_id] = evt
+    return evt
+
+
+def _unregister_cancel(job_id: str) -> None:
+    """Drop the cancel Event for *job_id* (call in handle_job_plan's finally)."""
+    with _cancel_lock:
+        _cancel_events.pop(job_id, None)
+
+
+def signal_cancel(job_id: str) -> bool:
+    """Mark *job_id* as cancelled. Returns True if a matching job existed.
+
+    Called by ``agent/main.py:_on_message`` when a ``cancel_job`` frame
+    arrives. Best-effort: if the job_id is unknown (already finished or
+    never started) we silently return False — the server forwards based
+    on whichever device is online, not on whether the job is live.
+    """
+    with _cancel_lock:
+        evt = _cancel_events.get(job_id)
+    if evt is None:
+        return False
+    evt.set()
+    return True
+
+
 def _resolve_paths(rows: list[dict]) -> dict[str, dict[str, str]]:
     """For each row's iso_date return {kind: local_path} from the scan cache.
 
@@ -69,14 +111,17 @@ def handle_job_plan(*, plan: dict, transport: Any) -> None:
     _dshim.install_as_core_db(emit=_emit)
 
     paths = _resolve_paths(plan["rows"])
+    cancel_evt = _register_cancel(job_id)
     try:
-        _run_batch_run(envelope=plan, paths=paths, emit=_emit)
+        _run_batch_run(envelope=plan, paths=paths, emit=_emit,
+                       cancel_event=cancel_evt)
     except Exception as exc:
         _logger.exception("run_batch crashed: %s", exc)
         _emit({"type": "event", "event": "error",
                "error": f"run_batch crashed: {exc}"})
         _emit({"type": "event", "event": "done"})
     finally:
+        _unregister_cancel(job_id)
         # Zeroize credentials at rest the moment the job is done so they
         # don't linger in process memory between jobs. The Fernet key
         # used to encrypt them is also dropped here — see

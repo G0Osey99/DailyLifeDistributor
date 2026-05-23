@@ -47,11 +47,13 @@ def test_drop_job_removes_from_registry():
 
 
 def test_unhandled_frame_type_is_no_op():
-    """on_frame must not raise on unknown frame types (future A7/A8/A9)."""
+    """on_frame must not raise on malformed or unknown frame types."""
+    # Malformed known types (missing required fields) — should log+swallow.
     agent_dispatch.on_frame({"v": 1, "type": "credentials_updated",
                              "job_id": "J99"})
     agent_dispatch.on_frame({"v": 1, "type": "image_used", "job_id": "J99"})
-    agent_dispatch.on_frame({"v": 1, "type": "pending_results_chunk",
+    # Genuinely unknown type — should fall through to the debug no-op branch.
+    agent_dispatch.on_frame({"v": 1, "type": "totally_unknown_type",
                              "job_id": "J99"})
 
 

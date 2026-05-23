@@ -1,5 +1,7 @@
 # Browser-Streaming Media Pipeline — Implementation Plan
 
+> **Status:** Shipped on 2026-05-23 (consolidated in the `codebase-completion-pass` branch — see git history for the actual per-commit work). The `- [ ]` checkboxes below are TDD step artifacts kept as-is for reference; all steps were executed.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Replace the server-side directory-scan model with a browser-driven, stream-through pipeline: users pick media folders + a spreadsheet in the browser (no install), files upload to the VPS in chunked batches of 4 dates, get consumed by all platforms that need them (deduped by physical file), and are deleted — keeping the ~80 GB VPS within ~20 GB transient disk.

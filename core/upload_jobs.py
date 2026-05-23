@@ -132,18 +132,57 @@ def get_job(job_id: str) -> dict | None:
         return _jobs.get(job_id)
 
 
+# Per-job cancel events keyed by job_id. Set by ``signal_cancel`` (from the
+# /upload/<id>/cancel route on the web path) and observed by run_batch's
+# worker loop. Mirrors agent/dispatch._cancel_events so cancellation works
+# both for agent-path jobs (relay frame to agent) and web-path jobs (in-
+# process Event the run_batch thread polls). Entries are created in
+# ``register_job`` and removed in ``drop_job``.
+_cancel_events: dict[str, threading.Event] = {}
+
+
+def get_cancel_event(job_id: str) -> threading.Event | None:
+    """Return the cancel Event for a job, or None if unknown.
+
+    Tests + the upload-cancel route use this; the run_batch worker thread
+    reaches the event via its registered job entry rather than going through
+    the registry every iteration.
+    """
+    with _JOBS_LOCK:
+        return _cancel_events.get(job_id)
+
+
+def signal_cancel(job_id: str) -> bool:
+    """Mark *job_id* as cancelled. Returns True if a matching job existed.
+
+    Called by ``blueprints/upload.upload_cancel`` for web-path jobs. The
+    run_batch worker thread checks the event before each row submission and
+    short-circuits remaining rows with an ``error_type: cancelled`` event.
+    Cancellation is best-effort cooperative — rows already mid-flight (e.g.
+    a YouTube chunk upload partway through) complete normally.
+    """
+    with _JOBS_LOCK:
+        evt = _cancel_events.get(job_id)
+    if evt is None:
+        return False
+    evt.set()
+    return True
+
+
 def register_job(job_id: str) -> dict:
     _warn_if_multiworker()
     _ensure_reaper_running()
     job = {"queue": queue.Queue(maxsize=_QUEUE_MAXSIZE), "done": False, "finished_at": None}
     with _JOBS_LOCK:
         _jobs[job_id] = job
+        _cancel_events[job_id] = threading.Event()
     return job
 
 
 def drop_job(job_id: str) -> None:
     with _JOBS_LOCK:
         _jobs.pop(job_id, None)
+        _cancel_events.pop(job_id, None)
 
 
 def reap_stale_jobs() -> None:
@@ -348,6 +387,7 @@ def run_batch(
     skip_set: set | None = None,
     logger=None,
     config: dict | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> set:
     """Run one batch of dates against reassembled temp file paths.
 
@@ -403,6 +443,15 @@ def run_batch(
     def _upload_one(idx, item):
         platform = item["platform"]
         row_id = f"{item['date']}_{platform}"
+        # Cooperative cancel: check BEFORE acquiring any per-platform
+        # resources (Chrome launch, YouTube OAuth refresh, etc). Already-
+        # in-flight rows are allowed to finish — cancellation is best-effort
+        # cooperative, not a hard kill. Mirrors agent/run_batch._run_one.
+        if cancel_event is not None and cancel_event.is_set():
+            emit_safe({"type": "error", "row": idx, "date": item["date"],
+                       "platform": platform, "error_type": "cancelled",
+                       "message": "job cancelled before dispatch"})
+            return idx, item, None
         if row_id in skip_set:
             emit_safe({"type": "skip", "row": idx, "platform": platform, "date": item["date"]})
             return idx, item, None
@@ -421,6 +470,17 @@ def run_batch(
     future_to_item: dict = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for idx, item in enumerate(batch_summary):
+            # Pre-submit cancel check: if cancel was signalled while we were
+            # submitting earlier rows, short-circuit the rest of this loop
+            # rather than queueing N more workers that'll each emit their
+            # own cancelled error frame. Each worker also re-checks the
+            # event before any expensive work so this is belt-and-suspenders.
+            if cancel_event is not None and cancel_event.is_set():
+                emit_safe({"type": "error", "row": idx, "date": item["date"],
+                           "platform": item["platform"],
+                           "error_type": "cancelled",
+                           "message": "job cancelled before dispatch"})
+                continue
             try:
                 f = executor.submit(_upload_one, idx, item)
             except Exception as exc:

@@ -151,10 +151,15 @@ def _ensure_paired(server_url: str) -> str:
     # always returns a non-empty string.
     hwid_hash = _hwid_mod.compute_hwid_hash()
     friendly = _hostname_mod.get_friendly_hostname()
-    if not pair.redeem(server_url, code, _device_name(),
-                       hwid_hash=hwid_hash, hostname=friendly):
+    result = pair.redeem(server_url, code, _device_name(),
+                         hwid_hash=hwid_hash, hostname=friendly)
+    if not result:
         raise SystemExit("Pairing failed — check the code and try again.")
-    print("✓ Paired successfully.")
+    if isinstance(result, dict) and result.get("relinked"):
+        prev = result.get("previous_name") or _device_name()
+        print(f"✓ Re-linked to {prev} (replaced a prior pairing on this hardware).")
+    else:
+        print("✓ Paired successfully.")
     return config.get_token()
 
 
@@ -191,6 +196,18 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
         log.debug("Handling scan_request")
         report = scan.scan_roots(config.get_media_roots())
         conn.send({"v": 1, "type": "scan_result", "payload": report})
+    elif mtype == "cancel_job":
+        # Server forwarded a user-initiated cancel for a specific job_id.
+        # In-flight uploads keep running (cooperative cancel); pending
+        # rows short-circuit with an error_type=cancelled event.
+        from agent import dispatch as _dispatch_mod
+        target = msg.get("job_id", "")
+        ok = _dispatch_mod.signal_cancel(target) if target else False
+        if not ok:
+            log.debug(
+                "cancel_job received for unknown job_id=%s",
+                (target or "<missing>")[:8],
+            )
     elif mtype == "job_plan":
         # Run the job on a daemon thread so the receive loop stays
         # responsive — Cloudflare/nginx idle ~100s would otherwise drop

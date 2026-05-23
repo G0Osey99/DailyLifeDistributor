@@ -243,3 +243,65 @@ def test_most_recently_seen_online_includes_hwid_and_hostname(tmp_path, monkeypa
     assert row is not None
     assert row["hwid_hash"] == "e" * 64
     assert row["hostname"] == "Studio"
+
+
+# ---------------------------------------------------------------------------
+# set_device_name (rename UX)
+# ---------------------------------------------------------------------------
+def test_set_device_name_updates_row(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    device_id, _ = devices.redeem_pairing_code(
+        code, "old-name", hwid_hash="a" * 64, hostname="Mac.local")
+    assert devices.set_device_name(device_id, "Studio Mac") is True
+    rows = devices.list_devices()
+    row = next(r for r in rows if r["id"] == device_id)
+    assert row["name"] == "Studio Mac"
+    # Hostname must remain untouched — it's the agent-reported system
+    # name, not user-editable.
+    assert row["hostname"] == "Mac.local"
+
+
+def test_set_device_name_trims_whitespace(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    device_id, _ = devices.redeem_pairing_code(code, "old")
+    assert devices.set_device_name(device_id, "  Padded Name  ") is True
+    assert devices.get_device_name(device_id) == "Padded Name"
+
+
+def test_set_device_name_missing_returns_false(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    assert devices.set_device_name("nope", "anything") is False
+
+
+def test_set_device_name_revoked_returns_false(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    device_id, _ = devices.redeem_pairing_code(code, "x")
+    devices.revoke_device(device_id)
+    # Revoked rows are read-only from the rename API's perspective —
+    # users can still see them but can't edit them in place.
+    assert devices.set_device_name(device_id, "new name") is False
+
+
+def test_set_device_name_empty_raises(tmp_path, monkeypatch):
+    import pytest as _pt
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    device_id, _ = devices.redeem_pairing_code(code, "x")
+    with _pt.raises(devices.DeviceNameEmpty):
+        devices.set_device_name(device_id, "")
+    with _pt.raises(devices.DeviceNameEmpty):
+        devices.set_device_name(device_id, "   ")
+
+
+def test_set_device_name_too_long_raises(tmp_path, monkeypatch):
+    import pytest as _pt
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    device_id, _ = devices.redeem_pairing_code(code, "x")
+    with _pt.raises(devices.DeviceNameTooLong):
+        devices.set_device_name(device_id, "a" * (devices.DEVICE_NAME_MAX_LEN + 1))
+    # Exactly at the limit must succeed.
+    assert devices.set_device_name(device_id, "a" * devices.DEVICE_NAME_MAX_LEN) is True

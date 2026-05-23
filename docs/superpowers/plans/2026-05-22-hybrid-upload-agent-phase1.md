@@ -1,5 +1,7 @@
 # Hybrid Upload Agent — Phase 1 Implementation Plan
 
+> **Status:** Shipped on 2026-05-23 (consolidated in the `codebase-completion-pass` branch — see git history for the actual per-commit work). The `- [ ]` checkboxes below are TDD step artifacts kept as-is for reference; all steps were executed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the relay + device pairing layer so a logged-in browser and a paired local agent can exchange control messages through the VPS over `wss`, with revocable per-device tokens and agent-presence tracking — no uploading yet.

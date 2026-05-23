@@ -186,6 +186,64 @@
         }
     }
 
+    // ── Toast helpers (vanilla; no framework) ─────────────────────────────
+    function _showToast(text, opts) {
+        opts = opts || {};
+        const ms = typeof opts.ttlMs === "number" ? opts.ttlMs : 5000;
+        // Container is created lazily so the toast survives a page where
+        // index.html hasn't templated a slot in advance.
+        let host = document.getElementById("dld-toast-host");
+        if (!host) {
+            host = document.createElement("div");
+            host.id = "dld-toast-host";
+            host.setAttribute("role", "status");
+            host.setAttribute("aria-live", "polite");
+            host.style.cssText = (
+                "position:fixed;top:1rem;right:1rem;z-index:9999;" +
+                "display:flex;flex-direction:column;gap:0.5rem;" +
+                "pointer-events:none;max-width:24rem;"
+            );
+            document.body.appendChild(host);
+        }
+        const el = document.createElement("div");
+        el.className = "dld-toast";
+        el.style.cssText = (
+            "background:#222;color:#fff;padding:0.75rem 1rem;" +
+            "border-radius:0.5rem;box-shadow:0 4px 12px rgba(0,0,0,0.25);" +
+            "opacity:0;transition:opacity 250ms ease;" +
+            "pointer-events:auto;font-size:0.9rem;line-height:1.35;"
+        );
+        el.textContent = text;
+        host.appendChild(el);
+        // Defer to next frame so the transition fires.
+        requestAnimationFrame(() => { el.style.opacity = "1"; });
+        setTimeout(() => {
+            el.style.opacity = "0";
+            // Detach after the fade-out so we don't leak DOM nodes.
+            setTimeout(() => { el.remove(); }, 350);
+        }, ms);
+    }
+
+    function _onRelinked(payload) {
+        // Payload: {device_id, new_name, previous_name}. previous_name is the
+        // friendly name the user gave the old paired row; new_name is the
+        // freshly-paired row's name (which the server pre-fills with
+        // previous_name when relinked=true). We surface both so the user can
+        // tell at a glance which device this was about.
+        const newName = (payload && payload.new_name) || "device";
+        const prevName = (payload && payload.previous_name) || "(unnamed)";
+        // Same-name relinks are the common case and still worth surfacing —
+        // it confirms to the user that their reinstall worked.
+        const same = (newName === prevName);
+        const text = same
+            ? `Re-linked agent "${newName}".`
+            : `Re-linked agent "${newName}" (previously "${prevName}").`;
+        _showToast(text);
+        // Pick up the fresh device list so the chip + picker reflect the
+        // revoke-old/insert-new without needing a manual refresh.
+        _refreshOnlineDevices();
+    }
+
     // ── /agent/ws browser socket (presence frames) ────────────────────────
     (function _connectAgentSocket() {
         const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -204,6 +262,7 @@
                 try { msg = JSON.parse(e.data); } catch (_) { return; }
                 if (msg.type === "presence") onAgentPresence(msg.payload || {});
                 else if (msg.type === "whoami_pong") _onWhoamiPong(msg);
+                else if (msg.type === "relinked") _onRelinked(msg.payload || {});
             });
             ws.addEventListener("close", () => {
                 _agentState.agentSocket = null;
@@ -550,10 +609,54 @@
         if (el) el.insertAdjacentHTML("beforeend", html);
     }
 
+    // Wire the cancel button to POST /upload/<job_id>/cancel. Only shown
+    // for agent-path jobs (the server returns 404 for web-only-path job
+    // ids today — cancel for those is a future addition).
+    function _setupCancelUI(jobId) {
+        const wrap = $("#upload-cancel-wrap");
+        const btn = $("#upload-cancel-btn");
+        const status = $("#upload-cancel-status");
+        if (!wrap || !btn) return () => {};
+        if (_uploadPath() !== "agent") {
+            wrap.hidden = true;
+            return () => {};
+        }
+        wrap.hidden = false;
+        if (status) status.textContent = "";
+        btn.disabled = false;
+        async function onClick() {
+            if (!confirm("Cancel this upload? In-flight rows will finish; pending rows will be skipped.")) return;
+            btn.disabled = true;
+            if (status) status.textContent = "Cancelling…";
+            try {
+                const r = await fetch(`/upload/${encodeURIComponent(jobId)}/cancel`, {
+                    method: "POST",
+                    credentials: "same-origin",
+                });
+                if (!r.ok) {
+                    const d = await r.json().catch(() => ({}));
+                    if (status) status.textContent = `Cancel failed: ${d.error || r.status}`;
+                    btn.disabled = false;
+                    return;
+                }
+                if (status) status.textContent = "Cancel sent — waiting for the agent to wind down.";
+            } catch (err) {
+                if (status) status.textContent = `Cancel error: ${err && err.message || err}`;
+                btn.disabled = false;
+            }
+        }
+        btn.addEventListener("click", onClick);
+        return function teardown() {
+            btn.removeEventListener("click", onClick);
+            wrap.hidden = true;
+        };
+    }
+
     // Resolves to {ok}. ok is false on a stream/connection error or a
     // batch-level crash (an `error` event with no date/platform). Per-row
     // errors are logged but don't fail the batch (continue-and-report).
     function consumeStream(jobId) {
+        const teardownCancel = _setupCancelUI(jobId);
         return new Promise((resolve) => {
             let batchError = false;
             const es = new EventSource(`/upload/stream?job_id=${encodeURIComponent(jobId)}`);
@@ -563,18 +666,24 @@
                 if (d.type === "success") {
                     logProgress(`<div class="text-sm" style="color:var(--ok)">✓ ${esc(d.date)} — ${esc(d.platform)}</div>`);
                 } else if (d.type === "error") {
-                    logProgress(`<div class="text-sm" style="color:var(--err)">✗ ${esc(d.date || "")} — ${esc(d.platform || "")}: ${esc(d.message || "")}</div>`);
+                    const tag = d.error_type === "cancelled" ? "⊘ cancelled" : "✗";
+                    logProgress(`<div class="text-sm" style="color:var(--err)">${tag} ${esc(d.date || "")} — ${esc(d.platform || "")}: ${esc(d.message || "")}</div>`);
                     if (!d.date && !d.platform) batchError = true;  // batch-level crash
                 } else if (d.type === "skip") {
                     logProgress(`<div class="text-sm text-dim">↷ ${esc(d.date || "")} — ${esc(d.platform || "")} (skipped)</div>`);
                 } else if (d.type === "needs_manual") {
                     logProgress(`<div class="text-sm" style="color:var(--warn)">⚠ ${esc(d.date || "")} — ${esc(d.platform || "")} needs manual action</div>`);
                 }
-                if (d.type === "done") { es.close(); resolve({ ok: !batchError }); }
+                if (d.type === "done") {
+                    es.close();
+                    teardownCancel();
+                    resolve({ ok: !batchError });
+                }
             };
             es.onerror = () => {
                 es.close();  // close immediately so it can't auto-reconnect
                 logProgress('<div class="text-sm" style="color:var(--err)">⚠ Lost connection to the upload stream.</div>');
+                teardownCancel();
                 resolve({ ok: false });
             };
         });

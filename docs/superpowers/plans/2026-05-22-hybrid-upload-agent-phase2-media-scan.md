@@ -1,5 +1,7 @@
 # Hybrid Upload Agent — Phase 2a: Media Scan & Available-Dates Reporting
 
+> **Status:** Shipped on 2026-05-23 (consolidated in the `codebase-completion-pass` branch — see git history for the actual per-commit work). The `- [ ]` checkboxes below are TDD step artifacts kept as-is for reference; all steps were executed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Let the agent scan its configured local media folders and report the available dates (and which files per date per category) back to the browser over the existing Phase 1 relay, in response to a `scan_request` control message.

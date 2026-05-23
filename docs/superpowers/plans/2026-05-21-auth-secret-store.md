@@ -1,5 +1,7 @@
 # Auth Gate + Encrypted Secret Store Implementation Plan
 
+> **Status:** Shipped on 2026-05-23 (consolidated in the `codebase-completion-pass` branch — see git history for the actual per-commit work). The `- [ ]` checkboxes below are TDD step artifacts kept as-is for reference; all steps were executed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the loopback-only access guard with a single shared-credential login, and encrypt every secret (API keys, YouTube OAuth files, Playwright session cookies) at rest in `state.db` using an app-held Fernet master key.

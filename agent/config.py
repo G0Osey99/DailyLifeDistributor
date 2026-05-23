@@ -3,9 +3,12 @@ the OS keychain (via keyring). The token never touches the JSON file."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import keyring as _keyring
+
+_log = logging.getLogger(__name__)
 
 _SERVICE = "dld-hybrid-agent"
 _TOKEN_USER = "device-token"
@@ -39,7 +42,13 @@ def clear_token() -> None:
     try:
         _keyring.delete_password(_SERVICE, _TOKEN_USER)
     except Exception:
-        pass
+        # PasswordDeleteError when nothing's stored (expected on first
+        # run), or any backend hiccup. Don't crash — the token is
+        # already effectively gone from the agent's view. Logged at
+        # debug so triage sees the cause if a real backend issue is
+        # masking real failures.
+        _log.debug("clear_token: keyring.delete_password failed",
+                   exc_info=True)
 
 
 def set_server_url(url: str) -> None:

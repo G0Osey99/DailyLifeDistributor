@@ -540,6 +540,27 @@ def clear_secret_route():
     return redirect(url_for("settings.settings"))
 
 
+@bp.route("/settings/devices", methods=["GET"])
+def devices_page():
+    """Manage paired hybrid-agent devices.
+
+    Lists every device (active + revoked). The agent ws-relay endpoints
+    are HYBRID_AGENT_ENABLED-gated, but reading the device table is safe
+    even when the feature is off — we just render an empty list.
+    The rename/revoke action endpoints live under the agent blueprint
+    (and are therefore only useful when HYBRID is enabled, which is the
+    only time there can be devices to manage).
+    """
+    from core import devices as _devices
+    return render_template(
+        "devices.html",
+        devices=_devices.list_devices(),
+        hybrid_enabled=os.environ.get("HYBRID_AGENT_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+        device_name_max_len=_devices.DEVICE_NAME_MAX_LEN,
+    )
+
+
 @bp.route("/settings/change-password", methods=["POST"])
 def change_password_route():
     current = request.form.get("current") or ""

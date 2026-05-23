@@ -35,9 +35,16 @@ def redeem(
     )
     if resp.status_code != 200:
         return False
-    token = resp.json().get("token")
+    payload = resp.json()
+    token = payload.get("token")
     if not token:
         return False
     config.set_token(token)
     config.set_server_url(server_url)
+    # Persist the device_id so whoami_pong can self-identify without a
+    # server roundtrip. Older servers omit the field; we treat that as
+    # "no device_id known locally" and fall back to None at pong time.
+    device_id = (payload.get("device_id") or "").strip()
+    if device_id:
+        config.set_device_id(device_id)
     return True

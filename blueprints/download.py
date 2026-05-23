@@ -34,12 +34,14 @@ bp = Blueprint("download", __name__)
 # clean 404 from release_binary rather than a 500 from this blueprint.
 _FALLBACK_BINARY = {
     "windows": "dld-agent-windows.exe",
-    "macos-arm64": "dld-agent-macos-arm64",
-    "macos-intel": "dld-agent-macos-intel",
-    # Legacy unsuffixed key — kept so a manifest that lists "macos"
-    # (pre-arch-split builds) still resolves. Points at arm64 because that's
-    # what the current Mac fleet overwhelmingly runs.
-    "macos": "dld-agent-macos-arm64",
+    # We ship a single universal2 macOS binary that runs on both Apple
+    # Silicon and Intel — see .github/workflows/release-agent.yml for the
+    # build recipe. The -arm64 / -intel keys are kept for the legacy
+    # routes (so an old email or bookmark still works); both point at the
+    # same universal binary.
+    "macos": "dld-agent-macos",
+    "macos-arm64": "dld-agent-macos",
+    "macos-intel": "dld-agent-macos",
 }
 
 
@@ -106,10 +108,6 @@ def landing():
         "download_agent.html",
         detected_os=detected,
         windows_url=url_for("download.windows"),
-        macos_arm64_url=url_for("download.macos_arm64"),
-        macos_intel_url=url_for("download.macos_intel"),
-        # Backward-compat: existing templates / external links to macos_url
-        # still resolve, pointing at the arm64 build (the modern default).
         macos_url=url_for("download.macos"),
         pairing_code=pairing_code,
     )

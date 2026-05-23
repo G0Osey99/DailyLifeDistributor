@@ -32,13 +32,14 @@ def _platform_label() -> str:
 
 
 def _full_label(arch: str | None) -> str:
-    """e.g. 'windows', 'macos-arm64', 'macos-intel'.
+    """e.g. 'windows', 'macos', 'macos-arm64', 'macos-intel'.
 
-    ``arch`` is the value passed in via --arch (or auto-detected on macOS).
-    For Windows we never append an arch because GHA only ships an x64 runner.
+    A bare 'macos' is the **universal2** fat binary that runs on both archs
+    — that's what we ship from CI now. The arm64/intel suffixes are kept
+    for backward compatibility with local builds that target a single arch.
     """
     base = _platform_label()
-    if base == "macos" and arch:
+    if base == "macos" and arch and arch != "universal":
         return f"{base}-{arch}"
     return base
 
@@ -63,16 +64,29 @@ def main() -> None:
     ap.add_argument("--key-file", help="path to ed25519 private key PEM (else AGENT_RELEASE_PRIVATE_KEY env)")
     ap.add_argument(
         "--arch",
-        choices=["arm64", "intel"],
-        help="(macOS only) arch suffix baked into filename + manifest. "
-             "Auto-detected from platform.machine() if omitted.",
+        choices=["arm64", "intel", "universal"],
+        help=(
+            "(macOS only) Build target. 'universal' produces a single "
+            "universal2 fat binary (runs on Apple Silicon + Intel) — what "
+            "CI uses. 'arm64' / 'intel' produce arch-specific binaries; "
+            "auto-detected from platform.machine() for local builds."
+        ),
     )
     args = ap.parse_args()
     arch = args.arch or _detect_mac_arch()
 
+    # Hand PyInstaller the requested target arch via the spec's env-var
+    # hook. PyInstaller ignores --target-arch as a CLI flag when a spec
+    # file is in play, so we route through the env.
+    build_env = os.environ.copy()
+    if _platform_label() == "macos" and arch == "universal":
+        build_env["DLD_AGENT_TARGET_ARCH"] = "universal2"
+
     # Run PyInstaller.
-    subprocess.check_call([sys.executable, "-m", "PyInstaller", "--clean",
-                           "--noconfirm", "agent.spec"])
+    subprocess.check_call(
+        [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "agent.spec"],
+        env=build_env,
+    )
     built = os.path.join("dist", "dld-agent.exe" if _platform_label() == "windows" else "dld-agent")
     final_name = _binary_name(args.version, arch)
     final_path = os.path.join("dist", final_name)

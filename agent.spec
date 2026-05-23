@@ -1,5 +1,13 @@
 # PyInstaller spec for the agent. Run via: pyinstaller agent.spec
 # Produces dist/dld-agent (or dld-agent.exe on Windows).
+#
+# `target_arch` is read from the env var `DLD_AGENT_TARGET_ARCH` so the CI
+# build script can switch between native (None) and universal2 without
+# editing this file per release. macOS-only — PyInstaller ignores it on
+# Windows + Linux.
+import os
+_TARGET_ARCH = os.environ.get("DLD_AGENT_TARGET_ARCH") or None
+
 block_cipher = None
 
 a = Analysis(
@@ -23,7 +31,7 @@ exe = EXE(
     runtime_tmpdir=None,
     console=True,  # phase 2b: keeps the pairing prompt visible
     disable_windowed_traceback=False,
-    target_arch=None,
+    target_arch=_TARGET_ARCH,
     codesign_identity=None,
     entitlements_file=None,
 )

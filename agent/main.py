@@ -7,17 +7,106 @@ from __future__ import annotations
 
 import argparse
 import logging
+import logging.handlers
+import os
 import signal
 import socket
 import sys
 import threading
 import time
+from pathlib import Path
+from typing import Optional
 
 from agent import config, pair, scan, updater
 from agent._version import __version__
 from agent.transport import AgentConnection
 
 log = logging.getLogger(__name__)
+
+
+# --- File logging setup -----------------------------------------------------
+#
+# stdout-only logging was easy to lose: any user who closed the terminal,
+# any forwarded-port session that timed out, any system reboot, any agent
+# crash — gone. The file handler gives us ~50 MB of rolling history at
+# INFO+ regardless of --verbose so on-call has something to read.
+#
+# --verbose elevates BOTH the stdout AND the file handler to DEBUG.
+
+_LOG_FILENAME = "agent.log"
+_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+_LOG_BACKUP_COUNT = 5  # 5 rotations × 10 MB = ~50 MB ceiling
+
+
+def _default_log_dir() -> Path:
+    """Pick a cross-platform user data dir for agent logs.
+
+    Order:
+      1. platformdirs.user_log_dir("dld-agent") if available (proper
+         per-OS conventions: ~/Library/Logs on macOS, %LOCALAPPDATA%
+         on Windows, ~/.cache on Linux).
+      2. Fallback to ~/.dld-agent/logs for environments without
+         platformdirs installed.
+    """
+    try:
+        import platformdirs
+        return Path(platformdirs.user_log_dir("dld-agent", appauthor=False))
+    except Exception:
+        return Path.home() / ".dld-agent" / "logs"
+
+
+def configure_logging(*, log_dir: Optional[str] = None,
+                      verbose: bool = False) -> Path:
+    """Set up file + stdout logging.
+
+    Always logs INFO+ to ``<log_dir>/agent.log`` with rotation (10 MB × 5);
+    --verbose elevates both handlers to DEBUG so an on-call user can
+    grab a full debug trace by re-running with ``-v``.
+
+    Returns the resolved log directory (useful for tests and for printing
+    "Logs: <path>" at startup).
+
+    Idempotent: removing pre-existing handlers prevents double-attachment
+    if this is called twice (e.g. tests that import main multiple times).
+    """
+    resolved_dir = Path(log_dir) if log_dir else _default_log_dir()
+    resolved_dir.mkdir(parents=True, exist_ok=True)
+    log_path = resolved_dir / _LOG_FILENAME
+
+    root = logging.getLogger()
+    # Clear any handlers already attached (basicConfig leaves a StreamHandler
+    # behind; we want exactly the two handlers we install below).
+    for h in list(root.handlers):
+        root.removeHandler(h)
+
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    file_level = logging.DEBUG if verbose else logging.INFO
+    stream_level = logging.DEBUG if verbose else logging.WARNING
+    # Root level must be at-or-below the most permissive handler level.
+    root.setLevel(min(file_level, stream_level))
+
+    file_handler = logging.handlers.RotatingFileHandler(
+        str(log_path),
+        maxBytes=_LOG_MAX_BYTES,
+        backupCount=_LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(file_level)
+    file_handler.setFormatter(fmt)
+    root.addHandler(file_handler)
+
+    stream_handler = logging.StreamHandler()
+    # Non-verbose stdout default was WARNING; keep that so the console
+    # stays uncluttered. --verbose lifts both handlers together.
+    stream_handler.setLevel(stream_level)
+    stream_handler.setFormatter(fmt)
+    root.addHandler(stream_handler)
+
+    return resolved_dir
 
 # Module-level shutdown flag.  Signal handlers set this; the run loop checks it.
 _shutdown_event = threading.Event()
@@ -225,7 +314,15 @@ def main() -> None:
     ap.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Show detailed debug output",
+        help="Show detailed debug output (file + stdout both go to DEBUG)",
+    )
+    ap.add_argument(
+        "--log-dir",
+        default=None,
+        help=(
+            "Directory for rotating agent.log files. "
+            "Default: platformdirs user_log_dir, or ~/.dld-agent/logs."
+        ),
     )
     ap.add_argument(
         "--version",
@@ -234,12 +331,8 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    log_level = logging.DEBUG if args.verbose else logging.WARNING
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    log_path = configure_logging(log_dir=args.log_dir, verbose=args.verbose)
+    print(f"Logs: {log_path}")
 
     _install_signal_handlers()
     run(args.server)

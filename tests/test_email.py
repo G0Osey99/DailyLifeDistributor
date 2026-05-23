@@ -46,3 +46,36 @@ def test_render_unknown_template_raises():
     import pytest
     with pytest.raises(email.UnknownTemplateError):
         email.render_template("does_not_exist")
+
+
+def test_render_invite_template():
+    subject, html, text = email.render_template(
+        "invite",
+        org_name="LCBC",
+        inviter_name="Bob",
+        role="user",
+        accept_url="https://x/a",
+        agent_win_url="https://x/w",
+        agent_mac_url="https://x/m",
+    )
+    assert "LCBC" in subject
+    assert "LCBC" in html and "Bob" in html and "https://x/a" in html
+    assert "Windows" in html and "macOS" in html
+    assert "https://x/a" in text and "https://x/w" in text
+    assert "https://x/m" in text
+
+
+def test_render_welcome_with_agent_urls():
+    subject, html, text = email.render_template(
+        "welcome",
+        username="alice",
+        org_name="LCBC",
+        role="manager",
+        dashboard_url="https://example.com/dash",
+        agent_win_url="https://example.com/w",
+        agent_mac_url="https://example.com/m",
+    )
+    assert "LCBC" in subject
+    assert "alice" in html and "manager" in html
+    assert "Windows" in html and "macOS" in html
+    assert "alice" in text

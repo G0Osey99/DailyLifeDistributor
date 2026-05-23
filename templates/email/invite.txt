@@ -1,0 +1,15 @@
+You've been invited to {{ org_name }}
+
+{{ inviter_name }} invited you to join {{ org_name }} on Daily Life Distributor
+as a {{ role }}.
+
+Accept the invitation:
+{{ accept_url }}
+
+This link expires in 7 days.
+
+After accepting, download the agent:
+  Windows: {{ agent_win_url }}
+  macOS:   {{ agent_mac_url }}
+
+If you weren't expecting this invitation, you can ignore this email.

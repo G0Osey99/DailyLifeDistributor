@@ -127,8 +127,19 @@ def _rl_enabled() -> bool:
 
 @bp.route("/agent/pair/new", methods=["POST"])
 def pair_new():
-    """Generate a single-use pairing code (session-gated by _require_auth)."""
-    code = devices.create_pairing_code()
+    """Generate a single-use pairing code (session-gated by _require_auth).
+
+    Multi-tenant phase β: the session user_id (if present) is recorded
+    against the code so the agent's subsequent /agent/pair/redeem inherits
+    it onto the new device row.
+    """
+    uid_raw = session.get("user_id")
+    user_id: int | None
+    try:
+        user_id = int(uid_raw) if uid_raw is not None else None
+    except (TypeError, ValueError):
+        user_id = None
+    code = devices.create_pairing_code(user_id=user_id)
     return jsonify({"code": code})
 
 

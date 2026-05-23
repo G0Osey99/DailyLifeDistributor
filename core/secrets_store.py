@@ -6,6 +6,16 @@ Values are Fernet-encrypted (core.crypto) before they touch disk. Two kinds:
 
 `materialize_blob_to_tempfile` decrypts a blob to a 0600 temp file for the
 brief window a third-party library needs a real file path, then deletes it.
+
+Multi-tenant phase β: every accessor takes an optional ``org_id`` kwarg.
+When ``org_id`` is provided, the secret name is namespaced under
+``org:<id>:<name>`` so two orgs can hold a ``yt_token`` of their own
+without colliding. When ``org_id`` is None, behaviour is unchanged from
+phase α (legacy single-tenant rows).
+
+The schema's ``org_id`` column (added in phase α) is populated to match the
+``org_id`` arg, so a future migration that switches the primary key to
+``(name, org_id)`` can dedupe legacy rows without re-decrypting them.
 """
 from __future__ import annotations
 
@@ -25,84 +35,119 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _set(name: str, kind: str, raw: bytes) -> None:
+def _scoped(name: str, org_id: int | None) -> str:
+    """Return the storage name for *name* in scope *org_id*.
+
+    ``org_id`` is None  → legacy unscoped (single-tenant) name.
+    ``org_id`` is int   → ``org:<id>:<name>``. Prefix is reserved.
+    """
+    if org_id is None:
+        return name
+    return f"org:{int(org_id)}:{name}"
+
+
+def _set(name: str, kind: str, raw: bytes, *, org_id: int | None = None) -> None:
     token = crypto.encrypt(raw)
+    storage_name = _scoped(name, org_id)
     with _get_conn() as conn:
         conn.execute(
-            "INSERT INTO secrets (name, kind, value, updated_at) "
-            "VALUES (?, ?, ?, ?) "
+            "INSERT INTO secrets (name, kind, value, updated_at, org_id) "
+            "VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET kind=excluded.kind, "
-            "value=excluded.value, updated_at=excluded.updated_at",
-            (name, kind, token, _now()),
+            "value=excluded.value, updated_at=excluded.updated_at, "
+            "org_id=excluded.org_id",
+            (storage_name, kind, token, _now(), org_id),
         )
         conn.commit()
 
 
-def _get_raw(name: str) -> bytes | None:
+def _get_raw(name: str, *, org_id: int | None = None) -> bytes | None:
+    storage_name = _scoped(name, org_id)
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT value FROM secrets WHERE name=?", (name,)
+            "SELECT value FROM secrets WHERE name=?", (storage_name,),
         ).fetchone()
     if row is None:
         return None
     try:
         return crypto.decrypt(bytes(row["value"]))
     except crypto.DecryptError:
-        log.error("Secret %r could not be decrypted; treating as unset.", name)
+        log.error(
+            "Secret %r could not be decrypted; treating as unset.",
+            storage_name,
+        )
         return None
 
 
-def set_secret(name: str, plaintext: str) -> None:
-    _set(name, "kv", plaintext.encode("utf-8"))
+def set_secret(name: str, plaintext: str, *, org_id: int | None = None) -> None:
+    _set(name, "kv", plaintext.encode("utf-8"), org_id=org_id)
 
 
-def get_secret(name: str) -> str | None:
-    raw = _get_raw(name)
+def get_secret(name: str, *, org_id: int | None = None) -> str | None:
+    raw = _get_raw(name, org_id=org_id)
     return None if raw is None else raw.decode("utf-8")
 
 
-def set_blob(name: str, data: bytes) -> None:
-    _set(name, "blob", data)
+def set_blob(name: str, data: bytes, *, org_id: int | None = None) -> None:
+    _set(name, "blob", data, org_id=org_id)
 
 
-def get_blob(name: str) -> bytes | None:
-    return _get_raw(name)
+def get_blob(name: str, *, org_id: int | None = None) -> bytes | None:
+    return _get_raw(name, org_id=org_id)
 
 
-def has_secret(name: str) -> bool:
-    """Return True if a row exists for `name`.
+def has_secret(name: str, *, org_id: int | None = None) -> bool:
+    """Return True if a row exists for *name* in scope *org_id*.
 
     Note: this returns True even if the stored value is currently
     undecryptable (wrong/rotated key); callers must still handle a None
     result from get_secret/get_blob.
     """
+    storage_name = _scoped(name, org_id)
     with _get_conn() as conn:
         return conn.execute(
-            "SELECT 1 FROM secrets WHERE name=?", (name,)
+            "SELECT 1 FROM secrets WHERE name=?", (storage_name,),
         ).fetchone() is not None
 
 
-def delete_secret(name: str) -> None:
+def delete_secret(name: str, *, org_id: int | None = None) -> None:
+    storage_name = _scoped(name, org_id)
     with _get_conn() as conn:
-        conn.execute("DELETE FROM secrets WHERE name=?", (name,))
+        conn.execute("DELETE FROM secrets WHERE name=?", (storage_name,))
         conn.commit()
 
 
-def list_secret_names() -> list[str]:
+def list_secret_names(*, org_id: int | None = None) -> list[str]:
+    """List secret names visible in scope *org_id*.
+
+    ``org_id`` is None  → only legacy (unscoped) names, prefix-stripped of
+                          any accidental ``org:N:`` collisions.
+    ``org_id`` is int   → only secrets stored under that scope, returned
+                          with the scope prefix stripped.
+    """
     with _get_conn() as conn:
-        return [r["name"] for r in conn.execute(
+        rows = conn.execute(
             "SELECT name FROM secrets ORDER BY name"
-        ).fetchall()]
+        ).fetchall()
+    if org_id is None:
+        return [r["name"] for r in rows if not r["name"].startswith("org:")]
+    prefix = f"org:{int(org_id)}:"
+    return [
+        r["name"][len(prefix):] for r in rows
+        if r["name"].startswith(prefix)
+    ]
 
 
 @contextmanager
-def materialize_blob_to_tempfile(name: str, suffix: str = ""):
+def materialize_blob_to_tempfile(
+    name: str, suffix: str = "", *, org_id: int | None = None,
+):
     """Decrypt a blob secret to a temp file; delete it on exit.
 
     The temp file is created 0600 on POSIX (Windows ignores POSIX modes).
     Yields the temp-file path, or None if the secret is unset.
     """
-    data = get_blob(name)
+    data = get_blob(name, org_id=org_id)
     if data is None:
         yield None
         return

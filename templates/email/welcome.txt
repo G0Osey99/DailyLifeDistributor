@@ -2,6 +2,13 @@ Welcome to {{ org_name }} on Daily Life Distributor
 
 Hi {{ username }},
 
-Your account is ready. Sign in at https://autoalert.pro/login
+Your account is ready{% if role %} as a {{ role }}{% endif %}.
+Sign in at {{ dashboard_url|default('https://autoalert.pro/login', true) }}
+
+{% if agent_win_url and agent_mac_url %}
+Install the agent:
+  Windows: {{ agent_win_url }}
+  macOS:   {{ agent_mac_url }}
+{% endif %}
 
 — Daily Life Distributor

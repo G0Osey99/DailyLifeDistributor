@@ -192,3 +192,90 @@ def _master_key(monkeypatch):
     from cryptography.fernet import Fernet
     monkeypatch.setenv("SECRET_ENC_KEY", Fernet.generate_key().decode())
     yield
+
+
+# ---------- Multi-tenant phase β: role-scoped client fixtures ----------
+
+@pytest.fixture
+def app(monkeypatch):
+    """Real Flask app via create_app(), with the per-test DB already isolated."""
+    monkeypatch.setenv("HYBRID_AGENT_ENABLED", "false")
+    monkeypatch.setenv("RATELIMIT_ENABLED", "false")
+    monkeypatch.setenv("LEGACY_PASSWORD_ENABLED", "false")
+    # SESSION_COOKIE_SECURE off so the test client uses cookies.
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
+    # The factory mints a random FLASK_SECRET_KEY when none is set; pin
+    # one so test_client.session_transaction is stable across calls.
+    monkeypatch.setenv("FLASK_SECRET_KEY", "test-secret-key-for-phase-beta")
+    from app import create_app
+    a = create_app()
+    a.config["TESTING"] = True
+    yield a
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+
+def _ensure_org(oid: int, name: str | None = None):
+    from core import db
+    with db._get_conn() as c:
+        c.execute(
+            "INSERT OR IGNORE INTO organizations "
+            "(id, name, slug, plan, created_at) "
+            "VALUES (?, ?, ?, 'free', datetime('now'))",
+            (oid, name or f"Test Org {oid}", f"test-org-{oid}"),
+        )
+        c.commit()
+
+
+def _make_role_client(app, role: str, *, oid: int = 1, suffix: str = ""):
+    """Insert a user + membership, prime the session on a *fresh* test client.
+
+    Each call returns a NEW test_client instance so two role fixtures in
+    the same test (e.g. client_owner + client_manager) don't trample each
+    other's session cookies.
+    """
+    from core import db, user_store
+    _ensure_org(oid)
+    tag = f"{role}{suffix}_o{oid}"
+    user = user_store.create_user(
+        username=tag, email=f"{tag}@example.com",
+        password="long-enough-pw-12!",
+    )
+    user_store.update_password(user["id"], "long-enough-pw-12!")
+    with db._get_conn() as c:
+        c.execute(
+            "INSERT INTO org_memberships "
+            "(user_id, org_id, role, joined_at) "
+            "VALUES (?, ?, ?, datetime('now'))",
+            (user["id"], oid, role),
+        )
+        c.commit()
+    c = app.test_client()
+    with c.session_transaction() as s:
+        s["user_id"] = user["id"]
+        s["current_org_id"] = oid
+    return c
+
+
+@pytest.fixture
+def client_owner(app):
+    return _make_role_client(app, "owner")
+
+
+@pytest.fixture
+def client_manager(app):
+    return _make_role_client(app, "manager")
+
+
+@pytest.fixture
+def client_user(app):
+    return _make_role_client(app, "user")
+
+
+@pytest.fixture
+def client_owner_b(app):
+    """Owner of org_id=2 (cross-org isolation tests)."""
+    return _make_role_client(app, "owner", oid=2, suffix="_b")

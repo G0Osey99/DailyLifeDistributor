@@ -48,7 +48,7 @@ def _safe_next(nxt: str) -> str:
 
 
 def is_authenticated() -> bool:
-    return bool(session.get(_SESSION_KEY))
+    return auth.is_authenticated()
 
 
 def login_required(view):

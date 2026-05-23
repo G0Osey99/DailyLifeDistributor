@@ -6,6 +6,9 @@ from core import auth
 
 @pytest.fixture()
 def client(temp_db, monkeypatch):
+    # Multi-tenant phase α: existing tests exercise the legacy shared-password
+    # form, which is now opt-in behind LEGACY_PASSWORD_ENABLED.
+    monkeypatch.setenv("LEGACY_PASSWORD_ENABLED", "true")
     auth.reset_lockouts()
     auth.set_password("correct-horse")
     import app as flask_app_module

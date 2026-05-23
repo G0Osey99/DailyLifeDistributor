@@ -93,3 +93,36 @@ def is_locked(ip: str) -> bool:
 def reset_lockouts() -> None:
     """Test helper: clear all tracked failures."""
     _failures.clear()
+
+
+# ---- Multi-tenant phase α: session-shape helpers ----
+#
+# Sessions are keyed by user_id (and optionally current_org_id). The legacy
+# boolean `authenticated` is honored ONLY when LEGACY_PASSWORD_ENABLED is
+# set — gives ops one release to roll back if Argon2id login breaks.
+
+from flask import session as _flask_session
+
+
+def _legacy_enabled() -> bool:
+    return (os.environ.get("LEGACY_PASSWORD_ENABLED", "") or "").lower() in (
+        "1", "true", "yes",
+    )
+
+
+def is_authenticated() -> bool:
+    if _flask_session.get("user_id") is not None:
+        return True
+    if _legacy_enabled() and bool(_flask_session.get("authenticated")):
+        return True
+    return False
+
+
+def current_user_id() -> int | None:
+    uid = _flask_session.get("user_id")
+    return int(uid) if uid is not None else None
+
+
+def current_org_id() -> int | None:
+    oid = _flask_session.get("current_org_id")
+    return int(oid) if oid is not None else None

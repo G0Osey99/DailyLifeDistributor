@@ -87,3 +87,28 @@ def test_collect_credentials_omits_missing_keys():
     from core import agent_dispatch
     # Nothing in store.
     assert agent_dispatch.collect_credentials(platforms_in_use={"Rock"}) == {}
+
+
+def test_start_sends_envelope_through_relay_and_returns_job_id(monkeypatch, temp_db):
+    from core import agent_dispatch, secrets_store, relay
+    secrets_store.set_secret("youtube.token", "{}")
+    sent: list = []
+    monkeypatch.setattr(relay, "send_to_device",
+                        lambda device_name, envelope: sent.append((device_name, envelope)))
+    monkeypatch.setattr(agent_dispatch, "_pick_device",
+                        lambda: {"name": "mac-1", "id": "dev-1"})
+
+    job_id = agent_dispatch.start(
+        session_id="S1",
+        summary=[{"date": "2026-05-22", "platforms": ["YouTube Video"]}],
+        entries={"2026-05-22": _entry()},
+        elements={"youtube_video_enabled": True},
+        config={"max_workers": 4},
+    )
+    assert isinstance(job_id, str) and len(job_id) > 0
+    assert len(sent) == 1
+    device, env = sent[0]
+    assert device == "mac-1"
+    assert env["type"] == "job_plan"
+    assert env["job_id"] == job_id
+    assert env["rows"][0]["iso_date"] == "2026-05-22"

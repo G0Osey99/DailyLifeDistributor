@@ -138,3 +138,62 @@ def filter_done_rows(*, session_id: str, summary: list[dict]) -> list[dict]:
         if remaining:
             out.append({"row_idx": idx, "iso_date": iso, "platforms": remaining})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Device selection + relay dispatch
+# ---------------------------------------------------------------------------
+import uuid as _uuid
+from core import devices as _devices
+from core import relay as _relay
+
+
+class NoAgentOnlineError(RuntimeError):
+    """Raised when /upload?path=agent is invoked but no paired agent is online."""
+
+
+def _pick_device() -> dict:
+    """Return the most-recently-seen online device dict.
+
+    Raises NoAgentOnlineError if no device qualifies (none paired, or all
+    last-seen more than freshness_seconds ago).
+    """
+    dev = _devices.most_recently_seen_online()
+    if dev is None:
+        raise NoAgentOnlineError("no paired agent is online")
+    return dev
+
+
+def start(
+    *,
+    session_id: str,
+    summary: list[dict],
+    entries: dict,
+    elements: dict,
+    config: dict,
+) -> str:
+    """Filter done rows, bundle credentials, build the envelope, and send
+    it through the relay to the chosen agent. Returns the new job_id."""
+    job_id = _uuid.uuid4().hex
+    rows = filter_done_rows(session_id=session_id, summary=summary)
+    if not rows:
+        _logger.info("agent_dispatch.start(job=%s): nothing to do", job_id)
+        return job_id
+    for r in rows:
+        r["elements"] = elements
+    platforms_in_use: set[str] = set()
+    for r in rows:
+        platforms_in_use.update(r["platforms"])
+    creds = collect_credentials(platforms_in_use=platforms_in_use)
+    envelope = build_envelope(
+        job_id=job_id,
+        rows=rows,
+        entries=entries,
+        credentials=creds,
+        config=config,
+    )
+    device = _pick_device()
+    _relay.send_to_device(device["name"], envelope)
+    _logger.info("agent_dispatch.start(job=%s, device=%s, rows=%d)",
+                 job_id, device["name"], len(rows))
+    return job_id

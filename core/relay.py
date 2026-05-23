@@ -76,3 +76,46 @@ class Relay:
             sinks = list(self._room(account).browsers.values())
         for s in sinks:
             s(msg)
+
+
+# ---------------------------------------------------------------------------
+# Module-level default relay + convenience send function
+# ---------------------------------------------------------------------------
+# blueprints/agent.py calls set_default_relay(RELAY) after creating its
+# process-wide Relay instance, so agent_dispatch can call send_to_device
+# without importing blueprints (which would create a circular dependency).
+
+_default_relay: "Relay | None" = None
+_default_account: str = "default"
+
+
+def set_default_relay(relay: "Relay", account: str = "default") -> None:
+    """Register the process-wide Relay instance used by send_to_device."""
+    global _default_relay, _default_account
+    _default_relay = relay
+    _default_account = account
+
+
+def send_to_device(device_name: str, envelope: dict) -> None:
+    """Send *envelope* (serialised to JSON) to every agent socket whose
+    device_id matches *device_name*.
+
+    In the single-account deployment device_name == device_id (hex UUID).
+    The relay stores agents keyed by device_id; we broadcast to all agents
+    whose key equals device_name so the caller can pass either form.
+
+    Raises RuntimeError if no default relay has been set (i.e. the blueprint
+    has not been registered), or ValueError if the named device is not
+    currently connected.  In tests the function is monkeypatched, so neither
+    path fires during unit testing.
+    """
+    if _default_relay is None:
+        raise RuntimeError("send_to_device: no default relay set; "
+                           "call relay.set_default_relay() first")
+    msg = json.dumps(envelope)
+    with _default_relay._lock:
+        room = _default_relay._rooms.get(_default_account)
+        sink = room.agents.get(device_name) if room else None
+    if sink is None:
+        raise ValueError(f"send_to_device: device {device_name!r} not connected")
+    sink(msg)

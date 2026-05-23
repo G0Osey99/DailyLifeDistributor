@@ -20,29 +20,170 @@
     let runActive = false;
 
     // ── Agent upload-path state ───────────────────────────────────────────
-    const _agentState = { online: false, deviceName: null, chosenPath: "agent" };
+    //
+    // Phase 3.5: the chip is now a real device picker. _agentState tracks:
+    //   onlineDevices : the latest /agent/devices/online snapshot
+    //   selectedId    : "" → Auto, or a specific device_id
+    //   chosenPath    : "agent" (use the picker) or "web" (force browser)
+    //
+    // localStorage["dld:preferred_agent"] persists the selected device_id
+    // across reloads so a user who picked "Studio" keeps it after closing
+    // the tab.
+    const _LS_KEY = "dld:preferred_agent";
+    const _agentState = {
+        onlineDevices: [],
+        selectedId: localStorage.getItem(_LS_KEY) || "",
+        chosenPath: "agent",
+        // The most recently-confirmed live hostname (from whoami_pong),
+        // keyed by device_id. The chip shows this in preference to the
+        // DB-stored hostname so reinstalls / hostname changes appear
+        // immediately rather than waiting for a re-pair.
+        liveHostnames: {},
+        // Outstanding whoami_pings we've sent that haven't been answered.
+        // Each key is a ping_id; the value is the device_id we expect
+        // (or null for "broadcast / any agent").
+        pendingPings: {},
+        agentSocket: null,
+    };
+
+    // Persist (or clear) the picker selection.
+    function _persistSelection(id) {
+        if (id) localStorage.setItem(_LS_KEY, id);
+        else localStorage.removeItem(_LS_KEY);
+    }
+
+    function _deviceLabel(d) {
+        // Prefer the live hostname (refreshed by whoami_pong), then the
+        // persisted hostname, then the human-set name.
+        const live = _agentState.liveHostnames[d.id];
+        return live || d.hostname || d.name || "device";
+    }
 
     function _updateAgentChip() {
         const chip = document.getElementById("agent-chip");
         const nameEl = document.getElementById("agent-chip-name");
+        const picker = document.getElementById("agent-chip-picker");
         const toggle = document.getElementById("agent-chip-toggle");
-        if (!chip) return;
-        if (!_agentState.online) { chip.hidden = true; return; }
+        if (!chip || !picker) return;
+
+        const devs = _agentState.onlineDevices;
+        if (!devs.length) { chip.hidden = true; return; }
         chip.hidden = false;
         chip.dataset.path = _agentState.chosenPath;
-        if (nameEl) nameEl.textContent = _agentState.deviceName || "agent";
+
+        if (devs.length === 1) {
+            // Single device → static label, no dropdown.
+            picker.hidden = true;
+            if (nameEl) nameEl.textContent = _deviceLabel(devs[0]);
+        } else {
+            // Multiple devices → real dropdown. nameEl stays empty (the
+            // dropdown carries the label).
+            picker.hidden = false;
+            if (nameEl) nameEl.textContent = "";
+
+            // Rebuild options. Preserve current selection if still valid.
+            const want = _agentState.selectedId;
+            picker.innerHTML = "";
+            const optAuto = document.createElement("option");
+            optAuto.value = "";
+            optAuto.textContent = "Auto";
+            picker.appendChild(optAuto);
+            for (const d of devs) {
+                const opt = document.createElement("option");
+                opt.value = d.id;
+                let label = _deviceLabel(d);
+                if (d.same_network) label += "  ● same network";
+                opt.textContent = label;
+                picker.appendChild(opt);
+            }
+            // Resolve initial selection: explicit choice → preserved.
+            // No explicit choice + exactly one same_network → pre-pick it.
+            const inList = devs.find((d) => d.id === want);
+            if (inList) {
+                picker.value = want;
+            } else {
+                const sameNet = devs.filter((d) => d.same_network);
+                if (sameNet.length === 1) {
+                    picker.value = sameNet[0].id;
+                    _agentState.selectedId = sameNet[0].id;
+                    _persistSelection(sameNet[0].id);
+                } else {
+                    picker.value = "";
+                    _agentState.selectedId = "";
+                }
+            }
+        }
         if (toggle) toggle.textContent =
             _agentState.chosenPath === "agent" ? "use web instead" : "use agent instead";
     }
 
-    function onAgentPresence(presence) {
-        _agentState.online = !!presence.online;
-        if (!presence.online) _agentState.chosenPath = "agent"; // reset on disconnect
+    async function _refreshOnlineDevices() {
+        try {
+            const r = await fetch("/agent/devices/online", {
+                headers: { "Accept": "application/json" },
+            });
+            if (!r.ok) {
+                // 401 means the session expired — leave devs empty so chip hides.
+                _agentState.onlineDevices = [];
+                _updateAgentChip();
+                return;
+            }
+            const data = await r.json();
+            _agentState.onlineDevices = data.devices || [];
+        } catch (_) {
+            _agentState.onlineDevices = [];
+        }
         _updateAgentChip();
+        // Send a fresh whoami_ping so the chip shows the live hostname
+        // (the agent's DB-stored hostname can drift across reinstalls).
+        _sendWhoamiPing();
+    }
+
+    function onAgentPresence(presence) {
+        // Presence frames don't carry the full device list; treat them as
+        // a hint to re-fetch. (Even an "online: false" frame can leave one
+        // of two devices connected — the endpoint is the source of truth.)
+        _refreshOnlineDevices();
     }
 
     function _uploadPath() {
-        return (_agentState.online && _agentState.chosenPath === "agent") ? "agent" : "web";
+        return (_agentState.onlineDevices.length > 0
+                && _agentState.chosenPath === "agent") ? "agent" : "web";
+    }
+
+    function _generatePingId() {
+        // crypto.randomUUID isn't on every browser; fall back to a
+        // timestamp-plus-random string. Doesn't need cryptographic
+        // strength — it's purely for ping/pong correlation.
+        try {
+            if (window.crypto && window.crypto.randomUUID) {
+                return window.crypto.randomUUID();
+            }
+        } catch (_) { /* ignore */ }
+        return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+    }
+
+    function _sendWhoamiPing() {
+        const ws = _agentState.agentSocket;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const ping_id = _generatePingId();
+        _agentState.pendingPings[ping_id] = null;
+        try {
+            ws.send(JSON.stringify({ v: 1, type: "whoami_ping", ping_id }));
+        } catch (_) { /* socket dropped — next refresh re-tries */ }
+    }
+
+    function _onWhoamiPong(msg) {
+        // Trust ping_id correlation: ignore unsolicited pongs.
+        if (!Object.prototype.hasOwnProperty.call(
+                _agentState.pendingPings, msg.ping_id || "")) return;
+        delete _agentState.pendingPings[msg.ping_id];
+        const did = msg.device_id || "";
+        const host = msg.hostname || "";
+        if (did && host) {
+            _agentState.liveHostnames[did] = host;
+            _updateAgentChip();
+        }
     }
 
     // ── /agent/ws browser socket (presence frames) ────────────────────────
@@ -52,13 +193,23 @@
         function connect() {
             let ws;
             try { ws = new WebSocket(wsUrl); } catch (_) { return; }
+            _agentState.agentSocket = ws;
+            ws.addEventListener("open", () => {
+                // Refresh the online list on connect; that handler also fires
+                // a whoami_ping once the socket is OPEN.
+                _refreshOnlineDevices();
+            });
             ws.addEventListener("message", (e) => {
                 let msg;
                 try { msg = JSON.parse(e.data); } catch (_) { return; }
                 if (msg.type === "presence") onAgentPresence(msg.payload || {});
+                else if (msg.type === "whoami_pong") _onWhoamiPong(msg);
             });
-            // Reconnect after 5 s so the chip stays live across server restarts.
-            ws.addEventListener("close", () => setTimeout(connect, 5000));
+            ws.addEventListener("close", () => {
+                _agentState.agentSocket = null;
+                // Reconnect after 5 s so the chip stays live across server restarts.
+                setTimeout(connect, 5000);
+            });
         }
         connect();
     })();
@@ -455,7 +606,14 @@
         // Only this batch's date overrides.
         const batchOverrides = {};
         for (const d of batchDates) if (overrides && overrides[d]) batchOverrides[d] = overrides[d];
-        const res = await postJSON(`/media/batch/run?path=${_uploadPath()}`, {
+        // Include the picker's device_id when one is chosen; the server
+        // honors it as step (1) of the fallback chain. Empty string =
+        // Auto = let the server pick using the fallback chain.
+        let runUrl = `/media/batch/run?path=${_uploadPath()}`;
+        if (_uploadPath() === "agent" && _agentState.selectedId) {
+            runUrl += `&device_id=${encodeURIComponent(_agentState.selectedId)}`;
+        }
+        const res = await postJSON(runUrl, {
             run_id: runId, dates: batchDates, platforms, files: filesMap,
             overrides: batchOverrides,
         });
@@ -523,11 +681,19 @@
         }
     });
 
-    // ── Agent chip toggle ─────────────────────────────────────────────────
+    // ── Agent chip toggle (use web vs agent) ─────────────────────────────
     document.addEventListener("click", (e) => {
         if (e.target.id !== "agent-chip-toggle") return;
         e.preventDefault();
         _agentState.chosenPath = _agentState.chosenPath === "agent" ? "web" : "agent";
         _updateAgentChip();
+    });
+
+    // ── Device picker dropdown change ────────────────────────────────────
+    document.addEventListener("change", (e) => {
+        if (e.target.id !== "agent-chip-picker") return;
+        const id = e.target.value || "";
+        _agentState.selectedId = id;
+        _persistSelection(id);
     });
 })();

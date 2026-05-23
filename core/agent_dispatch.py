@@ -118,9 +118,11 @@ def _job(job_id: str) -> dict | None:
 def on_frame(frame: dict) -> None:
     """Route an incoming relay frame to the appropriate SSE queue.
 
-    Currently handles type ``event``; other types (credentials_updated,
-    image_used, pending_results_chunk) are logged as debug no-ops so that
-    adding them in A7/A8/A9 is a small switch addition here.
+    Handles ``event``, ``credentials_updated``, and ``image_used`` types.
+    Pending results are sent in-band on the agent's hello frame
+    (``pending_results``) and ingested in ``blueprints/agent.py``; there
+    is no separate ``pending_results_chunk`` wire type.
+    Unknown types are logged at debug and dropped.
     """
     ftype = frame.get("type")
     if ftype == "event":

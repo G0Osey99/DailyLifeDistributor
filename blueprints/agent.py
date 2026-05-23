@@ -361,10 +361,9 @@ def register_sockets(sock) -> None:
                     except Exception:
                         pass
                     break
-                # Route frames that target the server (event, and future
-                # credentials_updated / image_used / pending_results_chunk).
-                # on_frame handles unrecognised types as a debug no-op so
-                # adding new types in A7/A8/A9 is a small switch addition.
+                # Route frames that target the server (event,
+                # credentials_updated, image_used). on_frame logs unrecognised
+                # types at debug and drops them.
                 try:
                     frame = _json.loads(msg)
                     ftype = frame.get("type") if isinstance(frame, dict) else None
@@ -386,7 +385,7 @@ def register_sockets(sock) -> None:
                         # Don't continue — hello also needs to reach the relay
                         # for presence tracking (fall through to route_from_agent).
                     elif ftype in ("event", "credentials_updated",
-                                   "image_used", "pending_results_chunk"):
+                                   "image_used"):
                         _agent_dispatch.on_frame(frame)
                         continue
                 except Exception:

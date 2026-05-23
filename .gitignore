@@ -63,3 +63,7 @@ Thumbs.db
 
 # Git worktrees (isolated workspaces; never committed)
 .worktrees/
+
+# Never commit local SSH keys (release uploader, etc.)
+release_key*
+*.pem

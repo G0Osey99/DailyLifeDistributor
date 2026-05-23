@@ -3,11 +3,14 @@ installs the credentials/db shims, resolves local file paths from the
 cached scan, runs the orchestrator, and pumps every emitted event back
 through the transport.
 
-Phase 3 keeps the pending_results / buffer logic deferred to PR-C.
+PR-C adds: EventBuffer (bounded replay on reconnect), PendingResults
+(accumulate success rows for hello-frame replay).
 """
 from __future__ import annotations
 
 import logging
+import threading as _thr
+from collections import deque
 from typing import Any
 
 from agent import scan as _scan
@@ -51,6 +54,8 @@ def handle_job_plan(*, plan: dict, transport: Any) -> None:
         # Stamp job_id on every outgoing frame so the server can route it.
         if "job_id" not in frame:
             frame = {**frame, "job_id": job_id}
+        # C2: record completed rows so the next hello can replay them.
+        _pending_results.observe(frame)
         try:
             transport.send(frame)
         except Exception as exc:
@@ -71,3 +76,99 @@ def handle_job_plan(*, plan: dict, transport: Any) -> None:
         _emit({"type": "event", "event": "error",
                "error": f"run_batch crashed: {exc}"})
         _emit({"type": "event", "event": "done"})
+
+
+# ---------------------------------------------------------------------------
+# C1 — Bounded event buffer with replay on reconnect
+# ---------------------------------------------------------------------------
+
+class EventBuffer:
+    """Buffers emitted frames while disconnected; replays in order on reconnect.
+
+    Thread-safe.  ``send`` is called under the lock so callers must ensure
+    their send function is re-entrant-safe (or tolerant of being called from
+    any thread).
+
+    Args:
+        max_size: Maximum number of frames to retain while disconnected.
+                  When full, the *oldest* frame is dropped (ring-buffer style).
+        send:     Callable invoked for each frame that should go to the wire.
+    """
+
+    def __init__(self, *, max_size: int, send) -> None:
+        self._max = max_size
+        self._send = send
+        self._q: deque[dict] = deque()
+        self._connected = False
+        self._lock = _thr.RLock()
+
+    def set_connected(self, connected: bool) -> None:
+        """Mark the connection state.  On transition to *True*, flush buffer."""
+        with self._lock:
+            self._connected = connected
+            if connected:
+                while self._q:
+                    self._send(self._q.popleft())
+
+    def emit(self, frame: dict) -> None:
+        """Send *frame* immediately if connected; otherwise buffer it."""
+        with self._lock:
+            if self._connected:
+                self._send(frame)
+                return
+            if len(self._q) >= self._max:
+                self._q.popleft()  # drop oldest
+            self._q.append(frame)
+
+
+# ---------------------------------------------------------------------------
+# C2 — PendingResults: accumulate success rows for hello-frame replay
+# ---------------------------------------------------------------------------
+
+class PendingResults:
+    """Records completed-row success events so they can be replayed in the
+    hello frame after a reconnect.
+
+    Keyed by ``(job_id, row_idx, platform)`` — last write wins (idempotent
+    from the agent's perspective; server applies them idempotently too).
+    """
+
+    def __init__(self) -> None:
+        self._by_key: dict[tuple[str, int, str], dict] = {}
+        self._lock = _thr.RLock()
+
+    def observe(self, frame: dict) -> None:
+        """Record *frame* if it is a success event; ignore everything else."""
+        if frame.get("type") != "event" or frame.get("event") != "success":
+            return
+        key = (frame["job_id"], frame["row_idx"], frame["platform"])
+        entry = {
+            "job_id": frame["job_id"],
+            "row_idx": frame["row_idx"],
+            "iso_date": frame["iso_date"],
+            "platform": frame["platform"],
+            "status": "success",
+            "payload": frame.get("payload", {}),
+        }
+        with self._lock:
+            self._by_key[key] = entry
+
+    def snapshot(self) -> list[dict]:
+        """Return a copy of all recorded entries (order is insertion order)."""
+        with self._lock:
+            return list(self._by_key.values())
+
+    def clear_acked(self, keys) -> None:
+        """Remove entries whose keys the server has acknowledged.
+
+        *keys* is an iterable of ``[job_id, row_idx, platform]`` triples
+        (lists or tuples — both accepted).
+        """
+        with self._lock:
+            for k in keys:
+                self._by_key.pop(tuple(k), None)
+
+
+# Module-level PendingResults singleton used by handle_job_plan so that
+# every success event flowing through any job is observed.
+_pending_results: PendingResults = PendingResults()

@@ -105,6 +105,36 @@ def users_list():
     return render_template("admin/users.html", users=users, notice=None)
 
 
+@bp.route("/audit-log", methods=["GET"])
+@require_program_owner
+def admin_audit_log():
+    """Cross-org audit-log search for program-owners.
+
+    Same template as /settings/audit-log but with `cross_org=True` so the
+    UI omits the org-id filter (events from every org are interleaved by
+    timestamp).
+    """
+    from core import db as _db
+    action_prefix = request.args.get("action") or None
+    org_id = request.args.get("org_id")
+    org_id_int = int(org_id) if org_id and org_id.isdigit() else None
+    since = request.args.get("since") or None
+    until = request.args.get("until") or None
+    rows = _db.list_audit_events(
+        org_id=org_id_int, action_prefix=action_prefix,
+        since=since, until=until, limit=1000,
+    )
+    return render_template(
+        "audit_log.html",
+        rows=rows,
+        filters={
+            "action": action_prefix, "actor": None,
+            "since": since, "until": until,
+        },
+        cross_org=True,
+    )
+
+
 @bp.route("/users/force_reset", methods=["POST"])
 @require_program_owner
 def users_force_reset():

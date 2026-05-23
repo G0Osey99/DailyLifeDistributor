@@ -93,10 +93,14 @@ _jobs: dict[str, dict] = {}
 _jobs_lock = _threading.RLock()
 
 
-def register_job(*, job_id: str, sse_queue) -> None:
-    """Register an SSE queue for *job_id* so on_frame can route events to it."""
+def register_job(*, job_id: str, sse_queue, session_id: str | None = None) -> None:
+    """Register an SSE queue for *job_id* so on_frame can route events to it.
+
+    *session_id* is optional; when provided, ``success`` events will be
+    written to ``upload_history`` via :func:`core.db.record_upload`.
+    """
     with _jobs_lock:
-        _jobs[job_id] = {"queue": sse_queue}
+        _jobs[job_id] = {"queue": sse_queue, "session_id": session_id}
 
 
 def drop_job(job_id: str) -> None:
@@ -124,6 +128,22 @@ def on_frame(frame: dict) -> None:
             _logger.debug("agent_dispatch.on_frame: event for unknown job %s dropped",
                           frame.get("job_id"))
             return
+        if frame.get("event") == "success" and job.get("session_id"):
+            try:
+                _db.record_upload(
+                    job["session_id"],
+                    frame.get("iso_date", ""),
+                    frame.get("platform", ""),
+                    frame.get("payload", {}).get("title", ""),
+                    frame.get("payload", {}).get("file_path", ""),
+                    True,
+                    frame.get("payload", {}).get("watch_url") or frame.get("payload", {}).get("url", ""),
+                    frame.get("payload", {}).get("scheduled_time"),
+                    "",
+                    frame.get("payload", {}).get("external_id"),
+                )
+            except Exception as exc:
+                _logger.warning("record_upload failed: %s", exc)
         job["queue"].put({k: v for k, v in frame.items() if k not in ("v", "type", "job_id")})
         return
     _logger.debug("agent_dispatch.on_frame: unhandled type %r", ftype)

@@ -6,7 +6,7 @@ from core import agent_dispatch
 
 def test_event_frame_routed_to_job_queue():
     q = queue.Queue()
-    agent_dispatch.register_job(job_id="J1", sse_queue=q)
+    agent_dispatch.register_job(job_id="J1", sse_queue=q, session_id=None)
     agent_dispatch.on_frame({"v": 1, "type": "event", "job_id": "J1",
                              "row_idx": 0, "event": "upload_progress",
                              "platform": "YouTube Video", "percent": 42})
@@ -25,7 +25,7 @@ def test_event_for_unknown_job_is_dropped_without_error():
 def test_event_frame_strips_envelope_fields():
     """v, type, job_id must NOT appear in the queued message."""
     q = queue.Queue()
-    agent_dispatch.register_job(job_id="J2", sse_queue=q)
+    agent_dispatch.register_job(job_id="J2", sse_queue=q, session_id=None)
     agent_dispatch.on_frame({"v": 1, "type": "event", "job_id": "J2",
                              "event": "done", "row_idx": 1})
     msg = q.get_nowait()
@@ -53,6 +53,22 @@ def test_unhandled_frame_type_is_no_op():
     agent_dispatch.on_frame({"v": 1, "type": "image_used", "job_id": "J99"})
     agent_dispatch.on_frame({"v": 1, "type": "pending_results_chunk",
                              "job_id": "J99"})
+
+
+# ---------------------------------------------------------------------------
+# Task A7: success events write to upload_history
+# ---------------------------------------------------------------------------
+def test_success_event_records_upload_history(temp_db):
+    import queue
+    from core import agent_dispatch, db as _db
+    q = queue.Queue()
+    agent_dispatch.register_job(job_id="J2", sse_queue=q, session_id="S1")
+    agent_dispatch.on_frame({
+        "v": 1, "type": "event", "job_id": "J2", "row_idx": 0,
+        "event": "success", "platform": "YouTube Video",
+        "iso_date": "2026-05-22", "payload": {"watch_url": "https://yt/x"},
+    })
+    assert _db.has_successful_upload("S1", "2026-05-22", "YouTube Video") is True
 
 
 # ---------------------------------------------------------------------------

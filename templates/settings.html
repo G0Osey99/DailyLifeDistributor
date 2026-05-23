@@ -362,6 +362,27 @@
 </div>
 </div>
 
+<!-- 🖥️ Paired Devices -->
+<div class="settings-section">
+<div class="section-card">
+    <div class="section-card-header" data-section="devices">
+        <span class="sec-icon">🖥️</span>
+        <span class="sec-title">Paired Devices</span>
+        <span class="sec-dot ok"></span>
+        <span class="sec-chevron">▼</span>
+    </div>
+    <div class="section-card-body" data-body="devices">
+        <p class="hint" style="margin-top:8px;">
+            Hybrid upload agents that have paired with this server. Rename to make them
+            easy to spot in the device picker; revoke to invalidate a device's token.
+        </p>
+        <p style="margin-top:8px;">
+            <a href="{{ url_for('settings.devices_page') }}" class="btn btn-sm btn-ghost">Manage devices →</a>
+        </p>
+    </div>
+</div>
+</div>
+
 <!-- 🔑 Change Password -->
 <div class="settings-section">
 <div class="section-card">

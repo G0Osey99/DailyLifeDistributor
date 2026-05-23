@@ -216,6 +216,43 @@ def revoke_device(device_id):
     return jsonify({"ok": True})
 
 
+@bp.route("/agent/devices/<device_id>/name", methods=["POST"])
+def rename_device(device_id):
+    """Update the user-friendly name for *device_id*.
+
+    Session-auth-gated by the global ``_require_auth`` before_request hook
+    (this endpoint is NOT in ``_PUBLIC_ENDPOINTS``). The agent-reported
+    hostname is immutable; this only edits the ``name`` column rendered in
+    the device picker / management UI.
+
+    Body: ``{"name": "Studio Mac"}`` (1..64 chars after trimming).
+    Returns ``{"ok": true, "device": {...row...}}`` on success,
+    ``{"error": "..."}`` with 400 / 404 / 410 on validation / not-found /
+    revoked.
+    """
+    data = request.get_json(silent=True) or {}
+    raw = data.get("name", "")
+    try:
+        ok = devices.set_device_name(device_id, raw)
+    except devices.DeviceNameEmpty:
+        return jsonify({"error": "name must not be empty"}), 400
+    except devices.DeviceNameTooLong:
+        return jsonify({
+            "error": f"name must be at most {devices.DEVICE_NAME_MAX_LEN} chars"
+        }), 400
+    if not ok:
+        # Either missing or revoked. Disambiguate with a SELECT.
+        rows = devices.list_devices()
+        match = next((r for r in rows if r["id"] == device_id), None)
+        if match is None:
+            return jsonify({"error": "device not found"}), 404
+        # Found but revoked.
+        return jsonify({"error": "device is revoked"}), 410
+    rows = devices.list_devices()
+    updated = next((r for r in rows if r["id"] == device_id), None)
+    return jsonify({"ok": True, "device": updated})
+
+
 def _session_key() -> str:
     """Stable per-session identifier for session-keyed rate limits.
 

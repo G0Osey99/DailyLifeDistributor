@@ -493,6 +493,56 @@ def youtube_status():
     )
 
 
+@bp.route("/sessions/status")
+def sessions_status():
+    """Single endpoint for the sidebar status panel.
+
+    Returns a flat dict {name: {ok, label}} for every connection the
+    sidebar needs to render. One round-trip beats 4–5 separate fetches
+    on every page load.
+    """
+    from core.playwright_session import has_session
+    from core.llm_title_gen import is_llamafile_running
+    out: dict = {}
+    out["youtube"] = {
+        "ok": bool(_cached_yt_authenticated()),
+        "label_on": "YouTube connected",
+        "label_off": "YouTube needs auth",
+    }
+    out["simplecast"] = {
+        "ok": bool(has_session(os.path.join(PROJECT_ROOT, "simplecast_session.json"))),
+        "label_on": "SimpleCast session",
+        "label_off": "SimpleCast needs login",
+    }
+    out["vista_social"] = {
+        "ok": bool(has_session(os.path.join(PROJECT_ROOT, "vista_social_session.json"))),
+        "label_on": "Vista Social session",
+        "label_off": "Vista Social needs login",
+    }
+    out["rock"] = {
+        "ok": bool(has_session(os.path.join(PROJECT_ROOT, "rock_session.json"))),
+        "label_on": "Rock session",
+        "label_off": "Rock needs login",
+    }
+    # Agent online — count via the relay's account-keyed room.
+    try:
+        from core.relay import RELAY, _ACCOUNT
+        agent_count = len(RELAY.online_agents(_ACCOUNT))
+    except Exception:
+        agent_count = 0
+    out["agent"] = {
+        "ok": agent_count > 0,
+        "label_on": f"Agent online ({agent_count})" if agent_count > 1 else "Agent online",
+        "label_off": "No agent connected",
+    }
+    out["ollama"] = {
+        "ok": bool(is_llamafile_running()),
+        "label_on": "Ollama connected",
+        "label_off": "Ollama offline",
+    }
+    return jsonify(out)
+
+
 @bp.route("/llamafile/status")
 def llamafile_status():
     """Return the LLM (title-generation) backend status.

@@ -666,19 +666,20 @@
             <div class="sb-spacer"></div>
 
             <div class="sb-foot">
-                <div class="sb-conn-list">
-                    <div class="sb-conn-row">
-                        <span class="sb-conn-dot {% if youtube_authenticated is defined and youtube_authenticated %}ok{% else %}warn{% endif %}"></span>
-                        <span>{% if youtube_authenticated is defined and youtube_authenticated %}YouTube connected{% else %}YouTube needs auth{% endif %}</span>
+                <div class="sb-conn-list" id="sb-conn-list">
+                    {% for key, on, off in [
+                        ('youtube',      'YouTube connected',       'YouTube needs auth'),
+                        ('simplecast',   'SimpleCast session',      'SimpleCast needs login'),
+                        ('vista_social', 'Vista Social session',    'Vista Social needs login'),
+                        ('rock',         'Rock session',            'Rock needs login'),
+                        ('agent',        'Agent online',            'No agent connected'),
+                        ('ollama',       'Ollama connected',        'Ollama offline'),
+                    ] %}
+                    <div class="sb-conn-row" data-status-key="{{ key }}">
+                        <span class="sb-conn-dot dim"></span>
+                        <span class="sb-conn-label">{{ off }} · checking…</span>
                     </div>
-                    <div class="sb-conn-row">
-                        <span class="sb-conn-dot ok"></span>
-                        <span>SimpleCast session</span>
-                    </div>
-                    <div class="sb-conn-row">
-                        <span class="sb-conn-dot dim" id="sb-llm-dot"></span>
-                        <span id="sb-llm-label">Ollama · checking…</span>
-                    </div>
+                    {% endfor %}
                 </div>
             </div>
         </aside>
@@ -747,18 +748,32 @@
         }, duration);
     }
 
-    // Live AI-backend (Ollama) indicator in the sidebar, on every page.
+    // Live session status panel — single round-trip refreshes every
+    // status row (YouTube, SimpleCast, Vista, Rock, Agent, Ollama).
+    // Refreshes every 30s so a fresh login / agent reconnect lights up
+    // without a page reload.
     (function(){
-        const dot = document.getElementById('sb-llm-dot');
-        const label = document.getElementById('sb-llm-label');
-        if(!dot || !label) return;
-        fetch('/llamafile/status', {headers:{'Accept':'application/json'}})
-            .then(r => r.ok ? r.json() : Promise.reject())
-            .then(d => {
-                if(d.running){ dot.className = 'sb-conn-dot ok'; label.textContent = 'Ollama connected'; }
-                else { dot.className = 'sb-conn-dot warn'; label.textContent = 'Ollama offline'; }
-            })
-            .catch(() => { dot.className = 'sb-conn-dot warn'; label.textContent = 'Ollama · unknown'; });
+        const list = document.getElementById('sb-conn-list');
+        if(!list) return;
+        function paint(d){
+            list.querySelectorAll('[data-status-key]').forEach(row => {
+                const key = row.dataset.statusKey;
+                const entry = d && d[key];
+                const dot = row.querySelector('.sb-conn-dot');
+                const label = row.querySelector('.sb-conn-label');
+                if(!entry){ dot.className = 'sb-conn-dot dim'; return; }
+                if(entry.ok){ dot.className = 'sb-conn-dot ok'; label.textContent = entry.label_on; }
+                else        { dot.className = 'sb-conn-dot warn'; label.textContent = entry.label_off; }
+            });
+        }
+        function refresh(){
+            fetch('/sessions/status', {headers:{'Accept':'application/json'}})
+                .then(r => r.ok ? r.json() : Promise.reject())
+                .then(paint)
+                .catch(() => { /* keep the last good state on transient failure */ });
+        }
+        refresh();
+        setInterval(refresh, 30000);
     })();
     </script>
     {% block extra_scripts %}{% endblock %}

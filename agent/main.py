@@ -5,21 +5,94 @@ First run prompts for a pairing code (generated in the web UI).
 """
 from __future__ import annotations
 
+# --- Crash-safe boot logging ---------------------------------------------
+#
+# Imports below have, historically, been the most common source of
+# silent-crash-on-start. configure_logging() only fires after main() begins,
+# so any failure during module import was invisible — the agent would exit
+# before a single log line landed on disk.
+#
+# This block writes a one-liner to a boot trace file BEFORE any other
+# package imports so we always know:
+#   1. that main.py was reached,
+#   2. the Python/OS we're under,
+#   3. the traceback if any subsequent import or main() call blows up.
+#
+# Boot trace lives at: <user-log-dir>/boot.log (rotated by length, never
+# truncated on each launch).
+import sys
+import traceback
+from datetime import datetime
+from pathlib import Path
+
+
+def _boot_log_path() -> Path:
+    """Resolve the boot-trace path independent of logging or platformdirs."""
+    try:
+        import platformdirs
+        base = Path(platformdirs.user_log_dir("dld-agent", appauthor=False))
+    except Exception:
+        base = Path.home() / ".dld-agent" / "logs"
+    return base / "boot.log"
+
+
+def _boot_write(message: str) -> None:
+    """Append a one-line trace to boot.log. Best-effort — never raises.
+
+    Trim the file at ~1 MB so it doesn't grow forever on a crash-loop.
+    """
+    try:
+        p = _boot_log_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().isoformat(timespec="seconds")
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(f"{ts} {message}\n")
+            fh.flush()
+        # Cheap size-cap: if the file gets large, truncate to last ~500 KB.
+        if p.stat().st_size > 1_000_000:
+            data = p.read_bytes()[-500_000:]
+            p.write_bytes(data)
+    except Exception:
+        pass
+
+
+_boot_write(
+    f"=== agent boot pid={__import__('os').getpid()} "
+    f"python={sys.version.split()[0]} "
+    f"platform={sys.platform} "
+    f"argv={sys.argv!r}"
+)
+
+
+# Install faulthandler EARLY so a C-level segfault (PyInstaller, native
+# extension, Playwright bootstrap, etc.) dumps a stack to stderr + the
+# boot log instead of dying silently. Best-effort: any failure here must
+# not prevent the agent from starting.
+try:
+    import faulthandler
+    _fh_stream = open(_boot_log_path(), "a", encoding="utf-8")
+    faulthandler.enable(file=_fh_stream)
+except Exception:
+    pass
+
+
 import argparse
 import logging
 import logging.handlers
 import os
 import signal
 import socket
-import sys
 import threading
 import time
-from pathlib import Path
 from typing import Optional
 
-from agent import config, hostname as _hostname_mod, hwid as _hwid_mod, pair, scan, updater
-from agent._version import __version__
-from agent.transport import AgentConnection
+try:
+    from agent import config, hostname as _hostname_mod, hwid as _hwid_mod, pair, scan, updater
+    from agent._version import __version__
+    from agent.transport import AgentConnection
+except Exception:
+    _boot_write("IMPORT FAILED:\n" + traceback.format_exc())
+    raise
 
 log = logging.getLogger(__name__)
 
@@ -382,10 +455,26 @@ def main() -> None:
 
     log_path = configure_logging(log_dir=args.log_dir, verbose=args.verbose)
     print(f"Logs: {log_path}")
+    print(f"Boot trace: {_boot_log_path()}")
+    _boot_write(f"main: configure_logging ok, log_dir={log_path}")
 
     _install_signal_handlers()
     run(args.server)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit as e:
+        _boot_write(f"main: SystemExit code={e.code}")
+        raise
+    except KeyboardInterrupt:
+        _boot_write("main: KeyboardInterrupt — clean shutdown")
+        raise
+    except BaseException:
+        # Catch BaseException (not just Exception) so SystemExit doesn't slip
+        # past — we already handled SystemExit above. Anything else means the
+        # agent died unexpectedly; record the trace to boot.log so the
+        # user can see what happened.
+        _boot_write("main: UNCAUGHT EXCEPTION:\n" + traceback.format_exc())
+        raise

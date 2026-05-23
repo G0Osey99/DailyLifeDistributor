@@ -154,6 +154,20 @@ def create_app() -> Flask:
     from core import auth as _auth
     _auth.bootstrap_from_env()
 
+    # Multi-tenant phase α: idempotent first-boot migration.
+    try:
+        from core.migration_bootstrap import run_migration as _run_mt_migration
+        _run_mt_migration()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Multi-tenant migration_bootstrap.run_migration() failed. "
+            "First boot requires PROGRAM_OWNER_EMAIL + INITIAL_ADMIN_PASSWORD."
+        )
+        # We deliberately do NOT re-raise: a missing env var on later boots
+        # (after the bootstrap user already exists) must not block startup.
+        # The check inside run_migration() handles the "already bootstrapped"
+        # path explicitly — only a true first-boot misconfig logs + continues.
+
     try:
         from scripts.migrate_secrets import run as _migrate_secrets
         _migrate_secrets()

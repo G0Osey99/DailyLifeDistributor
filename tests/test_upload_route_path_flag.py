@@ -232,6 +232,69 @@ def test_upload_path_web_keeps_running_run_batch(monkeypatch, client):
     assert called["worker"] is True, "_run_batch_worker thread was not started"
 
 
+def test_upload_path_agent_propagates_device_id_query_param(
+        monkeypatch, tmp_path, app_with_hybrid_enabled):
+    """?device_id=<uuid> on /media/batch/run?path=agent flows through to
+    agent_dispatch.start(device_id=...)."""
+    from core import agent_dispatch
+    captured: dict = {}
+
+    def _fake_start(**kw):
+        captured.update(kw)
+        return "JID"
+
+    monkeypatch.setattr(agent_dispatch, "start", _fake_start)
+
+    r = app_with_hybrid_enabled.post(
+        "/media/batch/run?path=agent&device_id=picked-dev",
+        json=_BATCH_BODY,
+    )
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert captured.get("device_id") == "picked-dev"
+
+
+def test_upload_path_agent_device_id_from_json_body(
+        monkeypatch, tmp_path, app_with_hybrid_enabled):
+    """The body may also carry device_id (e.g. when the dashboard sends
+    a JSON payload rather than a query param)."""
+    from core import agent_dispatch
+    captured: dict = {}
+
+    def _fake_start(**kw):
+        captured.update(kw)
+        return "JID"
+
+    monkeypatch.setattr(agent_dispatch, "start", _fake_start)
+
+    r = app_with_hybrid_enabled.post(
+        "/media/batch/run?path=agent",
+        json={**_BATCH_BODY, "device_id": "body-dev"},
+    )
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert captured.get("device_id") == "body-dev"
+
+
+def test_upload_path_agent_passes_browser_ip(
+        monkeypatch, tmp_path, app_with_hybrid_enabled):
+    """browser_ip must be passed to start() (derived from _client_ip())."""
+    from core import agent_dispatch
+    captured: dict = {}
+
+    def _fake_start(**kw):
+        captured.update(kw)
+        return "JID"
+
+    monkeypatch.setattr(agent_dispatch, "start", _fake_start)
+
+    r = app_with_hybrid_enabled.post(
+        "/media/batch/run?path=agent",
+        headers={"CF-Connecting-IP": "10.0.0.5"},
+        json=_BATCH_BODY,
+    )
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert captured.get("browser_ip") == "10.0.0.5"
+
+
 def test_upload_path_agent_with_flag_off_falls_through_to_web(
         monkeypatch, tmp_path, app_without_hybrid):
     """path=agent but HYBRID_AGENT_ENABLED unset → falls through to web path."""

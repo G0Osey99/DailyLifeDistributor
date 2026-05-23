@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from agent import config, pair, scan, updater
+from agent import config, hostname as _hostname_mod, hwid as _hwid_mod, pair, scan, updater
 from agent._version import __version__
 from agent.transport import AgentConnection
 
@@ -145,7 +145,14 @@ def _ensure_paired(server_url: str) -> str:
         return token
     print(f"This device is not paired with {server_url}.")
     code = input("Enter the pairing code shown on the website: ").strip()
-    if not pair.redeem(server_url, code, _device_name()):
+    # Compute HWID + friendly hostname locally so the server can render
+    # a meaningful device picker. compute_hwid_hash() never raises (it
+    # falls back to a hostname-derived seed); get_friendly_hostname()
+    # always returns a non-empty string.
+    hwid_hash = _hwid_mod.compute_hwid_hash()
+    friendly = _hostname_mod.get_friendly_hostname()
+    if not pair.redeem(server_url, code, _device_name(),
+                       hwid_hash=hwid_hash, hostname=friendly):
         raise SystemExit("Pairing failed — check the code and try again.")
     print("✓ Paired successfully.")
     return config.get_token()
@@ -155,6 +162,31 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
     mtype = msg.get("type")
     if mtype == "ping":
         conn.send({"v": 1, "type": "pong", "payload": msg.get("payload", {})})
+    elif mtype == "whoami_ping":
+        # Phase 3.5 device picker confirmation. The browser sends a ping_id
+        # and we echo our local identity so the dashboard chip can refresh
+        # the displayed hostname / HWID without waiting for a DB reread.
+        # If something goes wrong gathering the local data (very unlikely —
+        # hostname always returns a string; HWID falls back to the seed),
+        # we still emit a pong with whatever we have rather than dropping
+        # the ping silently — the browser is waiting on ping_id.
+        try:
+            hwid_hash = _hwid_mod.compute_hwid_hash()
+        except Exception:  # noqa: BLE001
+            hwid_hash = ""
+        try:
+            host = _hostname_mod.get_friendly_hostname()
+        except Exception:  # noqa: BLE001
+            host = ""
+        conn.send({
+            "v": 1,
+            "type": "whoami_pong",
+            "ping_id": msg.get("ping_id", ""),
+            "device_id": config.get_device_id() or "",
+            "hwid_hash": hwid_hash,
+            "hostname": host,
+            "protocol_version": __version__,
+        })
     elif mtype == "scan_request":
         log.debug("Handling scan_request")
         report = scan.scan_roots(config.get_media_roots())

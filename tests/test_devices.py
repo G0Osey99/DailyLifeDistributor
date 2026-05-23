@@ -87,3 +87,159 @@ def test_most_recently_seen_online_returns_none_when_all_stale(tmp_path, monkeyp
     _set_last_seen(dev_a_id, ts=10)
 
     assert devices.most_recently_seen_online(freshness_seconds=60, now=1000) is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.5 — HWID + hostname persistence + find_by_hwid
+# ---------------------------------------------------------------------------
+
+def test_create_persists_hwid_and_hostname(tmp_path, monkeypatch):
+    """redeem_pairing_code with hwid_hash + hostname must persist both."""
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    h = "a" * 64
+    device_id, _ = devices.redeem_pairing_code(
+        code, "Ryker-Mac",
+        hwid_hash=h,
+        hostname="Studio",
+    )
+    rows = devices.list_devices()
+    row = next(r for r in rows if r["id"] == device_id)
+    assert row["hwid_hash"] == h
+    assert row["hostname"] == "Studio"
+
+
+def test_create_without_hwid_and_hostname_stores_null(tmp_path, monkeypatch):
+    """Backward-compat: older agents that don't send the fields still pair,
+    and the row stores NULL for hwid_hash + hostname."""
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    device_id, _ = devices.redeem_pairing_code(code, "Ryker-Mac")
+    row = next(r for r in devices.list_devices() if r["id"] == device_id)
+    assert row["hwid_hash"] is None
+    assert row["hostname"] is None
+
+
+def test_find_by_hwid_returns_device(tmp_path, monkeypatch):
+    """find_by_hwid returns the row whose hwid_hash matches."""
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    h = "b" * 64
+    device_id, _ = devices.redeem_pairing_code(
+        code, "Mac", hwid_hash=h, hostname="Studio")
+    row = devices.find_by_hwid(h)
+    assert row is not None
+    assert row["id"] == device_id
+    assert row["hostname"] == "Studio"
+
+
+def test_find_by_hwid_returns_none_for_missing(tmp_path, monkeypatch):
+    """find_by_hwid returns None when no row matches."""
+    _fresh_db(tmp_path, monkeypatch)
+    assert devices.find_by_hwid("z" * 64) is None
+
+
+def test_find_by_hwid_returns_none_for_empty(tmp_path, monkeypatch):
+    """Defensive: empty / None inputs return None without querying."""
+    _fresh_db(tmp_path, monkeypatch)
+    assert devices.find_by_hwid("") is None
+    assert devices.find_by_hwid(None) is None  # type: ignore[arg-type]
+
+
+def test_find_by_hwid_picks_most_recent_on_collision(tmp_path, monkeypatch):
+    """When two rows share an hwid_hash (re-pair), return the newest."""
+    _fresh_db(tmp_path, monkeypatch)
+    h = "c" * 64
+    # First pairing.
+    code_a = devices.create_pairing_code()
+    old_id, _ = devices.redeem_pairing_code(
+        code_a, "Mac", hwid_hash=h, hostname="Studio-old")
+    # Force a back-dated created_at on the old row so the new one wins.
+    import time
+    time.sleep(0.01)
+    code_b = devices.create_pairing_code()
+    new_id, _ = devices.redeem_pairing_code(
+        code_b, "Mac", hwid_hash=h, hostname="Studio-new")
+
+    row = devices.find_by_hwid(h)
+    assert row is not None
+    # The most-recent pairing wins.
+    assert row["id"] == new_id
+    assert row["hostname"] == "Studio-new"
+
+
+def test_list_devices_includes_hwid_and_hostname(tmp_path, monkeypatch):
+    """list_devices() exposes hwid_hash + hostname on every row."""
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    devices.redeem_pairing_code(
+        code, "Mac", hwid_hash="d" * 64, hostname="Studio")
+    rows = devices.list_devices()
+    assert len(rows) == 1
+    assert "hwid_hash" in rows[0]
+    assert "hostname" in rows[0]
+
+
+def test_migration_idempotent_adds_columns_to_legacy_db(tmp_path, monkeypatch):
+    """init_db() must idempotently add hwid_hash + hostname to a pre-existing
+    agent_devices table without those columns. Re-running init_db() is a
+    no-op (no error)."""
+    monkeypatch.setenv("DLD_STATE_DB", str(tmp_path / "state.db"))
+    import importlib
+    importlib.reload(db)
+    importlib.reload(devices)
+
+    # Build the legacy schema (no hwid_hash / hostname).
+    with db._get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE agent_devices (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                token_hash TEXT NOT NULL,
+                created_at TEXT,
+                last_seen_at TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        # Insert a legacy row.
+        conn.execute(
+            "INSERT INTO agent_devices (id, name, token_hash, created_at, "
+            "last_seen_at, revoked) VALUES (?, ?, ?, ?, ?, 0)",
+            ("legacy-id", "Legacy", "hash", "2026-01-01T00:00:00+00:00",
+             "2026-01-01T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    # First migration — must add the columns.
+    db.init_db()
+    with db._get_conn() as conn:
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info('agent_devices')").fetchall()}
+    assert "hwid_hash" in cols
+    assert "hostname" in cols
+
+    # Legacy row survives, with NULLs in the new columns.
+    rows = devices.list_devices()
+    legacy = next(r for r in rows if r["id"] == "legacy-id")
+    assert legacy["hwid_hash"] is None
+    assert legacy["hostname"] is None
+
+    # Second run — idempotent, no error.
+    db.init_db()
+    db.init_db()
+
+
+def test_most_recently_seen_online_includes_hwid_and_hostname(tmp_path, monkeypatch):
+    """The dict returned by most_recently_seen_online must include the
+    new HWID + hostname fields (it SELECT *'s, so any agent_devices column
+    is exposed)."""
+    _fresh_db(tmp_path, monkeypatch)
+    code = devices.create_pairing_code()
+    device_id, _ = devices.redeem_pairing_code(
+        code, "Mac", hwid_hash="e" * 64, hostname="Studio")
+    _set_last_seen(device_id, ts=200)
+
+    row = devices.most_recently_seen_online(freshness_seconds=300, now=250)
+    assert row is not None
+    assert row["hwid_hash"] == "e" * 64
+    assert row["hostname"] == "Studio"

@@ -56,3 +56,17 @@ def set_media_roots(roots: dict) -> None:
 
 def get_media_roots() -> dict:
     return _load().get("media_roots", {})
+
+
+def set_device_id(device_id: str) -> None:
+    """Persist the server-assigned device_id from the pairing response.
+
+    Used by the whoami_ping/pong protocol so the agent can report its own
+    identity to the browser without a server roundtrip. Stored in the
+    plain JSON config file (no secret value).
+    """
+    d = _load(); d["device_id"] = device_id; _save(d)
+
+
+def get_device_id() -> str | None:
+    return _load().get("device_id")

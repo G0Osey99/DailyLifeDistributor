@@ -1,5 +1,9 @@
 -r requirements.txt
 pytest>=8.0.0,<9
+# Fail any single test that hangs > pytest.ini's `timeout` (60s) with a
+# traceback instead of letting CI sit silent for 10+ minutes. `thread`
+# method works on every platform.
+pytest-timeout>=2.3,<3
 # Hybrid-agent (client) deps, needed so the agent/ tests run in CI. They are
 # intentionally NOT in requirements.txt — the server Docker image doesn't need
 # them. simple-websocket already comes transitively via flask-sock.

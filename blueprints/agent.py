@@ -134,10 +134,30 @@ def pair_new():
 
 @bp.route("/agent/pair/redeem", methods=["POST"])
 def pair_redeem():
-    """Redeem a pairing code for a device token (no session — agent has none yet)."""
+    """Redeem a pairing code for a device token (no session — agent has none yet).
+
+    Optional JSON fields ``hwid_hash`` (sha256 hex, ~64 chars) and
+    ``hostname`` (friendly name, <=64 chars) are persisted on the device
+    record so the dashboard can render a meaningful picker. Missing or
+    empty values are stored as NULL — older agents that don't send the
+    fields still pair successfully.
+    """
     data = request.get_json(silent=True) or {}
+    hwid_hash = (data.get("hwid_hash") or "").strip() or None
+    hostname = (data.get("hostname") or "").strip() or None
+    # Defensive caps — these are server-side trusts. hwid_hash is exactly
+    # 64 hex chars in practice; hostname capped at 64 by the agent but
+    # re-cap here so a tampered client can't bloat the row.
+    if hwid_hash and len(hwid_hash) > 128:
+        hwid_hash = hwid_hash[:128]
+    if hostname and len(hostname) > 64:
+        hostname = hostname[:64]
     result = devices.redeem_pairing_code(
-        (data.get("code") or "").strip(), (data.get("name") or "device").strip())
+        (data.get("code") or "").strip(),
+        (data.get("name") or "device").strip(),
+        hwid_hash=hwid_hash,
+        hostname=hostname,
+    )
     if result is None:
         return jsonify({"error": "invalid or expired code"}), 400
     device_id, token = result
@@ -147,6 +167,47 @@ def pair_redeem():
 @bp.route("/agent/devices", methods=["GET"])
 def list_devices():
     return jsonify({"devices": devices.list_devices()})
+
+
+@bp.route("/agent/devices/online", methods=["GET"])
+def list_devices_online():
+    """List currently-connected agents with same_network annotation.
+
+    Session-auth-gated by the global ``_require_auth`` before_request hook
+    (this endpoint is NOT in ``_PUBLIC_ENDPOINTS``).
+
+    Returns ``{devices: [{id, name, hostname, hwid_hash_short, last_seen_at,
+    same_network}]}`` — one entry per agent currently registered on the
+    relay. ``same_network`` is True when the agent's stored connect_ip
+    equals the browser's _client_ip(). ``hwid_hash_short`` is the first
+    8 chars of the stored sha256 (full hash isn't useful to the UI and
+    leaks identifying entropy unnecessarily).
+    """
+    online = RELAY.online_agents(_ACCOUNT)
+    browser_ip = _client_ip()
+    # Look up persisted name/hostname/hwid for each online agent. We don't
+    # want to issue N queries in the worst case; one bulk listing is fine.
+    db_devices = {d["id"]: d for d in devices.list_devices()}
+
+    out: list[dict] = []
+    for entry in online:
+        did = entry["device_id"]
+        db_row = db_devices.get(did, {})
+        hwid = db_row.get("hwid_hash") or ""
+        out.append({
+            "id": did,
+            "name": entry.get("device_name") or db_row.get("name") or "device",
+            "hostname": db_row.get("hostname"),
+            "hwid_hash_short": hwid[:8] if hwid else None,
+            "last_seen_at": db_row.get("last_seen_at"),
+            "same_network": bool(
+                entry.get("connect_ip")
+                and browser_ip
+                and entry["connect_ip"] == browser_ip
+                and browser_ip != "unknown"
+            ),
+        })
+    return jsonify({"devices": out})
 
 
 @bp.route("/agent/devices/<device_id>/revoke", methods=["POST"])
@@ -162,6 +223,35 @@ def _session_key() -> str:
     the remote address so an unauthenticated request still gets a key.
     """
     return session.get("user_id") or session.get("_id") or request.remote_addr or "anon"
+
+
+def _client_ip() -> str:
+    """Return the *real* client IP for the current Flask request.
+
+    Cloudflare strips client-supplied CF-Connecting-IP and sets it to the
+    actual client; on the hosted deploy that's the only trustworthy value
+    (request.remote_addr is the Caddy container). Locally we fall back
+    through standard proxy headers and finally request.remote_addr.
+
+    Used in two places:
+      1. Recording the agent's connect IP at WebSocket handshake.
+      2. Computing same_network in /agent/devices/online.
+
+    Both compare strings; the only constraint is consistency between
+    "what the agent sees" and "what the browser sees" — Cloudflare
+    routes both through the same CF-Connecting-IP normalization, so a
+    browser + agent on the same LAN match on the egress IP.
+    """
+    cf = (request.headers.get("CF-Connecting-IP") or "").strip()
+    if cf:
+        return cf
+    xff = (request.headers.get("X-Forwarded-For") or "").strip()
+    if xff:
+        # First entry is the original client; the rest are proxies.
+        first = xff.split(",", 1)[0].strip()
+        if first:
+            return first
+    return request.remote_addr or "unknown"
 
 
 def attach_limits(app, limiter) -> None:
@@ -239,7 +329,13 @@ def register_sockets(sock) -> None:
             return
         touch_device(device_id)
         _device_name = devices.get_device_name(device_id)
-        RELAY.register_agent(_ACCOUNT, device_id, ws.send, device_name=_device_name)
+        # Capture the client IP at handshake so the dashboard can later
+        # compute same_network for the device picker. _client_ip() honors
+        # CF-Connecting-IP behind Cloudflare and X-Forwarded-For elsewhere.
+        _connect_ip = _client_ip()
+        RELAY.register_agent(_ACCOUNT, device_id, ws.send,
+                             device_name=_device_name,
+                             connect_ip=_connect_ip)
 
         # Per-connection message bucket — paired-but-malicious agents
         # can't flood the relay.

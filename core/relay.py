@@ -18,6 +18,7 @@ class _Room:
         self.agents: dict[str, Sink] = {}           # device_id -> sink
         self.browsers: dict[str, Sink] = {}         # session_id -> sink
         self.agent_names: dict[str, str] = {}       # device_id -> device_name
+        self.agent_ips: dict[str, str] = {}         # device_id -> connect_ip
 
 
 class Relay:
@@ -30,12 +31,22 @@ class Relay:
 
     # ---- registration -------------------------------------------------
     def register_agent(self, account: str, device_id: str, sink: Sink,
-                       device_name: str | None = None) -> None:
+                       device_name: str | None = None,
+                       connect_ip: str | None = None) -> None:
+        """Register an agent's WebSocket sink in the account-scoped room.
+
+        *connect_ip* is the public IP the agent connected from. Stored
+        alongside the sink so the dashboard can annotate same_network for
+        the device picker (a browser whose CF-Connecting-IP matches the
+        agent's stored IP is on the same LAN/NAT).
+        """
         with self._lock:
             room = self._room(account)
             room.agents[device_id] = sink
             if device_name:
                 room.agent_names[device_id] = device_name
+            if connect_ip:
+                room.agent_ips[device_id] = connect_ip
         self._broadcast_presence(account, online=True)
 
     def unregister_agent(self, account: str, device_id: str) -> None:
@@ -43,8 +54,38 @@ class Relay:
             room = self._room(account)
             room.agents.pop(device_id, None)
             room.agent_names.pop(device_id, None)
+            room.agent_ips.pop(device_id, None)
             still_online = bool(room.agents)
         self._broadcast_presence(account, online=still_online)
+
+    # ---- introspection ------------------------------------------------
+    def online_agents(self, account: str) -> list[dict]:
+        """Return a snapshot of currently-online agents in *account*.
+
+        Each entry: ``{"device_id": str, "device_name": str | None,
+        "connect_ip": str | None}``. Safe to iterate without holding the
+        relay lock — the returned list is a copy.
+        """
+        with self._lock:
+            room = self._rooms.get(account)
+            if not room:
+                return []
+            return [
+                {
+                    "device_id": did,
+                    "device_name": room.agent_names.get(did),
+                    "connect_ip": room.agent_ips.get(did),
+                }
+                for did in room.agents
+            ]
+
+    def agent_ip(self, account: str, device_id: str) -> str | None:
+        """Return the stored connect IP for *device_id*, or None."""
+        with self._lock:
+            room = self._rooms.get(account)
+            if not room:
+                return None
+            return room.agent_ips.get(device_id)
 
     def register_browser(self, account: str, session_id: str, sink: Sink) -> None:
         with self._lock:

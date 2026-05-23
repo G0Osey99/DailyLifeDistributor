@@ -113,6 +113,53 @@ def _disable_rate_limiting(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_relay_and_dispatch_singletons():
+    """Clear process-wide relay state + dispatch job registry between tests.
+
+    Two module-level singletons survive across tests in this suite:
+
+      * ``blueprints.agent.RELAY`` — a single ``core.relay.Relay`` instance
+        keyed by account ("default") that holds maps of online agents +
+        browsers and their websocket sink callbacks. Tests that
+        ``importlib.reload(blueprints.agent)`` get a *new* RELAY object,
+        but tests that don't reload still see the old one — and the old
+        one may still hold sink closures that point at already-closed
+        sockets. Routing to a closed sink isn't fatal, but a stale agent
+        registration makes ``GET /agent/devices/online`` (and any test
+        that checks ``agent_online``) report ghosts.
+
+      * ``core.agent_dispatch._jobs`` — keyed by ``job_id``, the per-job
+        SSE queue + session_id. A previous test's job_id sitting in this
+        dict won't cause routing to misfire (the relay e2e test even
+        clears it on purpose to simulate a restart), but leaving it is
+        memory-leak-y across hundreds of tests and confuses any new test
+        that iterates the registry.
+
+    We clear both before and after every test. Importing the modules is
+    cheap (already loaded by 99% of tests); we tolerate ImportError for
+    the rare test that runs without the agent stack installed.
+    """
+    def _clear() -> None:
+        try:
+            from blueprints import agent as _agent_bp
+            _relay = _agent_bp.RELAY
+            with _relay._lock:
+                _relay._rooms.clear()
+        except Exception:
+            pass
+        try:
+            from core import agent_dispatch as _ad
+            with _ad._jobs_lock:
+                _ad._jobs.clear()
+        except Exception:
+            pass
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _master_key(monkeypatch):
     """Provide a valid Fernet master key for every test.
 

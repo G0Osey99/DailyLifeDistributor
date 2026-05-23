@@ -52,3 +52,67 @@ def test_list_and_revoke(client):
     assert client.post(f"/agent/devices/{did}/revoke").status_code == 200
     devs = client.get("/agent/devices").get_json()["devices"]
     assert devs[0]["revoked"] == 1
+
+
+def test_pair_redeem_accepts_hwid_and_hostname(client):
+    """The redeem route persists hwid_hash + hostname when sent."""
+    _login(client)
+    code = client.post("/agent/pair/new").get_json()["code"]
+    client2 = client.application.test_client()
+    resp = client2.post("/agent/pair/redeem", json={
+        "code": code,
+        "name": "Mac",
+        "hwid_hash": "f" * 64,
+        "hostname": "Studio",
+    })
+    assert resp.status_code == 200
+    assert resp.get_json()["device_id"]
+
+    # The list endpoint now exposes them.
+    devs = client.get("/agent/devices").get_json()["devices"]
+    assert len(devs) == 1
+    assert devs[0]["hwid_hash"] == "f" * 64
+    assert devs[0]["hostname"] == "Studio"
+
+
+def test_pair_redeem_without_hwid_hostname_still_works(client):
+    """Older agents that don't send hwid/hostname still pair successfully;
+    the row stores NULL for both fields."""
+    _login(client)
+    code = client.post("/agent/pair/new").get_json()["code"]
+    client2 = client.application.test_client()
+    resp = client2.post("/agent/pair/redeem", json={"code": code, "name": "Mac"})
+    assert resp.status_code == 200
+
+    devs = client.get("/agent/devices").get_json()["devices"]
+    assert devs[0]["hwid_hash"] is None
+    assert devs[0]["hostname"] is None
+
+
+def test_pair_redeem_caps_oversized_hwid_and_hostname(client):
+    """A malicious / buggy client sending huge hwid/hostname gets truncated."""
+    _login(client)
+    code = client.post("/agent/pair/new").get_json()["code"]
+    client2 = client.application.test_client()
+    resp = client2.post("/agent/pair/redeem", json={
+        "code": code,
+        "name": "Mac",
+        "hwid_hash": "z" * 500,
+        "hostname": "x" * 500,
+    })
+    assert resp.status_code == 200
+
+    devs = client.get("/agent/devices").get_json()["devices"]
+    assert len(devs[0]["hwid_hash"]) == 128
+    assert len(devs[0]["hostname"]) == 64
+
+
+def test_list_devices_includes_hwid_and_hostname_fields(client):
+    """list_devices JSON includes the new fields even when NULL."""
+    _login(client)
+    code = client.post("/agent/pair/new").get_json()["code"]
+    client.application.test_client().post(
+        "/agent/pair/redeem", json={"code": code, "name": "Mac"})
+    devs = client.get("/agent/devices").get_json()["devices"]
+    assert "hwid_hash" in devs[0]
+    assert "hostname" in devs[0]

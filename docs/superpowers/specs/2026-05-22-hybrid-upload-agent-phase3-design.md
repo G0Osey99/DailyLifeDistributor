@@ -425,3 +425,84 @@ A single combined PR is fine if it stays reviewable; three is the default.
   on the next run).
 - Routing any media through the VPS on the hybrid path (was already out of
   scope per the parent spec).
+
+---
+
+## Phase 3.5 follow-up (2026-05-23) — HWID-tagged devices + device picker
+
+Landed after the original Phase 3. This adds three coordinated signals to
+make multi-device dispatch reliable for users with both a laptop and a
+studio agent paired:
+
+### What changed since the original spec
+
+1. **HWID-tagged device records** (decision #8 update). The agent now
+   computes a salted sha256 of `py-machineid`'s machine id and a friendly
+   hostname (`.local` stripped, length-capped 64) and sends both in
+   `/agent/pair/redeem`. Persisted in two nullable columns on
+   `agent_devices` (`hwid_hash`, `hostname`); old agents that don't send
+   the fields still pair successfully. A `find_by_hwid(hash)` helper is
+   exposed for the future re-link UX (collision → most-recent wins).
+
+2. **`agent_ip` + same-network signal** (new signal). The relay records
+   the public IP each agent connected from at the WebSocket handshake.
+   `blueprints/agent.py:_client_ip` resolves the real IP via
+   `CF-Connecting-IP` → first `X-Forwarded-For` entry → `request.remote_addr`,
+   used both for the agent's stored IP and the browser's egress IP at
+   GET time. A browser whose `_client_ip()` matches an agent's stored
+   `connect_ip` is considered "same network" — useful when picking
+   between a laptop the user is on (matches) vs a studio elsewhere on
+   the public internet (does not match).
+
+3. **`GET /agent/devices/online`** (new endpoint). Session-auth-gated.
+   Returns `{devices: [{id, name, hostname, hwid_hash_short,
+   last_seen_at, same_network}]}` — one entry per currently-connected
+   agent. `hwid_hash_short` is the first 8 chars of the stored sha256
+   (full hash leaks identifying entropy unnecessarily).
+
+4. **Dispatch fallback chain** (decision #8 + #2 update). `_pick_device`
+   now takes optional `device_id` + `browser_ip` and runs:
+   1. Explicit `device_id` if currently online → win.
+   2. Exactly one online device → auto-pick.
+   3. Exactly one online device with `connect_ip == browser_ip` →
+      same-network win (ambiguous matches fall through so we don't
+      silently pick the wrong device).
+   4. `most_recently_seen_online()` — the original Phase 3 behavior.
+
+   `NoAgentOnlineError` only when all four yield nothing. The dashboard
+   passes `device_id` via `?device_id=` on `/media/batch/run?path=agent`.
+
+5. **`whoami_ping` / `whoami_pong` protocol** (new frame types). The
+   browser sends `{v: 1, type: "whoami_ping", ping_id}` on its
+   `/agent/ws` socket; the relay forwards verbatim to all agents (no
+   special server handling — it's a regular `route_from_browser`). Each
+   agent's `agent/main.py:_on_message` replies with `whoami_pong`
+   carrying `{ping_id, device_id, hwid_hash, hostname,
+   protocol_version}`. Routed back to browsers via `route_from_agent`.
+
+   This is a real-time freshness signal — even if the DB-stored
+   hostname drifts (reinstall, hostname change), the ping confirms what
+   the running agent actually reports. Agents persist their server-
+   assigned `device_id` in the JSON config (`agent/config.py:set_device_id`)
+   on successful pairing so they can self-identify without a server
+   roundtrip.
+
+6. **UI sticky preference + picker dropdown** (decision #10 partial
+   resolution). `templates/index.html` chip now hosts a real `<select>`;
+   `static/js/dld_pipeline.js` stores the picker selection in
+   `localStorage["dld:preferred_agent"]`. On page load, if the stored
+   device is offline and exactly one same-network device is online,
+   that device pre-selects; otherwise we default to "Auto" (server runs
+   the fallback chain). The full device-management UI (rename / revoke)
+   is still deferred.
+
+### Out of scope (still deferred)
+
+- Re-link UX that uses `find_by_hwid` (the helper is exposed but no
+  route consumes it yet — the next PR can add a confirmation banner
+  on the pairing page).
+- Persisting `liveHostnames` across page reloads (we re-`whoami_ping`
+  on every connect, so it converges quickly).
+- Multi-account routing of same_network (the relay still uses a single
+  shared `_ACCOUNT="default"`; cross-account same-network would need
+  account-scoped IP comparison).

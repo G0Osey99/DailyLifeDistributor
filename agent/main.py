@@ -582,6 +582,25 @@ def main() -> None:
     )
     args = ap.parse_args()
 
+    # v0.6.6: the PyInstaller spec sets console=False so the GUI launches
+    # without a background terminal window. For --no-gui mode on Windows,
+    # try to re-attach to the parent console (cmd.exe / PowerShell) so
+    # users running the .exe from a terminal still see stdout. Best-
+    # effort — if launched from Explorer with --no-gui, output goes
+    # to NUL but agent.log + boot.log still capture everything.
+    if args.no_gui and sys.platform == "win32":
+        try:
+            import ctypes
+            ATTACH_PARENT_PROCESS = -1
+            if ctypes.windll.kernel32.AttachConsole(ATTACH_PARENT_PROCESS):
+                # Re-open the std streams so print() and logging's
+                # StreamHandler actually write to the attached console.
+                sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+                sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        except Exception:
+            # No parent console (launched from Explorer) — silent fallback.
+            pass
+
     log_path = configure_logging(log_dir=args.log_dir, verbose=args.verbose)
     print(f"Logs: {log_path}")
     print(f"Boot trace: {_boot_log_path()}")

@@ -47,7 +47,14 @@ exe = EXE(
     strip=False,
     upx=False,
     runtime_tmpdir=None,
-    console=True,  # phase 2b: keeps the pairing prompt visible
+    # v0.6.6: hide the console window. The GUI is the primary surface
+    # (pairing prompt is a Tk modal now, not a stdin input), and the
+    # background console was confusing users who launched the .exe.
+    # CLI mode (--no-gui) still works for scripted use; stdout in that
+    # mode goes nowhere visible but agent.log + boot.log capture
+    # everything. faulthandler.enable() is still installed at the top
+    # of agent/main.py so C-level crashes still leave a trace.
+    console=False,
     disable_windowed_traceback=False,
     target_arch=_TARGET_ARCH,
     codesign_identity=None,

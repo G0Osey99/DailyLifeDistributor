@@ -112,7 +112,9 @@ class AgentGUI:
         font_family = _pick_font_family()
         mono_family = self._pick_mono_family()
 
-        # Header — brand mark + title
+        # Header — brand mark + title. Mirror the website's sb-brand-mark:
+        # a small accent-colored rounded square on the left so the agent
+        # window has the same visual signature as the dashboard sidebar.
         header = ctk.CTkFrame(
             self.root, fg_color=PAL["shell_panel"],
             corner_radius=0,
@@ -122,29 +124,53 @@ class AgentGUI:
         header.pack_propagate(False)
         header.configure(border_width=1, border_color=PAL["shell_border"])
 
+        # Accent brand mark (filled rounded square).
+        brand_mark = ctk.CTkFrame(
+            header, fg_color=PAL["accent"], corner_radius=8,
+            width=34, height=34,
+        )
+        brand_mark.place(x=18, y=17)
+        brand_mark.pack_propagate(False)
+
         ctk.CTkLabel(
             header, text="Daily Life", text_color=PAL["text"],
             font=(font_family, 15, "bold"),
-        ).place(x=22, y=14)
+        ).place(x=64, y=14)
         ctk.CTkLabel(
-            header, text="DISTRIBUTOR", text_color=PAL["text_muted"],
-            font=(font_family, 10),
-        ).place(x=22, y=34)
-        ctk.CTkLabel(
-            header, text="Agent", text_color=PAL["text_muted"],
-            font=(font_family, 12),
-        ).place(relx=1.0, x=-22, y=24, anchor="ne")
+            header, text="DISTRIBUTOR", text_color=PAL["accent"],
+            font=(font_family, 10, "bold"),
+        ).place(x=64, y=34)
+        # Agent badge — accent-soft pill on the right.
+        agent_badge = ctk.CTkLabel(
+            header, text="  AGENT  ", text_color=PAL["accent"],
+            font=(font_family, 10, "bold"),
+            fg_color=PAL["accent_soft"], corner_radius=6,
+        )
+        agent_badge.place(relx=1.0, x=-22, y=24, anchor="ne")
 
         body = ctk.CTkFrame(self.root, fg_color=PAL["shell_bg"], corner_radius=0)
         body.pack(fill="both", expand=True, padx=18, pady=18)
 
         # --- Status card ------------------------------------------------
+        # Wrap in a horizontal container so we can paint an accent-colored
+        # 3px vertical stripe down the left edge (mirrors the website's
+        # .section-header treatment — accent bar = "this is the active
+        # surface"). The stripe color flips green when CONN_ONLINE in
+        # _refresh_from_state so the card reads its own status at a glance.
+        card_wrap = ctk.CTkFrame(body, fg_color="transparent")
+        card_wrap.pack(fill="x")
+        self.status_stripe = ctk.CTkFrame(
+            card_wrap, fg_color=PAL["text_dim"],
+            width=4, corner_radius=2,
+        )
+        self.status_stripe.pack(side="left", fill="y", padx=(0, 0), pady=2)
+
         self.status_card = ctk.CTkFrame(
-            body, fg_color=PAL["shell_panel"],
+            card_wrap, fg_color=PAL["shell_panel"],
             border_width=1, border_color=PAL["shell_border"],
             corner_radius=12,
         )
-        self.status_card.pack(fill="x")
+        self.status_card.pack(side="left", fill="x", expand=True, padx=(8, 0))
 
         inner = ctk.CTkFrame(self.status_card, fg_color="transparent")
         inner.pack(fill="x", padx=18, pady=16)
@@ -180,7 +206,7 @@ class AgentGUI:
         act_wrap = ctk.CTkFrame(inner, fg_color="transparent")
         act_wrap.pack(fill="x", pady=(12, 0))
         ctk.CTkLabel(
-            act_wrap, text="ACTIVITY", text_color=PAL["text_muted"],
+            act_wrap, text="ACTIVITY", text_color=PAL["accent"],
             font=(font_family, 9, "bold"),
         ).pack(anchor="w")
         self.activity_label = ctk.CTkLabel(
@@ -216,7 +242,7 @@ class AgentGUI:
 
         # --- Activity log -----------------------------------------------
         log_label = ctk.CTkLabel(
-            body, text="ACTIVITY LOG", text_color=PAL["text_muted"],
+            body, text="ACTIVITY LOG", text_color=PAL["accent"],
             font=(font_family, 9, "bold"),
         )
         log_label.pack(anchor="w", pady=(16, 4))
@@ -287,10 +313,22 @@ class AgentGUI:
     def _refresh_from_state(self) -> None:
         snap = self.state.snapshot()
 
-        # Connection indicator
+        # Connection indicator + left-edge stripe color (reads its own
+        # status at a glance: green=online, blue=connecting, red=auth,
+        # gray=stopped/starting).
         color, label = _CONN_VIEW.get(
             snap["connection"], (PAL["text_dim"], snap["connection"])
         )
+        # Stripe uses accent when connecting (in-progress) so it picks
+        # up the website's primary action color during the most common
+        # transient state.
+        stripe_color = (
+            PAL["accent"] if snap["connection"] == CONN_CONNECTING else color
+        )
+        try:
+            self.status_stripe.configure(fg_color=stripe_color)
+        except Exception:
+            pass
         self.conn_dot.itemconfig(self._conn_dot_id, fill=color)
         self.conn_label.configure(text=label)
 

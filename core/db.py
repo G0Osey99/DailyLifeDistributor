@@ -341,6 +341,18 @@ def init_db() -> None:
                 "CREATE INDEX IF NOT EXISTS idx_sessions_org "
                 "ON sessions(org_id)"
             )
+        # external_calendar_items.org_id — the calendar-refresh feed is
+        # per-tenant just like upload_history. Without this, a refresh
+        # while impersonating org B writes B's scheduled items into a
+        # globally-shared table that org A then sees too.
+        ecols = {r[1] for r in conn.execute(
+            "PRAGMA table_info('external_calendar_items')").fetchall()}
+        if "org_id" not in ecols:
+            conn.execute("ALTER TABLE external_calendar_items ADD COLUMN org_id INTEGER")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ext_org_iso "
+                "ON external_calendar_items(org_id, iso_date)"
+            )
         # recovery_requests.note — free-text "what happened" context from the user.
         rrcols = {r[1] for r in conn.execute(
             "PRAGMA table_info('recovery_requests')").fetchall()}
@@ -550,18 +562,31 @@ def record_upload(
     scheduled_time: str,
     error: str,
     external_id: str | None = None,
+    *,
+    org_id: int | None = None,
 ) -> None:
-    """Insert a row into upload_history. If `external_id` is None, parse it from `url`."""
+    """Insert a row into upload_history.
+
+    *external_id* defaults to parse_url(platform, url) when unset.
+    *org_id* stamps the tenant; when unset, falls back to the session's
+    org_id (looked up via session_id). NULL on legacy single-tenant.
+    """
     from core.refresh.id_extract import parse_url
     if external_id is None:
         external_id = parse_url(platform, url) or ""
     now = datetime.now(timezone.utc).isoformat()
     with _get_conn() as conn:
+        if org_id is None and session_id:
+            row = conn.execute(
+                "SELECT org_id FROM sessions WHERE id = ?", (session_id,),
+            ).fetchone()
+            if row is not None and row["org_id"] is not None:
+                org_id = int(row["org_id"])
         conn.execute(
             "INSERT INTO upload_history "
             "(session_id, uploaded_at, iso_date, platform, title, file_path, "
-            " success, url, scheduled_time, error, external_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " success, url, scheduled_time, error, external_id, org_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 now,
@@ -574,6 +599,7 @@ def record_upload(
                 scheduled_time or "",
                 error or "",
                 external_id or "",
+                org_id,
             ),
         )
         conn.commit()
@@ -642,8 +668,15 @@ def backfill_external_ids() -> int:
 
 # ---------- External calendar items ----------
 
-def upsert_external_items(items: list[dict]) -> None:
-    """Insert-or-update rows in external_calendar_items keyed by (platform, external_id)."""
+def upsert_external_items(items: list[dict], *, org_id: int | None = None) -> None:
+    """Insert-or-update rows in external_calendar_items.
+
+    Keyed by ``(platform, external_id)`` (legacy uniqueness; external_ids
+    are platform-globally unique in practice so the collision risk across
+    tenants is theoretical). *org_id* is stamped on the row so the
+    calendar view can scope reads — COALESCE on update preserves an
+    existing org_id when the caller didn't provide one.
+    """
     if not items:
         return
     now = datetime.now(timezone.utc).isoformat()
@@ -653,8 +686,8 @@ def upsert_external_items(items: list[dict]) -> None:
                 """
                 INSERT INTO external_calendar_items
                     (platform, external_id, iso_date, scheduled_time, title, url,
-                     status, raw_json, first_seen_at, last_seen_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     status, raw_json, first_seen_at, last_seen_at, org_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(platform, external_id) DO UPDATE SET
                     iso_date       = excluded.iso_date,
                     scheduled_time = excluded.scheduled_time,
@@ -662,24 +695,35 @@ def upsert_external_items(items: list[dict]) -> None:
                     url            = excluded.url,
                     status         = excluded.status,
                     raw_json       = excluded.raw_json,
-                    last_seen_at   = excluded.last_seen_at
+                    last_seen_at   = excluded.last_seen_at,
+                    org_id         = COALESCE(excluded.org_id, external_calendar_items.org_id)
                 """,
                 (
                     it["platform"], it["external_id"], it["iso_date"],
                     it.get("scheduled_time", ""), it.get("title", ""), it.get("url", ""),
                     it.get("status", ""), it.get("raw_json", ""),
-                    now, now,
+                    now, now, org_id,
                 ),
             )
         conn.commit()
 
 
 def mark_stale_external_items(
-    platform: str, iso_start: str, iso_end: str, seen_ids: set[str]
+    platform: str, iso_start: str, iso_end: str, seen_ids: set[str],
+    *, org_id: int | None = None,
 ) -> int:
     """Flip status='deleted' for rows in [iso_start, iso_end] for this platform
     whose external_id is NOT in `seen_ids`. Returns affected row count.
+
+    *org_id* scopes the staleness pass so a refresh for org A doesn't mark
+    org B's items as deleted. None preserves the legacy (system-wide)
+    behavior for callers that haven't been migrated.
     """
+    org_clause = ""
+    org_args: tuple = ()
+    if org_id is not None:
+        org_clause = " AND org_id = ?"
+        org_args = (int(org_id),)
     with _get_conn() as conn:
         if seen_ids:
             qmarks = ",".join("?" for _ in seen_ids)
@@ -689,32 +733,49 @@ def mark_stale_external_items(
                     WHERE platform = ?
                       AND iso_date BETWEEN ? AND ?
                       AND external_id NOT IN ({qmarks})
-                      AND status != 'deleted'""",
-                (platform, iso_start, iso_end, *seen_ids),
+                      AND status != 'deleted'{org_clause}""",
+                (platform, iso_start, iso_end, *seen_ids, *org_args),
             )
         else:
             cur = conn.execute(
-                """UPDATE external_calendar_items
+                f"""UPDATE external_calendar_items
                     SET status='deleted'
                     WHERE platform = ?
                       AND iso_date BETWEEN ? AND ?
-                      AND status != 'deleted'""",
-                (platform, iso_start, iso_end),
+                      AND status != 'deleted'{org_clause}""",
+                (platform, iso_start, iso_end, *org_args),
             )
         conn.commit()
         return cur.rowcount
 
 
-def get_external_items_for_window(iso_start: str, iso_end: str) -> list[dict]:
-    """Return non-deleted external items with iso_date in [iso_start, iso_end]."""
+def get_external_items_for_window(iso_start: str, iso_end: str,
+                                  *, org_id: int | None = None) -> list[dict]:
+    """Return non-deleted external items with iso_date in [iso_start, iso_end].
+
+    *org_id* scopes to one tenant. Pre-schema rows with NULL org_id are
+    included so the migration cutover doesn't blank the calendar for the
+    tenant the refresh happened in; ``None`` returns every row (admin /
+    legacy single-tenant).
+    """
     with _get_conn() as conn:
-        rows = conn.execute(
-            """SELECT * FROM external_calendar_items
-               WHERE iso_date BETWEEN ? AND ?
-                 AND COALESCE(status,'') != 'deleted'
-               ORDER BY iso_date, scheduled_time, platform""",
-            (iso_start, iso_end),
-        ).fetchall()
+        if org_id is None:
+            rows = conn.execute(
+                """SELECT * FROM external_calendar_items
+                   WHERE iso_date BETWEEN ? AND ?
+                     AND COALESCE(status,'') != 'deleted'
+                   ORDER BY iso_date, scheduled_time, platform""",
+                (iso_start, iso_end),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM external_calendar_items
+                   WHERE iso_date BETWEEN ? AND ?
+                     AND COALESCE(status,'') != 'deleted'
+                     AND (org_id = ? OR org_id IS NULL)
+                   ORDER BY iso_date, scheduled_time, platform""",
+                (iso_start, iso_end, int(org_id)),
+            ).fetchall()
         return [dict(r) for r in rows]
 
 

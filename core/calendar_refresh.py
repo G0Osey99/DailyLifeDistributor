@@ -85,11 +85,22 @@ def run_refresh(
     window_days_back: int = 30,
     window_days_forward: int = 180,
     source_timeout_sec: int = 180,
+    org_id: int | None = None,
 ) -> dict:
     """Refresh all sources in parallel.
 
     Returns {"busy": True} if another refresh is in progress.
+
+    *org_id* stamps every upsert and scopes the stale-mark pass so a
+    refresh on org A's session can't blank org B's calendar. When None,
+    falls back to ``effective_org_id()`` if a request context is active.
     """
+    if org_id is None:
+        try:
+            from core.org_context import effective_org_id as _eoi
+            org_id = _eoi()
+        except Exception:
+            org_id = None
     if not _LOCK.acquire(blocking=False):
         return {"busy": True}
     try:
@@ -109,7 +120,9 @@ def run_refresh(
                 source_obj = futures[fut]
                 if r["ok"]:
                     items = r["items"] or []
-                    db.upsert_external_items([it.to_dict() for it in items])
+                    db.upsert_external_items(
+                        [it.to_dict() for it in items], org_id=org_id,
+                    )
                     # Group seen ids by emitted platform; mark stale per-platform.
                     by_platform: dict[str, set[str]] = {}
                     for it in items:
@@ -121,6 +134,7 @@ def run_refresh(
                         db.mark_stale_external_items(
                             plat, iso_start, iso_end,
                             seen_ids=by_platform.get(plat, set()),
+                            org_id=org_id,
                         )
                     per_source_results[r["name"]] = {"ok": True, "count": len(items)}
                 else:

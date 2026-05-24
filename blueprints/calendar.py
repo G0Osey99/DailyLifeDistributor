@@ -163,7 +163,9 @@ def calendar_view():
             "file_path": r.get("file_path") or "",
         })
 
-    external_records = _db.get_external_items_for_window(iso_start, iso_end)
+    external_records = _db.get_external_items_for_window(
+        iso_start, iso_end, org_id=effective_org_id(),
+    )
     external_for_merge: list[dict] = []
     for r in external_records:
         d = _coerce_date(r.get("iso_date") or "")

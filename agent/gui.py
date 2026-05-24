@@ -19,6 +19,9 @@ import math
 import threading
 import tkinter as tk
 import tkinter.font
+import urllib.request
+import urllib.parse
+import json as _json
 import webbrowser
 
 import customtkinter as ctk
@@ -137,6 +140,17 @@ class AgentGUI:
     POLL_MS = 500
     PULSE_MS = 40          # 25 fps is plenty for a slow breathing pulse
     PULSE_PERIOD_MS = 2400
+    SESSIONS_POLL_MS = 15_000   # match the web app's sb-conn-list cadence
+    SESSIONS_TIMEOUT_S = 5
+    # Display order + pretty names for the rows. The endpoint also returns
+    # "agent" — that's us, so we suppress it.
+    SESSION_ORDER = (
+        ("youtube",      "YouTube"),
+        ("simplecast",   "SimpleCast"),
+        ("vista_social", "Vista Social"),
+        ("rock",         "Rock"),
+        ("ollama",       "Ollama"),
+    )
     LOG_FONT_FAMILIES = ("Geist Mono", "JetBrains Mono", "Cascadia Mono",
                          "Consolas", "Menlo", "Courier New")
 
@@ -146,6 +160,11 @@ class AgentGUI:
         self._pairing_dialog_open = False
         self._pulse_t0_ms = 0    # set on first pulse tick
         self._chip_widgets: list[ctk.CTkFrame] = []
+        self._session_row_widgets: dict[str, dict] = {}  # key -> {row, dot, detail}
+        self._sessions_inflight = False
+        self._sessions_data: dict = {}
+        self._sessions_updated_at: float | None = None
+        self._sessions_unavailable = False  # endpoint returned non-2xx once
 
         # Last-rendered hero descriptor — lets us skip a full hero repaint
         # when nothing material has changed (just the pulse animates).
@@ -156,8 +175,8 @@ class AgentGUI:
 
         self.root = ctk.CTk()
         self.root.title("Daily Life Distributor — Agent")
-        self.root.geometry("540x620")
-        self.root.minsize(460, 520)
+        self.root.geometry("540x720")
+        self.root.minsize(460, 620)
         self.root.configure(fg_color=PAL["shell_bg"])
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -168,6 +187,9 @@ class AgentGUI:
         # Start the polling + pulse loops.
         self.root.after(self.POLL_MS, self._poll)
         self.root.after(self.PULSE_MS, self._tick_pulse)
+        # First sessions poll fires immediately so the panel isn't blank
+        # for 15 s after launch; subsequent ticks schedule themselves.
+        self.root.after(800, self._tick_sessions)
 
     # ─── layout ─────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
@@ -268,10 +290,37 @@ class AgentGUI:
         # Don't pack yet — toggled in _refresh_from_state().
         self.progress.set(0)
 
-        # ── Body: activity log ─────────────────────────────────────────
+        # ── Body: sessions panel + activity log ────────────────────────
         body = ctk.CTkFrame(self.root, fg_color=PAL["shell_bg"], corner_radius=0)
         body.pack(fill="both", expand=True, padx=18, pady=(14, 0))
 
+        # ─── Sessions card ───
+        # Polled from <server>/sessions/status every 15 s in a worker
+        # thread. Mirrors templates/base.html's sb-conn-list so the agent
+        # surfaces the same status the website's sidebar already shows.
+        sess_header = ctk.CTkFrame(body, fg_color="transparent")
+        sess_header.pack(fill="x", pady=(0, 8))
+        self._section_rail(sess_header, "Sessions").pack(side="left")
+        self.sessions_updated = ctk.CTkLabel(
+            sess_header, text="—",
+            text_color=PAL["text_dim"], font=(self._font, 10),
+        )
+        self.sessions_updated.pack(side="right")
+
+        self.sessions_card = ctk.CTkFrame(
+            body, fg_color=PAL["shell_panel"],
+            border_width=1, border_color=PAL["shell_border"],
+            corner_radius=10,
+        )
+        self.sessions_card.pack(fill="x", pady=(0, 12))
+        # Pre-build a row per known service so re-renders just configure()
+        # the existing widgets — no destroy/rebuild flicker every 15 s.
+        for i, (key, name) in enumerate(self.SESSION_ORDER):
+            self._build_session_row(
+                key, name, last=(i == len(self.SESSION_ORDER) - 1)
+            )
+
+        # ─── Activity log ───
         log_header = ctk.CTkFrame(body, fg_color="transparent")
         log_header.pack(fill="x", pady=(0, 8))
         self._section_rail(log_header, "Activity log").pack(side="left")
@@ -340,6 +389,37 @@ class AgentGUI:
         self.quit_btn.place(relx=1.0, x=-156, rely=0.5, anchor="e")
 
     # ─── small helpers ──────────────────────────────────────────────────
+    def _build_session_row(self, key: str, name: str, last: bool) -> None:
+        """Build one session row inside self.sessions_card and stash its
+        widgets in self._session_row_widgets[key] so _render_sessions()
+        can just configure() text/color in place — no destroy churn."""
+        row = ctk.CTkFrame(self.sessions_card, fg_color="transparent")
+        row.pack(fill="x", padx=13, pady=(8, 8 if last else 0))
+        # Faux border-bottom — thin Frame packed below the row, except on
+        # the last item. Lives inside the card not outside.
+        if not last:
+            tk.Frame(self.sessions_card, bg=PAL["shell_border"], height=1) \
+                .pack(fill="x", padx=13)
+
+        dot = tk.Canvas(row, width=9, height=9, highlightthickness=0,
+                        bg=PAL["shell_panel"])
+        dot.create_oval(1, 1, 8, 8, fill=PAL["text_dim"], outline="",
+                        tags="d")
+        dot.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(
+            row, text=name, text_color=PAL["text"],
+            font=(self._font, 12, "bold"),
+        ).pack(side="left")
+
+        detail = ctk.CTkLabel(
+            row, text="checking…", text_color=PAL["text_dim"],
+            font=(self._font, 11),
+        )
+        detail.pack(side="right")
+
+        self._session_row_widgets[key] = {"row": row, "dot": dot, "detail": detail}
+
     def _section_rail(self, parent, text: str) -> ctk.CTkFrame:
         """Renders the website's section-header treatment: a 3px accent
         bar on the left, then an uppercase label. Returns the container
@@ -384,6 +464,125 @@ class AgentGUI:
             if f in installed:
                 return f
         return "TkFixedFont"
+
+    # ─── sessions panel ─────────────────────────────────────────────────
+    def _tick_sessions(self) -> None:
+        """Schedule the next sessions poll. Self-rescheduling so we don't
+        need to track multiple after() handles."""
+        if self.shutdown_event.is_set():
+            return
+        self._fetch_sessions_async()
+        self.root.after(self.SESSIONS_POLL_MS, self._tick_sessions)
+
+    def _fetch_sessions_async(self) -> None:
+        """Kick off a one-shot worker thread that GETs /sessions/status.
+        Result is posted back to the Tk main thread via root.after(0, …)
+        so the only widget mutation happens on the GUI thread."""
+        if self._sessions_inflight:
+            return
+        server = (self.state.server_url or "").strip()
+        if not server:
+            # Nothing to poll until pairing finishes and a server URL is set.
+            return
+        # Normalize wss/ws/etc. → https/http for the GET. The HTTP endpoint
+        # lives at the same host the WebSocket connects to.
+        url = _to_http(server.rstrip("/")) + "/sessions/status"
+        self._sessions_inflight = True
+
+        def worker() -> None:
+            data = None
+            unreachable = False
+            try:
+                req = urllib.request.Request(
+                    url, headers={"Accept": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=self.SESSIONS_TIMEOUT_S) as resp:
+                    if 200 <= resp.status < 300:
+                        body = resp.read().decode("utf-8", errors="replace")
+                        data = _json.loads(body)
+                    else:
+                        unreachable = True
+            except Exception:
+                log.debug("sessions/status fetch failed", exc_info=True)
+                unreachable = True
+            # Hop back to the main thread. Tk widget config from a
+            # background thread is undefined behavior on some platforms.
+            self.root.after(0, self._on_sessions_data, data, unreachable)
+
+        # Daemon so it never blocks process exit. Throwaway thread — one
+        # per 15 s — is fine; this is cheaper than maintaining a pool.
+        threading.Thread(
+            target=worker, name="agent-sessions-poll", daemon=True,
+        ).start()
+
+    def _on_sessions_data(self, data: dict | None, unreachable: bool) -> None:
+        """Apply a sessions poll result to the UI. Runs on the Tk thread."""
+        self._sessions_inflight = False
+        if data is not None:
+            self._sessions_data = data
+            self._sessions_unavailable = False
+            import time as _time
+            self._sessions_updated_at = _time.time()
+        else:
+            # Don't blank the cached data on a single failed poll — keep
+            # showing the last known state and just flip the "unavailable"
+            # hint so the user knows it's stale.
+            self._sessions_unavailable = unreachable
+        self._render_sessions()
+
+    def _render_sessions(self) -> None:
+        """Repaint every session row from self._sessions_data. Cheap —
+        we configure existing widgets, never destroy/rebuild them."""
+        data = self._sessions_data or {}
+        any_known = False
+        for key, _name in self.SESSION_ORDER:
+            entry = data.get(key)
+            widgets = self._session_row_widgets.get(key)
+            if not widgets:
+                continue
+            if entry is None:
+                # No data yet for this service.
+                widgets["dot"].itemconfig("d", fill=PAL["text_dim"])
+                widgets["detail"].configure(
+                    text="checking…" if not self._sessions_unavailable else "unknown",
+                    text_color=PAL["text_dim"],
+                )
+                continue
+            any_known = True
+            ok = bool(entry.get("ok"))
+            # Strip the leading service name from label_on/label_off so
+            # we don't render "YouTube" twice ("YouTube connected" next
+            # to the row name "YouTube"). Lowercase the trimmed bit so
+            # it reads as a tag, not a sentence fragment.
+            full_label = entry.get("label_on" if ok else "label_off") or ""
+            detail_txt = _trim_service_prefix(full_label, _name) or (
+                "connected" if ok else "needs login"
+            )
+            widgets["dot"].itemconfig(
+                "d", fill=PAL["ok"] if ok else PAL["warn"],
+            )
+            widgets["detail"].configure(
+                text=detail_txt,
+                text_color=PAL["text_muted"] if ok else PAL["warn"],
+            )
+
+        # Updated-at stamp on the right of the section header.
+        if self._sessions_unavailable and not any_known:
+            self.sessions_updated.configure(
+                text="unavailable", text_color=PAL["warn"],
+            )
+        elif self._sessions_updated_at:
+            import time as _time
+            stamp = _time.strftime("%H:%M", _time.localtime(self._sessions_updated_at))
+            suffix = " (stale)" if self._sessions_unavailable else ""
+            self.sessions_updated.configure(
+                text=f"updated {stamp}{suffix}",
+                text_color=PAL["warn"] if self._sessions_unavailable else PAL["text_dim"],
+            )
+        else:
+            self.sessions_updated.configure(
+                text="—", text_color=PAL["text_dim"],
+            )
 
     # ─── hero painting ──────────────────────────────────────────────────
     def _paint_hero_static(self, view: dict) -> None:
@@ -730,6 +929,32 @@ def _strip_scheme(url: str) -> str:
         if url.startswith(prefix):
             return url[len(prefix):].rstrip("/")
     return url.rstrip("/")
+
+
+def _to_http(url: str) -> str:
+    """Convert wss:// → https://, ws:// → http://. Anything else passes
+    through. Used by the sessions poller so we can reuse the WebSocket
+    server URL for plain HTTP GETs."""
+    if not url:
+        return url
+    if url.startswith("wss://"):
+        return "https://" + url[len("wss://"):]
+    if url.startswith("ws://"):
+        return "http://" + url[len("ws://"):]
+    return url
+
+
+def _trim_service_prefix(label: str, name: str) -> str:
+    """'YouTube connected' → 'connected' when the row is already named
+    YouTube. Returns the original label if no prefix match — we'd rather
+    show duplicate text than swallow a useful status word."""
+    if not label or not name:
+        return label
+    lower_label = label.lower()
+    lower_name = name.lower()
+    if lower_label.startswith(lower_name):
+        return label[len(name):].lstrip(" :·-").lower() or label
+    return label
 
 
 def _parse_progress(detail: str) -> float | None:

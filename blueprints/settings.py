@@ -598,8 +598,23 @@ def sessions_status():
         except Exception:
             org_id = None
     out: dict = {}
+    # Agent (token-auth) requests have no Flask session, so
+    # _cached_yt_authenticated() — which reads effective_org_id() from
+    # the (empty) session — would always miss and report "needs auth"
+    # even when the token sits in the agent owner's org. Push the
+    # resolved org_id as a thread-local override for this one call so
+    # the YT auth check reads the right tenant's slot. Browser path
+    # (has_session_auth=True) doesn't need this — its session already
+    # has acting_as_org_id / current_org_id and effective_org_id()
+    # resolves correctly.
+    if has_session_auth:
+        yt_ok = bool(_cached_yt_authenticated())
+    else:
+        from core.org_context import override as _oc_override
+        with _oc_override(org_id):
+            yt_ok = bool(_cached_yt_authenticated())
     out["youtube"] = {
-        "ok": bool(_cached_yt_authenticated()),
+        "ok": yt_ok,
         "label_on": "YouTube connected",
         "label_off": "YouTube needs auth",
     }

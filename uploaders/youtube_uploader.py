@@ -500,11 +500,20 @@ def upload_video(entry, is_short: bool = False, dry_run: bool = False, elements=
         if is_short and "#Shorts" not in description:
             description = f"{description}\n#Shorts".strip()
 
-        # Append description footer if configured
-        footer_key = "youtube_shorts" if is_short else "youtube_video"
-        footer = config.get("description_footers", {}).get(footer_key, "")
-        if footer and footer.strip():
-            description = description + "\n\n" + footer.strip()
+        # Append description footer. Prefer the per-org footer baked into
+        # the entry at build time (session_state.build_entry pulls from the
+        # active org's overlay); fall back to load_config() when the entry
+        # was built by an older code path that didn't populate the field.
+        if is_short:
+            entry_footer = getattr(entry, "youtube_shorts_description_footer", None)
+            footer_key = "youtube_shorts"
+        else:
+            entry_footer = getattr(entry, "youtube_video_description_footer", None)
+            footer_key = "youtube_video"
+        if entry_footer is None:
+            entry_footer = config.get("description_footers", {}).get(footer_key, "")
+        if entry_footer and entry_footer.strip():
+            description = description + "\n\n" + entry_footer.strip()
 
         # Tags — respect elements flag
         if elements is not None:

@@ -114,12 +114,36 @@ def settings():
     if request.method == "POST":
         config = load_config()
 
-        config.setdefault("scheduling", {})
-        config["scheduling"]["youtube_video"] = request.form.get("sched_youtube_video", "10:00")
-        config["scheduling"]["youtube_shorts"] = request.form.get("sched_youtube_shorts", "12:00")
-        config["scheduling"]["simplecast"] = request.form.get("sched_simplecast", "06:00")
-        config["scheduling"]["vista_social"] = request.form.get("sched_vista_social", "12:00")
-        config["scheduling"]["timezone"] = request.form.get("sched_timezone", "America/New_York")
+        # Per-org sections (scheduling + description_footers) write to the
+        # org_settings overlay, NOT to config.yaml. config.yaml is the
+        # platform default; per-tenant overrides live in SQLite so each org
+        # (and the program owner while impersonating) gets their own values.
+        from core.org_context import effective_org_id
+        from core import org_settings as _org_settings
+        target_org_id = effective_org_id()
+
+        sched_overlay = {
+            "youtube_video":  request.form.get("sched_youtube_video", "10:00"),
+            "youtube_shorts": request.form.get("sched_youtube_shorts", "12:00"),
+            "simplecast":     request.form.get("sched_simplecast", "06:00"),
+            "vista_social":   request.form.get("sched_vista_social", "12:00"),
+            "timezone":       request.form.get("sched_timezone", "America/New_York"),
+        }
+        footer_overlay = {
+            "youtube_video":  request.form.get("footer_youtube_video", ""),
+            "youtube_shorts": request.form.get("footer_youtube_shorts", ""),
+            "podcast":        request.form.get("footer_podcast", ""),
+            "vista_social":   request.form.get("footer_vista_social", ""),
+        }
+        if target_org_id is not None:
+            _org_settings.set_section(target_org_id, "scheduling", sched_overlay)
+            _org_settings.set_section(target_org_id, "description_footers", footer_overlay)
+        else:
+            # Legacy single-tenant install (LEGACY_PASSWORD_ENABLED, no
+            # current_org_id in session): keep writing to config.yaml so the
+            # USB build's existing behavior is preserved.
+            config.setdefault("scheduling", {}).update(sched_overlay)
+            config.setdefault("description_footers", {}).update(footer_overlay)
 
         config.setdefault("youtube", {})
         config["youtube"]["default_privacy"] = request.form.get("yt_default_privacy", "private")
@@ -139,12 +163,6 @@ def settings():
             config["llm"]["num_title_suggestions"] = int(request.form.get("llm_num_titles", 5))
         except (ValueError, TypeError):
             config["llm"]["num_title_suggestions"] = 5
-
-        config.setdefault("description_footers", {})
-        config["description_footers"]["youtube_video"] = request.form.get("footer_youtube_video", "")
-        config["description_footers"]["youtube_shorts"] = request.form.get("footer_youtube_shorts", "")
-        config["description_footers"]["podcast"] = request.form.get("footer_podcast", "")
-        config["description_footers"]["vista_social"] = request.form.get("footer_vista_social", "")
 
         # Media folders + the planning spreadsheet are picked per browser
         # session on the dashboard now — no server-side directory config.
@@ -199,9 +217,12 @@ def settings():
         flash("Settings saved successfully!", "success")
         return redirect(url_for("settings.settings"))
 
-    config = load_config()
-    from core import secrets_store as _ss
     from core.org_context import real_user_id, effective_org_id
+    from core.config import effective_config as _effective_config
+    # Per-org overlay applied: the schedule/footer fields in the form
+    # render the active org's overrides (with config.yaml as the fallback).
+    config = _effective_config(effective_org_id())
+    from core import secrets_store as _ss
     uid = real_user_id()
     is_program_owner = uid is not None and _is_program_owner(uid)
 

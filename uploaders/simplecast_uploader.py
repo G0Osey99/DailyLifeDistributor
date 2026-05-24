@@ -105,8 +105,18 @@ _EPISODE_ID_RE = re.compile(
 logger = logging.getLogger(__name__)
 
 
-def _podcast_description_footer() -> str:
-    """Read description_footers.podcast from config.yaml. Returns '' on any failure."""
+def _podcast_description_footer(entry=None) -> str:
+    """Resolve the SimpleCast podcast footer for *entry*.
+
+    Prefer the per-org footer baked into the entry at build time
+    (session_state.build_entry from the active org's overlay). Fall
+    back to ``config.yaml`` when the entry was built by an older path
+    that didn't populate the field, or when called with no entry.
+    """
+    if entry is not None:
+        v = getattr(entry, "podcast_description_footer", None)
+        if v is not None:
+            return (v or "").strip()
     try:
         from core.config import load_config
         cfg = load_config() or {}
@@ -488,7 +498,7 @@ def upload_episode(entry, elements=None, progress_callback=None) -> dict:
 
     description = (getattr(entry, "description", "") or "") if sc_description else ""
     if sc_description and description:
-        footer = _podcast_description_footer()
+        footer = _podcast_description_footer(entry)
         if footer:
             description = f"{description}\n\n{footer}"
     schedule_dt = getattr(entry, "podcast_schedule_dt", None) if sc_schedule else None

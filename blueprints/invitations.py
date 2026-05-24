@@ -128,6 +128,25 @@ def send_invite():
         # Don't surface the send-side error to the inviter — the row is
         # already in the DB; the recipient can be re-sent later.
         log.exception("invite send failed for %s", email_addr)
+    # Audit trail: invite-send is one of the most security-relevant
+    # actions in the system (a Manager opening their org to a stranger).
+    # Previously had ZERO audit row.
+    try:
+        from core import audit as _audit
+        _audit.write_event(
+            action="invite.sent",
+            actor_user_id=user_id, org_id=org_id,
+            target_type="invitation", target_id=inv_id,
+            metadata={"email": email_addr, "role": role},
+            ip=request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+            ua=request.headers.get("User-Agent", ""),
+        )
+    except Exception:
+        log.warning("audit invite.sent write failed", exc_info=True)
+    log.info(
+        "invite sent: org=%s inviter=%s to=%s role=%s id=%s",
+        org_id, user_id, email_addr, role, inv_id,
+    )
     flash(f"Invitation sent to {email_addr}.", "success")
     return _members_redirect()
 
@@ -159,6 +178,20 @@ def revoke(invitation_id: int):
     ):
         abort(403)
     invitations.revoke_invitation(invitation_id)
+    try:
+        from core import audit as _audit
+        _audit.write_event(
+            action="invite.revoked",
+            actor_user_id=user_id, org_id=org_id,
+            target_type="invitation", target_id=invitation_id,
+            ip=request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+            ua=request.headers.get("User-Agent", ""),
+        )
+    except Exception:
+        log.warning("audit invite.revoked write failed", exc_info=True)
+    log.info(
+        "invite revoked: org=%s actor=%s id=%s", org_id, user_id, invitation_id,
+    )
     flash("Invitation revoked.", "success")
     return _members_redirect()
 

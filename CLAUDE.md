@@ -286,6 +286,66 @@ two paired agents (laptop + studio) can target the right one each run:
   stored device is offline at page load and exactly one same-network
   device is online, that device pre-selects.
 
+## Multi-tenant (phases α / β / γ / δ)
+
+The hosted deploy has grown from "shared password" to a full multi-tenant
+SaaS: orgs, users, roles, invitations, account recovery, audit log,
+two-factor, and per-org YouTube quota. The single-tenant USB build still
+works (legacy login enabled via `LEGACY_PASSWORD_ENABLED=true`, only safe
+when `HOSTED` is unset — `app.py` refuses to boot the combination).
+
+**New tables (created in `core/db.py:init_db()`):**
+- `organizations` — tenant root; `require_2fa` toggles org-wide enforcement
+- `users` — username, email, Argon2id `password_hash`, `password_changed_at` (NULL = first-login forced reset), `totp_secret_encrypted`, `totp_enabled`, `email_2fa_enabled`, `program_owner`
+- `org_memberships` — `(user_id, org_id, role)` where role ∈ {owner, manager, user}
+- `invitations` — pending invites; token-hashed, single-use, 7-day TTL
+- `recovery_codes` — pre-generated one-time-use codes (10 per user, hashed at rest)
+- `recovery_requests` — user-initiated "I lost my factor" tickets the Owner approves
+- `audit_log` — every security-relevant action (login, 2fa change, invite, role change, password reset…)
+- `audit_log_archive` — nightly rollover at 03:00 UTC (`core.audit_archive`)
+- `email_2fa_codes` — 6-digit codes, 10-min TTL, rate-limited per user
+- `login_ip_sightings` — per-user IP history powering "new device sign-in" emails
+- `platform_locks` — coarse per-org per-platform mutex so two simultaneous runs in the same org don't tangle Playwright sessions
+- `yt_quota_usage` — per-`(org_id, quota_date)` counter, parallel to the global `youtube_quota`
+
+**Routes — program-owner admin:**
+- `/admin/organizations`, `/admin/organizations/<id>` — list + per-org dashboard
+- `/admin/users` — every user across every org
+- `/admin/audit-log` — global audit feed (org-owners get their own at `/settings/audit-log`)
+
+**Routes — per-user account:**
+- `/settings/2fa`, `/settings/2fa/enable-totp`, `/settings/2fa/verify-totp`, `/settings/2fa/enable-email`, `/settings/2fa/send-email-code`, `/settings/2fa/disable`, `/settings/2fa/recovery-codes`
+- `/settings/security` — sessions list, IP sightings, recent logins
+- `/settings/members` — owner/manager: invite, change roles, remove (audit-logged)
+- `/settings/audit-log` — org-scoped feed
+
+**Routes — auth + recovery:**
+- `/login` then `/login/2fa` (TOTP) or `/login/email-2fa`
+- `/login/first-password-set` — forced when `users.password_changed_at IS NULL` (every brand-new + invited user)
+- `/recover` (anonymous), `/recover/reset/<token>`, `/recover/admin-approve/<id>` (Owner)
+
+**Routes — invitations + agent download:**
+- `/invite/accept/<token>` (GET form + POST submit) — public, no session
+- `/download/agent`, `/download/agent/windows`, `/download/agent/macos`, `/download/agent/manifest.json` — stable user-facing URLs; the manifest + signed binaries also flow through `/agent/releases/*` for the auto-updater
+
+**Routes — session + health:**
+- `/sessions/status` — JSON heartbeat the dashboard polls so a lapsed session triggers a friendly modal (not a silent 401)
+- `/health/details` — operational telemetry (breakers, agents_online, resend_configured, youtube_quota, secret_enc_key_set); always 200, scraped by external monitors
+
+**New env vars:**
+- `PROGRAM_OWNER_EMAIL` — first-boot migration creates this user as program owner (paired with `INITIAL_ADMIN_PASSWORD`)
+- `LEGACY_PASSWORD_ENABLED` — `"true"` enables the shared-password gate; refuses to combine with `HOSTED=true`
+- `RESEND_API_KEY`, `RESEND_FROM_ADDR` — outbound mail (invites, recovery, new-device alerts); `RESEND_API_KEY` empty disables mail (logged as warning)
+- `BASE_URL` — public origin used when generating absolute links in outbound emails (default `https://autoalert.pro`)
+
+**Agent GUI + universal2:**
+- `agent/gui.py` — bundled Tkinter window for the desktop agent: pair, show status (online / offline / running job), open update log
+- `agent/state.py` — durable per-install state (paired token, last device id, settings)
+- The Mac build is now a **universal2** binary (`build_agent.py` + the CI matrix) so one download runs on both Apple Silicon and Intel Macs
+
+**First-login forced password change:**
+- A brand-new user (created via invite or by the program-owner CLI) has `users.password_changed_at IS NULL`. On login the auth blueprint redirects to `/login/first-password-set`, which is partial-token-gated (the session isn't fully authenticated until the new password lands), then sets `password_changed_at = now()` and proceeds to 2FA if configured.
+
 ## Key Files
 
 | File | Purpose |
@@ -341,6 +401,33 @@ two paired agents (laptop + studio) can target the right one each run:
 | `core/remote_login_playwright.py` | Playwright headed-browser driver inside the Xvfb display; writes the resulting `storage_state` to `secrets_store` |
 | `uploaders/vista_social_uploader.py` | Vista Social Playwright uploader (no API) — daily-image + caption + per-platform schedules |
 | `templates/devices.html` | `/settings/devices` — paired-device list with inline rename + revoke (added in the codebase-completion pass) |
+| `core/user_store.py` | Argon2id user CRUD: create, password update, lookup by id/username/email |
+| `core/org_store.py` | Organization + membership CRUD; role helpers (list_memberships_for_user, list_members_for_org) |
+| `core/permissions.py` | `require_role` / `require_program_owner` / `require_authenticated_json` decorators |
+| `core/invitations.py` | Mint/redeem invite tokens (hashed at rest, single-use, 7-day TTL) |
+| `core/recovery.py` | Pre-generated recovery codes — generate_recovery_codes, regenerate_codes, consume |
+| `core/recovery_request.py` | "I lost my factor" tickets the Owner approves; per-user 1/24h rate limit |
+| `core/audit.py` | `write_event(action, actor_user_id, metadata, ip, ua)` — single insert into `audit_log` |
+| `core/audit_archive.py` | Nightly rollover at 03:00 UTC: moves rows older than 90 days into `audit_log_archive` |
+| `core/email.py` | Resend SDK wrapper; templates (welcome, invite, recovery, new-device, etc.); per-call breaker + retry |
+| `core/email_2fa.py` | 6-digit email codes, 10-min TTL, rate-limited per user |
+| `core/login_notifications.py` | "Sign-in from a new IP" emails — diffed against `login_ip_sightings` |
+| `core/totp.py` | TOTP secret gen / encrypt-at-rest / verify / provisioning URI builder |
+| `core/passwords.py` | Argon2id verify + hash, Pwned Passwords check |
+| `core/migration_bootstrap.py` | Idempotent first-boot: create PROGRAM_OWNER_EMAIL user + default org from env |
+| `core/env_validation.py` | Startup-time guard on required env vars (SECRET_ENC_KEY, etc.) — fail-loud at boot |
+| `core/platform_locks.py` | Per-(org, platform) coarse mutex preventing concurrent Playwright sessions for the same login |
+| `core/playwright_session.py` | Materialize browser-session blobs from the encrypted store at boot |
+| `core/qrcode_render.py` | PNG renderer for the TOTP provisioning QR code |
+| `blueprints/admin.py` | Program-owner admin pages: orgs list, per-org detail, all-users, global audit |
+| `blueprints/audit.py` | Per-org audit log view (`/settings/audit-log`) |
+| `blueprints/twofa.py` | Per-user 2FA management: enable/disable TOTP + email, recovery-codes, send-email-code |
+| `blueprints/recovery.py` | `/recover` (anonymous), reset form, owner approval; rate-limited |
+| `blueprints/invitations.py` | Mint invite, public accept GET/POST; audit hooks for sent/revoked |
+| `blueprints/members.py` | Org member list, role change, remove |
+| `blueprints/download.py` | Stable user-facing agent download URLs (Windows .exe, macOS universal2) |
+| `agent/gui.py` | Bundled Tkinter window: pair status, online indicator, current job, update log |
+| `agent/state.py` | Durable per-install state (paired token, device id, settings) |
 
 ## Device management + cancel UX (codebase-completion pass)
 

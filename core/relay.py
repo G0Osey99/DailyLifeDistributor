@@ -7,8 +7,11 @@ relay never parses message bodies except to stamp presence; it just forwards.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from typing import Callable
+
+log = logging.getLogger(__name__)
 
 Sink = Callable[[str], None]
 
@@ -47,6 +50,11 @@ class Relay:
                 room.agent_names[device_id] = device_name
             if connect_ip:
                 room.agent_ips[device_id] = connect_ip
+        log.info(
+            "relay: agent registered account=%s device=%s name=%r ip=%s",
+            account, device_id[:8] if device_id else "?",
+            device_name or "?", connect_ip or "?",
+        )
         self._broadcast_presence(account, online=True)
 
     def unregister_agent(self, account: str, device_id: str) -> None:
@@ -56,6 +64,10 @@ class Relay:
             room.agent_names.pop(device_id, None)
             room.agent_ips.pop(device_id, None)
             still_online = bool(room.agents)
+        log.info(
+            "relay: agent unregistered account=%s device=%s (still_online=%d)",
+            account, device_id[:8] if device_id else "?", len(self._room(account).agents),
+        )
         self._broadcast_presence(account, online=still_online)
 
     # ---- introspection ------------------------------------------------
@@ -90,6 +102,10 @@ class Relay:
     def register_browser(self, account: str, session_id: str, sink: Sink) -> None:
         with self._lock:
             self._room(account).browsers[session_id] = sink
+        log.debug(
+            "relay: browser registered account=%s session=%s",
+            account, session_id[:8] if session_id else "?",
+        )
         # Tell the freshly-connected browser the current agent status, so a
         # browser that connects while an agent is already online learns it
         # immediately (not only on the next agent connect/disconnect).
@@ -164,8 +180,12 @@ class Relay:
             except Exception:
                 # A single broken sink mustn't take the broadcast down for
                 # the rest of the room. The websocket layer reaps closed
-                # connections on its own loop.
-                pass
+                # connections on its own loop. Log at debug so triage
+                # has a trail when an event 'never reached' a browser.
+                log.debug(
+                    "relay: broadcast_to_browsers(%s) sink failed; dropping",
+                    event_type, exc_info=True,
+                )
 
 
 # ---------------------------------------------------------------------------

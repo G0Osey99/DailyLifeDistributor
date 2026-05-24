@@ -223,7 +223,7 @@ def create_app() -> Flask:
     # probe, static assets, and the invite-accept GET/POST (so a brand-new
     # invitee can hit the signup form without an existing session).
     _PUBLIC_ENDPOINTS = {
-        "auth.login", "auth.login_submit", "_health", "static",
+        "auth.login", "auth.login_submit", "_health", "_health_details", "static",
         "invitations.accept_get", "invitations.accept_post",
         # Phase γ: second-factor screens (the session isn't fully
         # authenticated until the second factor is verified, so a
@@ -489,6 +489,68 @@ def create_app() -> Flask:
 
         ok = all(c.get("ok") for c in checks.values())
         return jsonify({"ok": ok, "checks": checks}), (200 if ok else 503)
+
+    @app.route("/health/details")
+    def _health_details():
+        """Operational telemetry endpoint — does NOT decide /health's 200/503.
+
+        Surfaces signals that an external monitor (Uptime Kuma, Pingdom)
+        should fire on but that aren't strictly "service down" — e.g. a
+        tripped circuit breaker, an empty Resend key, YT quota near cap.
+
+        Public endpoint. Returns 200 always; the caller interprets the
+        payload. Adding new keys is backward-compatible; renaming an
+        existing key is a breaking change for whoever scrapes it.
+        """
+        from flask import jsonify
+        details: dict = {}
+
+        # 1. Circuit breakers (relay outages, image-provider down, LLM down).
+        try:
+            from core.circuit_breaker import _registry  # type: ignore[attr-defined]
+            details["breakers"] = {
+                name: {
+                    "state": b.state.value,
+                    "consecutive_failures": b._consecutive_failures,  # type: ignore[attr-defined]
+                }
+                for name, b in _registry.items()  # type: ignore[attr-defined]
+            }
+        except Exception as e:
+            details["breakers"] = {"error": str(e)}
+
+        # 2. Relay agent count — paired & connected RIGHT NOW.
+        try:
+            from core.relay import online_agent_count
+            details["agents_online"] = online_agent_count()
+        except Exception:
+            details["agents_online"] = 0
+
+        # 3. Resend reachability — only "is the key present?" (no API ping,
+        # we don't want /health/details to burn email credits or block
+        # the response on Resend latency). pip-audit pattern: configured
+        # = green; missing = warn; doesn't validate the key works.
+        details["resend_configured"] = bool(
+            (os.environ.get("RESEND_API_KEY") or "").strip()
+        )
+
+        # 4. YouTube quota — bytes used / cap, for alerting at ≥90%.
+        try:
+            from core.quota import get_quota_used, DAILY_QUOTA
+            used = int(get_quota_used() or 0)
+            details["youtube_quota"] = {
+                "used": used,
+                "cap": int(DAILY_QUOTA),
+                "pct": round(100.0 * used / max(1, DAILY_QUOTA), 1),
+            }
+        except Exception as e:
+            details["youtube_quota"] = {"error": str(e)}
+
+        # 5. SECRET_ENC_KEY presence (caught at boot, but echo for monitors).
+        details["secret_enc_key_set"] = bool(
+            (os.environ.get("SECRET_ENC_KEY") or "").strip()
+        )
+
+        return jsonify(details), 200
 
     from blueprints.calendar import bp as calendar_bp
     from blueprints.history import bp as history_bp

@@ -23,6 +23,11 @@ jobs:
           # so local and CI installs resolve from the same pinned set.
           pip install -r requirements-dev.txt
 
+      - name: Lint secret scoping
+        # Allowed to fail until phase 3 lands the call-site plumbing.
+        continue-on-error: true
+        run: python scripts/check_secret_scoping.py
+
       - name: Run tests
         env:
           # The crypto layer fails closed without a master key; tests also set

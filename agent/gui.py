@@ -222,10 +222,15 @@ class AgentGUI:
         glyph.create_line(4, 13, 8, 13, fill="#ffffff", width=1.6, capstyle="round")
         glyph.create_oval(12, 11, 16, 15, fill="#ffffff", outline="")
 
+        # Title gets 175px of horizontal room — "Daily Life Distributor"
+        # at 13pt bold needs ~165px and was being truncated by the AGENT
+        # badge sitting at x=202. Bumped the badge x and widened the
+        # label's allotted span to fix the cut-off.
         ctk.CTkLabel(
             header, text="Daily Life Distributor",
             text_color=PAL["text"], font=(self._font, 13, "bold"),
-        ).place(x=58, y=16)
+            anchor="w",
+        ).place(x=58, y=16, width=180)
 
         agent_badge = ctk.CTkLabel(
             header, text="AGENT", text_color=PAL["accent"],
@@ -233,9 +238,7 @@ class AgentGUI:
             fg_color=PAL["accent_soft"], corner_radius=4,
             padx=6, pady=2,
         )
-        # Padx/pady kwargs aren't on CTkLabel — use a wrapper width instead.
-        # Fall back: just rely on text + fg_color, sized by content.
-        agent_badge.place(x=202, y=19)
+        agent_badge.place(x=240, y=19)
 
         self.version_label = ctk.CTkLabel(
             header, text="", text_color=PAL["text_dim"],
@@ -322,6 +325,47 @@ class AgentGUI:
         # Don't pack yet — toggled in _refresh_from_state().
         self.progress.set(0)
 
+        # ── Footer ─────────────────────────────────────────────────────
+        # IMPORTANT: footer must pack BEFORE body even though it visually
+        # sits below. Tk's pack uses first-claim semantics: side="bottom"
+        # only reserves space from what's left after earlier siblings.
+        # If body packs first with expand=True it consumes everything
+        # and the footer gets clipped to height=0 — exactly what the
+        # user reported in v0.6.11 ("buttons at the bottom are cut off").
+        footer = ctk.CTkFrame(self.root, fg_color=PAL["shell_panel"],
+                              corner_radius=0, height=52)
+        footer.pack(fill="x", side="bottom")
+        footer.pack_propagate(False)
+        tk.Frame(footer, bg=PAL["shell_border"], height=1).pack(side="top", fill="x")
+
+        self.notice = ctk.CTkLabel(
+            footer, text="Keep open while uploads run.",
+            text_color=PAL["text_dim"], font=(self._font, 10),
+        )
+        self.notice.place(x=18, rely=0.5, anchor="w")
+
+        # Primary CTA — text + color may flip to "Re-pair device" in
+        # auth-failed state, so we keep a handle to it.
+        self.primary_btn = ctk.CTkButton(
+            footer, text="Open dashboard  →",
+            command=self._primary_action,
+            fg_color=PAL["accent"], hover_color=PAL["accent_hover"],
+            text_color="#ffffff", corner_radius=7,
+            font=(self._font, 11, "bold"),
+            height=30, width=150,
+        )
+        self.primary_btn.place(relx=1.0, x=-18, rely=0.5, anchor="e")
+
+        self.quit_btn = ctk.CTkButton(
+            footer, text="Quit", command=self._on_close,
+            fg_color="transparent", hover_color=PAL["shell_sunken"],
+            text_color=PAL["text"], corner_radius=7,
+            font=(self._font, 11),
+            border_width=1, border_color=PAL["shell_border_strong"],
+            height=30, width=64,
+        )
+        self.quit_btn.place(relx=1.0, x=-180, rely=0.5, anchor="e")
+
         # ── Body: sessions panel + activity log ────────────────────────
         body = ctk.CTkFrame(self.root, fg_color=PAL["shell_bg"], corner_radius=0)
         body.pack(fill="both", expand=True, padx=18, pady=(14, 0))
@@ -384,41 +428,6 @@ class AgentGUI:
         )
         self.log_box.pack(fill="both", expand=True, padx=14, pady=10)
         self.log_box.configure(state="disabled")
-
-        # ── Footer ─────────────────────────────────────────────────────
-        footer = ctk.CTkFrame(self.root, fg_color=PAL["shell_panel"],
-                              corner_radius=0, height=48)
-        footer.pack(fill="x", side="bottom")
-        footer.pack_propagate(False)
-        tk.Frame(footer, bg=PAL["shell_border"], height=1).pack(side="top", fill="x")
-
-        self.notice = ctk.CTkLabel(
-            footer, text="Keep open while uploads run.",
-            text_color=PAL["text_dim"], font=(self._font, 10),
-        )
-        self.notice.place(x=18, rely=0.5, anchor="w")
-
-        # Primary CTA — text + color may flip to "Re-pair device" in
-        # auth-failed state, so we keep a handle to it.
-        self.primary_btn = ctk.CTkButton(
-            footer, text="Open dashboard  →",
-            command=self._primary_action,
-            fg_color=PAL["accent"], hover_color=PAL["accent_hover"],
-            text_color="#ffffff", corner_radius=7,
-            font=(self._font, 11, "bold"),
-            height=30, width=150,
-        )
-        self.primary_btn.place(relx=1.0, x=-18, rely=0.5, anchor="e")
-
-        self.quit_btn = ctk.CTkButton(
-            footer, text="Quit", command=self._on_close,
-            fg_color="transparent", hover_color=PAL["shell_sunken"],
-            text_color=PAL["text"], corner_radius=7,
-            font=(self._font, 11),
-            border_width=1, border_color=PAL["shell_border_strong"],
-            height=28, width=64,
-        )
-        self.quit_btn.place(relx=1.0, x=-156, rely=0.5, anchor="e")
 
     # ─── small helpers ──────────────────────────────────────────────────
     def _build_session_row(self, key: str, name: str, last: bool) -> None:
@@ -539,12 +548,25 @@ class AgentGUI:
         # agent's pair token as ?token= so the inline auth check on
         # /sessions/status admits us — without it the endpoint redirects
         # to /login (no cookie) and every row stays "unknown".
-        token = ""
-        try:
-            from agent import config as _agent_config
-            token = (_agent_config.get_token() or "").strip()
-        except Exception:
-            pass
+        # Prefer the in-memory token mirrored onto AgentState at pair
+        # time. Falling through to the keyring lookup only when state
+        # has no token yet (very early boot, or running without the
+        # main.py wiring that sets it). Keyring under PyInstaller is
+        # flaky on Windows; the state copy is the reliable path.
+        token = (getattr(self.state, "token", "") or "").strip()
+        if not token:
+            try:
+                from agent import config as _agent_config
+                raw = _agent_config.get_token()
+                token = (raw or "").strip()
+                if not token:
+                    log.warning(
+                        "sessions poll: no token on state and "
+                        "config.get_token() returned empty; sessions "
+                        "panel will read 'unavailable'.",
+                    )
+            except Exception as e:
+                log.warning("sessions poll: get_token raised: %s", e, exc_info=True)
         url = _to_http(server.rstrip("/")) + "/sessions/status"
         if token:
             url = url + "?" + urllib.parse.urlencode({"token": token})

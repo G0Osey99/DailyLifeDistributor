@@ -59,6 +59,13 @@ class AgentState:
     pending_pairing_code: Optional[str] = None
     pairing_code_event: threading.Event = field(default_factory=threading.Event)
 
+    # In-memory copy of the agent's current pair token, mirrored from
+    # config.set_token() at pair time. Lets the GUI poll authenticated
+    # endpoints (like /sessions/status) without round-tripping through
+    # the Windows keyring, which is the most common failure mode under
+    # PyInstaller — writes succeed, reads return None.
+    token: str = ""
+
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
     # ---- mutation ----
@@ -84,6 +91,11 @@ class AgentState:
                 self.hwid_short = hwid_short
             if version:
                 self.version = version
+
+    def set_token(self, token: str) -> None:
+        """Stash the pair token in memory for GUI-side authenticated polls."""
+        with self._lock:
+            self.token = (token or "").strip()
 
     def append_log(self, line: str) -> None:
         with self._lock:

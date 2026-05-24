@@ -417,6 +417,13 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
         _state.set_connection(_st.CONN_STARTING)
 
     token = _ensure_paired(server_url)
+    # Mirror the token onto AgentState so the GUI can poll authenticated
+    # endpoints (/sessions/status) without round-tripping through the
+    # Windows keyring. Keyring under PyInstaller is fragile — writes
+    # succeed, reads sometimes return None and the sessions panel goes
+    # dark. The state copy is the reliable path.
+    if _state is not None:
+        _state.set_token(token or "")
 
     try:
         result = updater.check_and_apply(server_url)
@@ -521,6 +528,12 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
             except SystemExit as e:
                 print(str(e) if e.code else "Pairing failed.")
                 break
+            # Refresh the in-memory token on AgentState so the GUI's
+            # sessions poller picks up the new credential immediately
+            # instead of waiting for a process restart to re-read the
+            # keyring.
+            if _state is not None:
+                _state.set_token(token or "")
             continue
 
         if shutdown_event.is_set():

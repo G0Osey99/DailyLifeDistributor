@@ -94,3 +94,13 @@ def test_forbidden_during_impersonation_aborts_when_impersonating(app_ctx):
 
     with _pytest.raises(Conflict):
         view()
+
+
+def test_effective_org_id_returns_none_outside_request_context():
+    """Calling outside a Flask request context must NOT raise; returns None."""
+    # No fixture, no app_ctx — bare module-level call.
+    assert org_context.real_user_id() is None
+    assert org_context.current_org_id() is None
+    assert org_context.acting_as_org_id() is None
+    assert org_context.effective_org_id() is None
+    assert org_context.is_impersonating() is False

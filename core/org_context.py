@@ -20,11 +20,18 @@ from __future__ import annotations
 from functools import wraps
 from typing import Optional
 
-from flask import abort, session
+from flask import abort, has_request_context, session
 
 
 def real_user_id() -> Optional[int]:
-    """The authenticated user's id. Never affected by impersonation."""
+    """The authenticated user's id. Never affected by impersonation.
+
+    Returns None when called outside a Flask request context (e.g. the
+    hybrid agent path or background threads with no app context pushed).
+    """
+    from flask import has_request_context
+    if not has_request_context():
+        return None
     uid = session.get("user_id")
     return int(uid) if uid is not None else None
 
@@ -34,15 +41,20 @@ def current_org_id() -> Optional[int]:
 
     Mirrors ``core.auth.current_org_id()``; the duplicate is intentional
     so callers can import both real and effective org from one module.
-    Role checks should keep reading this (or the session key directly);
-    only credential reads use ``effective_org_id()``.
+    Returns None outside a Flask request context.
     """
+    from flask import has_request_context
+    if not has_request_context():
+        return None
     oid = session.get("current_org_id")
     return int(oid) if oid is not None else None
 
 
 def acting_as_org_id() -> Optional[int]:
     """The org the program owner is impersonating, or None."""
+    from flask import has_request_context
+    if not has_request_context():
+        return None
     oid = session.get("acting_as_org_id")
     return int(oid) if oid is not None else None
 

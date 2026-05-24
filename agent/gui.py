@@ -222,15 +222,16 @@ class AgentGUI:
         glyph.create_line(4, 13, 8, 13, fill="#ffffff", width=1.6, capstyle="round")
         glyph.create_oval(12, 11, 16, 15, fill="#ffffff", outline="")
 
-        # Title gets 175px of horizontal room — "Daily Life Distributor"
+        # Title gets 180px of horizontal room — "Daily Life Distributor"
         # at 13pt bold needs ~165px and was being truncated by the AGENT
         # badge sitting at x=202. Bumped the badge x and widened the
-        # label's allotted span to fix the cut-off.
+        # label's allotted span (width must be set on the constructor,
+        # not on .place(), in CustomTkinter).
         ctk.CTkLabel(
             header, text="Daily Life Distributor",
             text_color=PAL["text"], font=(self._font, 13, "bold"),
-            anchor="w",
-        ).place(x=58, y=16, width=180)
+            anchor="w", width=180,
+        ).place(x=58, y=16)
 
         agent_badge = ctk.CTkLabel(
             header, text="AGENT", text_color=PAL["accent"],

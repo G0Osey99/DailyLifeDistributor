@@ -1,15 +1,21 @@
-"""CustomTkinter GUI for the agent.
+"""CustomTkinter GUI for the agent — "Hero status" direction.
 
-Runs on the main thread. The network code runs on a daemon thread and
-pushes status updates into an ``AgentState`` instance; we poll it via
-``Tk.after()`` every 500ms and repaint the relevant widgets.
+Same threading model as the previous version: this whole UI runs on the
+main thread, the network code lives on a daemon thread, and we pull
+state via `Tk.after()` every 500 ms. The big change is purely visual —
+connection status is now the hero element of the window so the user can
+read it from across the room, and the rest of the surface (chips, log,
+section headers) borrows the website's tokens directly so the agent
+visually belongs to autoalert.pro.
 
-Color palette is a sRGB approximation of the website's oklch design
-tokens (templates/base.html) so the agent visually matches autoalert.pro.
+Drop in over the previous file — public API is identical:
+    AgentGUI(state, shutdown_event).run()
+    StateLogHandler(state)
 """
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import tkinter as tk
 import tkinter.font
@@ -33,36 +39,71 @@ from agent.state import (
 log = logging.getLogger(__name__)
 
 
-# ---- Palette: sRGB approximations of the web app's oklch tokens. -------
-# These match templates/base.html so the agent visually belongs to the
-# same product. Tweak with care — keep contrast WCAG-AA.
+# ─── Palette ────────────────────────────────────────────────────────────
+# sRGB approximations of the website's oklch tokens (templates/base.html).
+# Match these to the web app so the agent visually reads as the same
+# product. Keep contrast WCAG-AA.
 PAL = {
-    "shell_bg":           "#f7f6f3",   # oklch(0.985 0.003 80)
-    "shell_panel":        "#ffffff",   # oklch(1 0 0)
-    "shell_sunken":       "#f0eeea",   # oklch(0.965 0.004 80)
-    "shell_border":       "#dcd9d3",   # oklch(0.91 0.005 80)
-    "shell_border_strong": "#c0bdb6",  # oklch(0.83 0.006 80)
-    "text":               "#1f242e",   # oklch(0.22 0.012 250)
-    "text_muted":         "#6e7382",   # oklch(0.5 0.012 250)
-    "text_dim":           "#9097a4",   # oklch(0.65 0.008 250)
-    "accent":             "#2f6fd3",   # oklch(0.58 0.15 245)
-    "accent_hover":       "#3e7fdf",   # oklch(0.64 0.16 245)
-    "accent_soft":        "#e1ecfa",   # accent at 12% over white
-    "ok":                 "#239e62",   # oklch(0.62 0.16 150)
-    "warn":               "#c98a26",   # oklch(0.68 0.14 80)
-    "err":                "#c4332c",   # oklch(0.55 0.20 25)
+    "shell_bg":           "#f7f6f3",
+    "shell_panel":        "#ffffff",
+    "shell_sunken":       "#f0eeea",
+    "shell_border":       "#dcd9d3",
+    "shell_border_strong":"#c0bdb6",
+    "text":               "#1f242e",
+    "text_muted":         "#6e7382",
+    "text_dim":           "#9097a4",
+    "accent":             "#2f6fd3",
+    "accent_hover":       "#3e7fdf",
+    "accent_soft":        "#e1ecfa",
+    "ok":                 "#239e62",
+    "ok_soft":            "#dff2e7",
+    "warn":               "#c98a26",
+    "warn_soft":          "#faecd1",
+    "err":                "#c4332c",
+    "err_soft":           "#f7dad7",
 }
 
 
-# Map connection status -> (dot color, label text)
-_CONN_VIEW = {
-    CONN_STARTING:     (PAL["text_dim"], "Starting up…"),
-    CONN_CONNECTING:   (PAL["warn"],     "Connecting…"),
-    CONN_ONLINE:       (PAL["ok"],       "Connected"),
-    CONN_DISCONNECTED: (PAL["warn"],     "Reconnecting…"),
-    CONN_AUTH_FAILED:  (PAL["err"],      "Re-pair required"),
-    CONN_STOPPED:      (PAL["text_dim"], "Stopped"),
-}
+# ─── State → visual mapping ──────────────────────────────────────────────
+# (color, soft_bg, glyph_kind, title, pulse_on)
+#   glyph_kind ∈ {"check", "spinner", "arrow", "key", "dot"}
+#
+# Activity overrides connection's hero painting when uploading — a green
+# "Connected" hero while a noisy upload is in progress hides the more
+# interesting thing the user wants to see.
+def _hero_view(connection: str, activity: str) -> dict:
+    if activity == ACT_UPLOADING and connection == CONN_ONLINE:
+        return {
+            "color": PAL["accent"], "soft": PAL["accent_soft"],
+            "glyph": "arrow", "title": "Uploading", "pulse": True,
+        }
+    if connection == CONN_ONLINE:
+        return {
+            "color": PAL["ok"], "soft": PAL["ok_soft"],
+            "glyph": "check", "title": "Connected", "pulse": True,
+        }
+    if connection in (CONN_CONNECTING, CONN_STARTING):
+        return {
+            "color": PAL["warn"], "soft": PAL["warn_soft"],
+            "glyph": "spinner",
+            "title": "Connecting…" if connection == CONN_CONNECTING else "Starting up…",
+            "pulse": True,
+        }
+    if connection == CONN_DISCONNECTED:
+        return {
+            "color": PAL["warn"], "soft": PAL["warn_soft"],
+            "glyph": "spinner", "title": "Reconnecting…", "pulse": True,
+        }
+    if connection == CONN_AUTH_FAILED:
+        return {
+            "color": PAL["err"], "soft": PAL["err_soft"],
+            "glyph": "key", "title": "Re-pair required", "pulse": False,
+        }
+    # CONN_STOPPED or unknown
+    return {
+        "color": PAL["text_dim"], "soft": PAL["shell_sunken"],
+        "glyph": "dot", "title": "Stopped", "pulse": False,
+    }
 
 
 def _pick_font_family() -> str:
@@ -78,10 +119,24 @@ def _pick_font_family() -> str:
     return "TkDefaultFont"
 
 
+def _blend(hex_a: str, hex_b: str, t: float) -> str:
+    """Linear-blend two hex colors. t=0 → a, t=1 → b. Used by the pulse
+    halo to fade from hero color → shell_panel without alpha support."""
+    t = max(0.0, min(1.0, t))
+    ar, ag, ab = int(hex_a[1:3], 16), int(hex_a[3:5], 16), int(hex_a[5:7], 16)
+    br, bg, bb = int(hex_b[1:3], 16), int(hex_b[3:5], 16), int(hex_b[5:7], 16)
+    r = round(ar + (br - ar) * t)
+    g = round(ag + (bg - ag) * t)
+    b = round(ab + (bb - ab) * t)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 class AgentGUI:
     """Main agent window. One instance per process."""
 
     POLL_MS = 500
+    PULSE_MS = 40          # 25 fps is plenty for a slow breathing pulse
+    PULSE_PERIOD_MS = 2400
     LOG_FONT_FAMILIES = ("Geist Mono", "JetBrains Mono", "Cascadia Mono",
                          "Consolas", "Menlo", "Courier New")
 
@@ -89,206 +144,236 @@ class AgentGUI:
         self.state = state
         self.shutdown_event = shutdown_event
         self._pairing_dialog_open = False
+        self._pulse_t0_ms = 0    # set on first pulse tick
+        self._chip_widgets: list[ctk.CTkFrame] = []
+
+        # Last-rendered hero descriptor — lets us skip a full hero repaint
+        # when nothing material has changed (just the pulse animates).
+        self._last_hero: dict | None = None
 
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
         self.root = ctk.CTk()
         self.root.title("Daily Life Distributor — Agent")
-        self.root.geometry("520x560")
-        self.root.minsize(440, 480)
+        self.root.geometry("540x620")
+        self.root.minsize(460, 520)
         self.root.configure(fg_color=PAL["shell_bg"])
-
-        # Closing the window means "stop the agent" — same semantics as Ctrl+C
-        # in CLI mode.
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        self._font = _pick_font_family()
+        self._mono = self._pick_mono_family()
+
         self._build_ui()
-        # Kick off the polling loop.
+        # Start the polling + pulse loops.
         self.root.after(self.POLL_MS, self._poll)
+        self.root.after(self.PULSE_MS, self._tick_pulse)
 
-    # ---- layout --------------------------------------------------------
+    # ─── layout ─────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
-        font_family = _pick_font_family()
-        mono_family = self._pick_mono_family()
-
-        # Header — brand mark + title. Mirror the website's sb-brand-mark:
-        # a small accent-colored rounded square on the left so the agent
-        # window has the same visual signature as the dashboard sidebar.
+        # Header — slim brand row + tiny AGENT badge + version mono text.
         header = ctk.CTkFrame(
-            self.root, fg_color=PAL["shell_panel"],
-            corner_radius=0,
-            height=68,
+            self.root, fg_color=PAL["shell_panel"], corner_radius=0,
+            height=52,
         )
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
-        header.configure(border_width=1, border_color=PAL["shell_border"])
+        header.configure(border_width=0)
+        # Bottom hairline only — CTkFrame doesn't do per-side borders, so
+        # a 1px placed-frame is the cheap way to get a divider line.
+        tk.Frame(header, bg=PAL["shell_border"], height=1).place(
+            relx=0, rely=1.0, relwidth=1, anchor="sw",
+        )
 
-        # Accent brand mark (filled rounded square).
         brand_mark = ctk.CTkFrame(
-            header, fg_color=PAL["accent"], corner_radius=8,
-            width=34, height=34,
+            header, fg_color=PAL["accent"], corner_radius=7,
+            width=28, height=28,
         )
-        brand_mark.place(x=18, y=17)
+        brand_mark.place(x=18, y=12)
         brand_mark.pack_propagate(False)
+        # Tiny doc-icon glyph inside the brand mark, matching the website.
+        glyph = tk.Canvas(brand_mark, width=18, height=18,
+                          highlightthickness=0, bg=PAL["accent"])
+        glyph.place(relx=0.5, rely=0.5, anchor="center")
+        glyph.create_line(4, 5, 14, 5, fill="#ffffff", width=1.6, capstyle="round")
+        glyph.create_line(4, 9, 11, 9, fill="#ffffff", width=1.6, capstyle="round")
+        glyph.create_line(4, 13, 8, 13, fill="#ffffff", width=1.6, capstyle="round")
+        glyph.create_oval(12, 11, 16, 15, fill="#ffffff", outline="")
 
         ctk.CTkLabel(
-            header, text="Daily Life", text_color=PAL["text"],
-            font=(font_family, 15, "bold"),
-        ).place(x=64, y=14)
-        ctk.CTkLabel(
-            header, text="DISTRIBUTOR", text_color=PAL["accent"],
-            font=(font_family, 10, "bold"),
-        ).place(x=64, y=34)
-        # Agent badge — accent-soft pill on the right.
+            header, text="Daily Life Distributor",
+            text_color=PAL["text"], font=(self._font, 13, "bold"),
+        ).place(x=58, y=16)
+
         agent_badge = ctk.CTkLabel(
-            header, text="  AGENT  ", text_color=PAL["accent"],
-            font=(font_family, 10, "bold"),
-            fg_color=PAL["accent_soft"], corner_radius=6,
+            header, text="AGENT", text_color=PAL["accent"],
+            font=(self._font, 9, "bold"),
+            fg_color=PAL["accent_soft"], corner_radius=4,
+            padx=6, pady=2,
         )
-        agent_badge.place(relx=1.0, x=-22, y=24, anchor="ne")
+        # Padx/pady kwargs aren't on CTkLabel — use a wrapper width instead.
+        # Fall back: just rely on text + fg_color, sized by content.
+        agent_badge.place(x=202, y=19)
 
+        self.version_label = ctk.CTkLabel(
+            header, text="", text_color=PAL["text_dim"],
+            font=(self._mono, 10),
+        )
+        self.version_label.place(relx=1.0, x=-20, y=18, anchor="ne")
+
+        # ── Hero status block ──────────────────────────────────────────
+        hero = ctk.CTkFrame(self.root, fg_color=PAL["shell_panel"], corner_radius=0)
+        hero.pack(fill="x", side="top")
+        tk.Frame(hero, bg=PAL["shell_border"], height=1).pack(
+            side="bottom", fill="x",
+        )
+
+        hero_inner = ctk.CTkFrame(hero, fg_color="transparent")
+        hero_inner.pack(fill="x", padx=22, pady=22)
+
+        # Pulse disc — a single tk.Canvas we redraw every PULSE_MS.
+        self.hero_canvas = tk.Canvas(
+            hero_inner, width=64, height=64,
+            highlightthickness=0, bg=PAL["shell_panel"],
+        )
+        self.hero_canvas.pack(side="left", padx=(0, 18))
+
+        hero_text = ctk.CTkFrame(hero_inner, fg_color="transparent")
+        hero_text.pack(side="left", fill="x", expand=True)
+
+        self.hero_title = ctk.CTkLabel(
+            hero_text, text="Starting up…",
+            text_color=PAL["text"], font=(self._font, 22, "bold"),
+            anchor="w", justify="left",
+        )
+        self.hero_title.pack(anchor="w", pady=(0, 2))
+
+        self.hero_subtitle = ctk.CTkLabel(
+            hero_text, text="",
+            text_color=PAL["text_muted"], font=(self._font, 11),
+            anchor="w", justify="left", wraplength=380,
+        )
+        self.hero_subtitle.pack(anchor="w", pady=(2, 10))
+
+        # Chips row — built dynamically from snapshot state.
+        self.chips_row = ctk.CTkFrame(hero_text, fg_color="transparent")
+        self.chips_row.pack(anchor="w", fill="x")
+
+        # Optional progress bar — only shown when uploading.
+        self.progress = ctk.CTkProgressBar(
+            hero_text, height=5, corner_radius=999,
+            fg_color=PAL["shell_sunken"], progress_color=PAL["accent"],
+            border_width=0,
+        )
+        # Don't pack yet — toggled in _refresh_from_state().
+        self.progress.set(0)
+
+        # ── Body: activity log ─────────────────────────────────────────
         body = ctk.CTkFrame(self.root, fg_color=PAL["shell_bg"], corner_radius=0)
-        body.pack(fill="both", expand=True, padx=18, pady=18)
+        body.pack(fill="both", expand=True, padx=18, pady=(14, 0))
 
-        # --- Status card ------------------------------------------------
-        # Wrap in a horizontal container so we can paint an accent-colored
-        # 3px vertical stripe down the left edge (mirrors the website's
-        # .section-header treatment — accent bar = "this is the active
-        # surface"). The stripe color flips green when CONN_ONLINE in
-        # _refresh_from_state so the card reads its own status at a glance.
-        card_wrap = ctk.CTkFrame(body, fg_color="transparent")
-        card_wrap.pack(fill="x")
-        self.status_stripe = ctk.CTkFrame(
-            card_wrap, fg_color=PAL["text_dim"],
-            width=4, corner_radius=2,
+        log_header = ctk.CTkFrame(body, fg_color="transparent")
+        log_header.pack(fill="x", pady=(0, 8))
+        self._section_rail(log_header, "Activity log").pack(side="left")
+        self.open_log_btn = ctk.CTkButton(
+            log_header, text="Open file",
+            command=self._open_log_file,
+            fg_color="transparent", hover_color=PAL["shell_sunken"],
+            text_color=PAL["text_dim"], font=(self._font, 11),
+            corner_radius=6, width=70, height=22,
+            border_width=0,
         )
-        self.status_stripe.pack(side="left", fill="y", padx=(0, 0), pady=2)
-
-        self.status_card = ctk.CTkFrame(
-            card_wrap, fg_color=PAL["shell_panel"],
-            border_width=1, border_color=PAL["shell_border"],
-            corner_radius=12,
-        )
-        self.status_card.pack(side="left", fill="x", expand=True, padx=(8, 0))
-
-        inner = ctk.CTkFrame(self.status_card, fg_color="transparent")
-        inner.pack(fill="x", padx=18, pady=16)
-
-        # Connection row
-        conn_row = ctk.CTkFrame(inner, fg_color="transparent")
-        conn_row.pack(fill="x")
-        self.conn_dot = tk.Canvas(
-            conn_row, width=12, height=12, highlightthickness=0,
-            bg=PAL["shell_panel"],
-        )
-        self.conn_dot.pack(side="left", padx=(0, 10))
-        self._conn_dot_id = self.conn_dot.create_oval(
-            2, 2, 10, 10, fill=PAL["text_dim"], outline="",
-        )
-        self.conn_label = ctk.CTkLabel(
-            conn_row, text="Starting up…", text_color=PAL["text"],
-            font=(font_family, 14, "bold"),
-        )
-        self.conn_label.pack(side="left")
-
-        self.server_label = ctk.CTkLabel(
-            inner, text="", text_color=PAL["text_muted"],
-            font=(font_family, 11),
-        )
-        self.server_label.pack(anchor="w", pady=(2, 12))
-
-        # Divider
-        ctk.CTkFrame(inner, fg_color=PAL["shell_border"],
-                     height=1).pack(fill="x", pady=4)
-
-        # Activity row
-        act_wrap = ctk.CTkFrame(inner, fg_color="transparent")
-        act_wrap.pack(fill="x", pady=(12, 0))
-        ctk.CTkLabel(
-            act_wrap, text="ACTIVITY", text_color=PAL["accent"],
-            font=(font_family, 9, "bold"),
-        ).pack(anchor="w")
-        self.activity_label = ctk.CTkLabel(
-            act_wrap, text="Idle", text_color=PAL["text"],
-            font=(font_family, 13),
-        )
-        self.activity_label.pack(anchor="w", pady=(2, 0))
-        self.activity_detail = ctk.CTkLabel(
-            act_wrap, text="", text_color=PAL["text_muted"],
-            font=(font_family, 11),
-        )
-        self.activity_detail.pack(anchor="w")
-
-        # Device identity strip
-        ident_wrap = ctk.CTkFrame(inner, fg_color="transparent")
-        ident_wrap.pack(fill="x", pady=(14, 0))
-        self.device_label = ctk.CTkLabel(
-            ident_wrap, text="", text_color=PAL["text_dim"],
-            font=(font_family, 10),
-        )
-        self.device_label.pack(anchor="w")
-
-        # --- Keep-open notice ------------------------------------------
-        self.notice = ctk.CTkLabel(
-            body,
-            text="Keep this window open while uploads are running. "
-                 "Closing it stops the agent.",
-            text_color=PAL["text_muted"],
-            font=(font_family, 10),
-            wraplength=460, justify="left",
-        )
-        self.notice.pack(fill="x", pady=(12, 0), anchor="w")
-
-        # --- Activity log -----------------------------------------------
-        log_label = ctk.CTkLabel(
-            body, text="ACTIVITY LOG", text_color=PAL["accent"],
-            font=(font_family, 9, "bold"),
-        )
-        log_label.pack(anchor="w", pady=(16, 4))
+        self.open_log_btn.pack(side="right")
 
         log_frame = ctk.CTkFrame(
             body, fg_color=PAL["shell_panel"],
             border_width=1, border_color=PAL["shell_border"],
             corner_radius=10,
         )
-        log_frame.pack(fill="both", expand=True)
+        log_frame.pack(fill="both", expand=True, pady=(0, 14))
 
         self.log_box = ctk.CTkTextbox(
             log_frame,
             fg_color=PAL["shell_panel"],
             text_color=PAL["text_muted"],
             border_width=0,
-            font=(mono_family, 10),
+            font=(self._mono, 11),
             wrap="none",
+            corner_radius=10,
         )
-        self.log_box.pack(fill="both", expand=True, padx=12, pady=12)
+        self.log_box.pack(fill="both", expand=True, padx=14, pady=10)
         self.log_box.configure(state="disabled")
 
-        # --- Footer actions ---------------------------------------------
+        # ── Footer ─────────────────────────────────────────────────────
         footer = ctk.CTkFrame(self.root, fg_color=PAL["shell_panel"],
-                              corner_radius=0, height=46)
+                              corner_radius=0, height=48)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
-        footer.configure(border_width=1, border_color=PAL["shell_border"])
+        tk.Frame(footer, bg=PAL["shell_border"], height=1).pack(side="top", fill="x")
 
-        self.open_dashboard_btn = ctk.CTkButton(
-            footer, text="Open Dashboard",
-            fg_color=PAL["accent"], hover_color=PAL["accent_hover"],
-            text_color="#ffffff", corner_radius=8,
-            font=(font_family, 11, "bold"),
-            command=self._open_dashboard, height=28,
+        self.notice = ctk.CTkLabel(
+            footer, text="Keep open while uploads run.",
+            text_color=PAL["text_dim"], font=(self._font, 10),
         )
-        self.open_dashboard_btn.pack(side="right", padx=(8, 18), pady=9)
+        self.notice.place(x=18, rely=0.5, anchor="w")
+
+        # Primary CTA — text + color may flip to "Re-pair device" in
+        # auth-failed state, so we keep a handle to it.
+        self.primary_btn = ctk.CTkButton(
+            footer, text="Open Dashboard",
+            command=self._primary_action,
+            fg_color=PAL["accent"], hover_color=PAL["accent_hover"],
+            text_color="#ffffff", corner_radius=7,
+            font=(self._font, 11, "bold"),
+            height=28, width=130,
+        )
+        self.primary_btn.place(relx=1.0, x=-18, rely=0.5, anchor="e")
 
         self.quit_btn = ctk.CTkButton(
-            footer, text="Quit",
-            fg_color=PAL["shell_sunken"], hover_color=PAL["shell_border"],
-            text_color=PAL["text"], corner_radius=8,
-            font=(font_family, 11),
-            command=self._on_close, height=28, width=72,
+            footer, text="Quit", command=self._on_close,
+            fg_color="transparent", hover_color=PAL["shell_sunken"],
+            text_color=PAL["text"], corner_radius=7,
+            font=(self._font, 11),
+            border_width=1, border_color=PAL["shell_border_strong"],
+            height=28, width=64,
         )
-        self.quit_btn.pack(side="right", pady=9)
+        self.quit_btn.place(relx=1.0, x=-156, rely=0.5, anchor="e")
+
+    # ─── small helpers ──────────────────────────────────────────────────
+    def _section_rail(self, parent, text: str) -> ctk.CTkFrame:
+        """Renders the website's section-header treatment: a 3px accent
+        bar on the left, then an uppercase label. Returns the container
+        frame so the caller decides how it packs."""
+        wrap = ctk.CTkFrame(parent, fg_color="transparent")
+        bar = ctk.CTkFrame(wrap, fg_color=PAL["accent"], width=3, corner_radius=2)
+        bar.pack(side="left", fill="y", pady=2)
+        ctk.CTkLabel(
+            wrap, text=text.upper(),
+            text_color=PAL["text_muted"],
+            font=(self._font, 10, "bold"),
+        ).pack(side="left", padx=(9, 0))
+        return wrap
+
+    def _make_chip(self, parent, text: str, dot_color: str | None = None) -> ctk.CTkFrame:
+        chip = ctk.CTkFrame(
+            parent, fg_color=PAL["shell_sunken"],
+            border_width=1, border_color=PAL["shell_border"],
+            corner_radius=999, height=22,
+        )
+        chip.pack_propagate(False)
+        if dot_color is not None:
+            dot = tk.Canvas(chip, width=8, height=8, highlightthickness=0,
+                            bg=PAL["shell_sunken"])
+            dot.create_oval(1, 1, 7, 7, fill=dot_color, outline="")
+            dot.pack(side="left", padx=(10, 0))
+            label_padx = (5, 12)
+        else:
+            label_padx = (12, 12)
+        ctk.CTkLabel(
+            chip, text=text, text_color=PAL["text_muted"],
+            font=(self._font, 10),
+        ).pack(side="left", padx=label_padx)
+        return chip
 
     def _pick_mono_family(self) -> str:
         try:
@@ -300,7 +385,83 @@ class AgentGUI:
                 return f
         return "TkFixedFont"
 
-    # ---- polling -------------------------------------------------------
+    # ─── hero painting ──────────────────────────────────────────────────
+    def _paint_hero_static(self, view: dict) -> None:
+        """Redraw the disc + glyph (everything except the animated halo)."""
+        c = self.hero_canvas
+        c.delete("static")
+
+        # Static soft ring (inset 10) + solid disc (inset 20)
+        c.create_oval(10, 10, 54, 54, fill=view["soft"], outline="", tags="static")
+        c.create_oval(20, 20, 44, 44, fill=view["color"], outline="", tags="static")
+
+        # Glyph on top of the solid disc — drawn in white. Coordinates
+        # are local to the canvas; the disc is centered at (32, 32) with
+        # radius 12.
+        glyph = view["glyph"]
+        if glyph == "check":
+            c.create_line(25, 32, 30, 37, fill="#fff", width=2.4,
+                          capstyle="round", joinstyle="round", tags="static")
+            c.create_line(30, 37, 40, 27, fill="#fff", width=2.4,
+                          capstyle="round", joinstyle="round", tags="static")
+        elif glyph == "arrow":
+            c.create_line(32, 39, 32, 25, fill="#fff", width=2.6,
+                          capstyle="round", tags="static")
+            c.create_line(26, 31, 32, 25, fill="#fff", width=2.6,
+                          capstyle="round", tags="static")
+            c.create_line(38, 31, 32, 25, fill="#fff", width=2.6,
+                          capstyle="round", tags="static")
+        elif glyph == "key":
+            c.create_oval(24, 33, 33, 42, outline="#fff", width=2.2, tags="static")
+            c.create_line(31, 35, 41, 25, fill="#fff", width=2.2,
+                          capstyle="round", tags="static")
+            c.create_line(38, 28, 40, 30, fill="#fff", width=2.2,
+                          capstyle="round", tags="static")
+        elif glyph == "spinner":
+            # Drawn dynamically in _tick_pulse so it rotates; nothing
+            # static needed here.
+            pass
+        else:  # "dot"
+            c.create_oval(28, 28, 36, 36, fill="#fff", outline="", tags="static")
+
+    def _tick_pulse(self) -> None:
+        """Animate the pulse halo + spinner glyph. Cheap — only the
+        canvas items tagged "pulse" / "spin" are deleted each frame."""
+        if self.shutdown_event.is_set():
+            return
+        try:
+            view = self._last_hero or _hero_view(CONN_STARTING, ACT_IDLE)
+            now = self.root.tk.call("clock", "milliseconds") if False else int(_now_ms())
+            # Pulse phase 0..1 across PULSE_PERIOD_MS
+            phase = (now % self.PULSE_PERIOD_MS) / self.PULSE_PERIOD_MS
+
+            c = self.hero_canvas
+            c.delete("pulse")
+
+            if view["pulse"]:
+                # Halo grows from r=22 → r=32 and fades hero-color → bg.
+                r = 22 + 10 * phase
+                color = _blend(view["color"], PAL["shell_panel"], phase)
+                c.create_oval(32 - r, 32 - r, 32 + r, 32 + r,
+                              fill=color, outline="", tags="pulse")
+                # Re-draw the static layers above the halo so the
+                # gradient halo doesn't cover the disc.
+                self._paint_hero_static(view)
+
+            if view["glyph"] == "spinner":
+                c.delete("spin")
+                # Rotating arc — start angle cycles 0..360 over the period.
+                angle = (now % 1200) / 1200 * 360
+                c.create_arc(24, 24, 40, 40, start=angle, extent=260,
+                             style="arc", outline="#fff", width=2.5,
+                             tags="spin")
+        except Exception:
+            log.debug("pulse tick failed", exc_info=True)
+        finally:
+            if not self.shutdown_event.is_set():
+                self.root.after(self.PULSE_MS, self._tick_pulse)
+
+    # ─── polling ───────────────────────────────────────────────────────
     def _poll(self) -> None:
         try:
             self._refresh_from_state()
@@ -313,55 +474,112 @@ class AgentGUI:
     def _refresh_from_state(self) -> None:
         snap = self.state.snapshot()
 
-        # Connection indicator + left-edge stripe color (reads its own
-        # status at a glance: green=online, blue=connecting, red=auth,
-        # gray=stopped/starting).
-        color, label = _CONN_VIEW.get(
-            snap["connection"], (PAL["text_dim"], snap["connection"])
-        )
-        # Stripe uses accent when connecting (in-progress) so it picks
-        # up the website's primary action color during the most common
-        # transient state.
-        stripe_color = (
-            PAL["accent"] if snap["connection"] == CONN_CONNECTING else color
-        )
-        try:
-            self.status_stripe.configure(fg_color=stripe_color)
-        except Exception:
-            pass
-        self.conn_dot.itemconfig(self._conn_dot_id, fill=color)
-        self.conn_label.configure(text=label)
+        view = _hero_view(snap["connection"], snap["activity"])
 
-        server = snap["server_url"] or "—"
-        self.server_label.configure(text=server)
+        # Hero — only repaint static layers when something material changed.
+        if self._last_hero is None or self._last_hero["glyph"] != view["glyph"] \
+                or self._last_hero["color"] != view["color"]:
+            self._paint_hero_static(view)
+        self._last_hero = view
 
-        # Activity
-        if snap["activity"] == ACT_UPLOADING:
-            self.activity_label.configure(
-                text="Uploading", text_color=PAL["accent"],
+        self.hero_title.configure(text=view["title"])
+
+        # Subtitle reads from server URL + identity. We compose this so it
+        # mirrors the canvas mockup: "Linked to <url> as <hostname>"
+        # while uploading: "<service> · <detail>" (uses activity_detail).
+        if snap["activity"] == ACT_UPLOADING and snap["activity_detail"]:
+            self.hero_subtitle.configure(text=snap["activity_detail"])
+        elif snap["connection"] == CONN_ONLINE:
+            host = snap["hostname"] or snap["device_name"] or "this device"
+            server = _strip_scheme(snap["server_url"]) or "the server"
+            self.hero_subtitle.configure(text=f"Linked to {server} as {host}")
+        elif snap["connection"] == CONN_AUTH_FAILED:
+            self.hero_subtitle.configure(
+                text="Token rejected — paste a fresh pairing code to continue.",
             )
-        elif snap["activity"] == ACT_IDLE:
-            self.activity_label.configure(
-                text="Idle", text_color=PAL["text"],
-            )
+        elif snap["connection"] in (CONN_CONNECTING, CONN_STARTING, CONN_DISCONNECTED):
+            server = _strip_scheme(snap["server_url"]) or "server"
+            self.hero_subtitle.configure(text=f"Reaching {server}…")
         else:
-            self.activity_label.configure(
-                text=snap["activity"].title(), text_color=PAL["text"],
-            )
-        self.activity_detail.configure(text=snap["activity_detail"] or "")
+            self.hero_subtitle.configure(text="")
 
-        # Identity strip
+        # Version line in the header
         bits = []
-        if snap["hostname"]:
-            bits.append(snap["hostname"])
-        if snap["hwid_short"]:
-            bits.append(f"hwid {snap['hwid_short']}")
         if snap["version"]:
             bits.append(f"v{snap['version']}")
-        self.device_label.configure(text=" · ".join(bits))
+        if snap["hwid_short"]:
+            bits.append(snap["hwid_short"])
+        self.version_label.configure(text=" · ".join(bits))
 
-        # Log tail — only rewrite when the line count actually changed,
-        # otherwise we flicker the textbox every 500ms.
+        # Chips — rebuild on each repaint. Cheap (<5 widgets) and saves
+        # us from having to diff their internals.
+        for w in self._chip_widgets:
+            w.destroy()
+        self._chip_widgets.clear()
+
+        if snap["activity"] == ACT_UPLOADING:
+            self._chip_widgets.append(
+                self._make_chip(self.chips_row, "Uploading", dot_color=view["color"])
+            )
+        elif snap["connection"] == CONN_ONLINE:
+            self._chip_widgets.append(
+                self._make_chip(self.chips_row, "Idle", dot_color=PAL["ok"])
+            )
+        elif snap["connection"] in (CONN_CONNECTING, CONN_STARTING, CONN_DISCONNECTED):
+            self._chip_widgets.append(
+                self._make_chip(self.chips_row, "Reconnecting", dot_color=PAL["warn"])
+            )
+        elif snap["connection"] == CONN_AUTH_FAILED:
+            self._chip_widgets.append(
+                self._make_chip(self.chips_row, "Auth failed", dot_color=PAL["err"])
+            )
+
+        for chip in self._chip_widgets:
+            chip.pack(side="left", padx=(0, 6))
+
+        # Progress bar — shown only while uploading. We let the network
+        # code push a 0..1 value into activity_detail like "row 3/12" and
+        # parse it here; no progress info ⇒ show an indeterminate-looking
+        # full-width bar at low opacity. (Cheap fallback; replace with a
+        # real fraction once the upload path emits one.)
+        if snap["activity"] == ACT_UPLOADING:
+            frac = _parse_progress(snap["activity_detail"])
+            if frac is None:
+                self.progress.configure(mode="indeterminate")
+                self.progress.start()
+            else:
+                self.progress.stop()
+                self.progress.configure(mode="determinate")
+                self.progress.set(frac)
+            if not self.progress.winfo_ismapped():
+                self.progress.pack(fill="x", pady=(10, 0))
+        else:
+            if self.progress.winfo_ismapped():
+                self.progress.stop()
+                self.progress.pack_forget()
+
+        # Footer CTA flip — red "Re-pair device" when auth_failed, else
+        # the standard blue "Open Dashboard".
+        if snap["connection"] == CONN_AUTH_FAILED:
+            self.primary_btn.configure(
+                text="Re-pair device",
+                fg_color=PAL["err"], hover_color="#a8261f",
+            )
+            self.notice.configure(
+                text="Token expired — the agent paused uploads.",
+                text_color=PAL["err"],
+            )
+        else:
+            self.primary_btn.configure(
+                text="Open Dashboard",
+                fg_color=PAL["accent"], hover_color=PAL["accent_hover"],
+            )
+            tone = PAL["accent"] if snap["activity"] == ACT_UPLOADING else PAL["text_dim"]
+            self.notice.configure(
+                text="Keep open while uploads run.", text_color=tone,
+            )
+
+        # Log tail — diff-based to avoid flickering the textbox every poll.
         lines = snap["log_lines"]
         current = self.log_box.get("1.0", "end-1c").splitlines()
         if lines != current:
@@ -371,46 +589,42 @@ class AgentGUI:
             self.log_box.see("end")
             self.log_box.configure(state="disabled")
 
-        # Show / hide the keep-open notice (highlight it during uploads).
-        if snap["activity"] == ACT_UPLOADING:
-            self.notice.configure(text_color=PAL["accent"])
-        else:
-            self.notice.configure(text_color=PAL["text_muted"])
-
-        # Pairing dialog handshake — open exactly once per request.
+        # Pairing handshake — open the dialog exactly once per request.
         if snap["needs_pairing_code"] and not self._pairing_dialog_open:
             self._pairing_dialog_open = True
             self._open_pairing_dialog()
 
-    # ---- pairing modal ------------------------------------------------
+    # ─── pairing modal ─────────────────────────────────────────────────
     def _open_pairing_dialog(self) -> None:
         dialog = ctk.CTkToplevel(self.root)
         dialog.title("Pair this device")
-        dialog.geometry("420x280")
+        dialog.geometry("420x300")
         dialog.resizable(False, False)
         dialog.configure(fg_color=PAL["shell_bg"])
         dialog.transient(self.root)
         dialog.grab_set()
 
-        font_family = _pick_font_family()
+        # Top accent rail to anchor the dialog to the brand.
+        tk.Frame(dialog, bg=PAL["accent"], height=3).pack(side="top", fill="x")
+
         ctk.CTkLabel(
             dialog, text="Pair this device",
-            text_color=PAL["text"], font=(font_family, 16, "bold"),
+            text_color=PAL["text"], font=(self._font, 16, "bold"),
         ).pack(pady=(22, 4))
         ctk.CTkLabel(
             dialog,
             text="Open autoalert.pro → Settings → Download the agent. "
                  "Copy the pairing code shown there and paste it below.",
-            text_color=PAL["text_muted"], font=(font_family, 11),
+            text_color=PAL["text_muted"], font=(self._font, 11),
             wraplength=360, justify="center",
-        ).pack(padx=20, pady=(0, 14))
+        ).pack(padx=20, pady=(0, 16))
 
         code_var = tk.StringVar()
         code_entry = ctk.CTkEntry(
             dialog, textvariable=code_var,
-            width=240, height=36, corner_radius=8,
+            width=240, height=38, corner_radius=8,
             fg_color=PAL["shell_panel"], border_color=PAL["shell_border_strong"],
-            text_color=PAL["text"], font=("TkFixedFont", 14),
+            text_color=PAL["text"], font=(self._mono, 14),
             justify="center", placeholder_text="Pairing code",
         )
         code_entry.pack()
@@ -418,11 +632,11 @@ class AgentGUI:
 
         error_label = ctk.CTkLabel(
             dialog, text="", text_color=PAL["err"],
-            font=(font_family, 10),
+            font=(self._font, 10),
         )
         error_label.pack(pady=(6, 0))
 
-        def submit():
+        def submit() -> None:
             code = code_var.get().strip()
             if not code:
                 error_label.configure(text="Enter a pairing code.")
@@ -431,31 +645,46 @@ class AgentGUI:
             dialog.destroy()
             self.state.provide_pairing_code(code)
 
-        def cancel():
+        def cancel() -> None:
             self._pairing_dialog_open = False
             dialog.destroy()
             self.state.provide_pairing_code(None)
-            # Cancelling pairing means stopping the agent.
             self._on_close()
 
         btn_row = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_row.pack(pady=18)
         ctk.CTkButton(
             btn_row, text="Cancel", command=cancel,
-            fg_color=PAL["shell_sunken"], hover_color=PAL["shell_border"],
-            text_color=PAL["text"], corner_radius=8, width=100,
+            fg_color="transparent", hover_color=PAL["shell_sunken"],
+            text_color=PAL["text"], corner_radius=7,
+            border_width=1, border_color=PAL["shell_border_strong"],
+            width=100, height=32,
         ).pack(side="left", padx=6)
         ctk.CTkButton(
             btn_row, text="Pair", command=submit,
             fg_color=PAL["accent"], hover_color=PAL["accent_hover"],
-            text_color="#ffffff", corner_radius=8, width=100,
+            text_color="#ffffff", corner_radius=7,
+            font=(self._font, 11, "bold"),
+            width=100, height=32,
         ).pack(side="left", padx=6)
 
         dialog.bind("<Return>", lambda _e: submit())
         dialog.bind("<Escape>", lambda _e: cancel())
         dialog.protocol("WM_DELETE_WINDOW", cancel)
 
-    # ---- actions ------------------------------------------------------
+    # ─── actions ───────────────────────────────────────────────────────
+    def _primary_action(self) -> None:
+        """Primary CTA: opens the dashboard normally, but in auth_failed
+        state it instead triggers the pairing flow so the user can
+        recover without leaving the window."""
+        snap = self.state.snapshot()
+        if snap["connection"] == CONN_AUTH_FAILED:
+            if not self._pairing_dialog_open:
+                self._pairing_dialog_open = True
+                self._open_pairing_dialog()
+            return
+        self._open_dashboard()
+
     def _open_dashboard(self) -> None:
         url = self.state.server_url or "https://autoalert.pro"
         try:
@@ -463,24 +692,77 @@ class AgentGUI:
         except Exception:
             log.warning("Failed to launch browser for %s", url, exc_info=True)
 
+    def _open_log_file(self) -> None:
+        """Stub — wire to the agent's actual log file path. Falls back
+        to a no-op if the agent isn't writing to a known path."""
+        try:
+            from agent.config import LOG_PATH  # type: ignore
+        except Exception:
+            LOG_PATH = None
+        if not LOG_PATH:
+            return
+        try:
+            webbrowser.open(f"file://{LOG_PATH}")
+        except Exception:
+            log.debug("open log file failed", exc_info=True)
+
     def _on_close(self) -> None:
-        # Tell the network thread to stop, but don't block waiting on it
-        # — the daemon thread will be killed when the process exits.
         self.shutdown_event.set()
-        # If we're blocked on a pairing prompt, unblock it.
         self.state.provide_pairing_code(None)
         try:
             self.root.after(50, self.root.destroy)
         except Exception:
             pass
 
-    # ---- entry --------------------------------------------------------
+    # ─── entry ─────────────────────────────────────────────────────────
     def run(self) -> None:
         """Block on the GUI mainloop. Returns when the window closes."""
         self.root.mainloop()
 
 
-# ---- logging bridge -----------------------------------------------------
+# ─── module-level helpers ───────────────────────────────────────────────
+
+def _strip_scheme(url: str) -> str:
+    """'https://autoalert.pro' → 'autoalert.pro' for display."""
+    if not url:
+        return ""
+    for prefix in ("https://", "http://", "wss://", "ws://"):
+        if url.startswith(prefix):
+            return url[len(prefix):].rstrip("/")
+    return url.rstrip("/")
+
+
+def _parse_progress(detail: str) -> float | None:
+    """Pull a progress fraction out of an activity_detail string.
+
+    Recognizes patterns like 'row 3/12', 'chunk 14 of 32', '43%'.
+    Returns a float in [0, 1] or None if nothing parseable is found.
+    """
+    if not detail:
+        return None
+    import re
+    # "43%"
+    m = re.search(r"(\d+)\s*%", detail)
+    if m:
+        return max(0.0, min(1.0, int(m.group(1)) / 100))
+    # "row 3/12" or "3 of 12"
+    m = re.search(r"(\d+)\s*(?:/|of)\s*(\d+)", detail)
+    if m:
+        num = int(m.group(1)); den = int(m.group(2))
+        if den > 0:
+            return max(0.0, min(1.0, num / den))
+    return None
+
+
+def _now_ms() -> int:
+    """Monotonic-ish ms clock for the pulse. time.monotonic is fine —
+    Tk doesn't need wall-clock precision and monotonic avoids the
+    'system clock changed' jump."""
+    import time
+    return int(time.monotonic() * 1000)
+
+
+# ─── logging bridge ─────────────────────────────────────────────────────
 
 class StateLogHandler(logging.Handler):
     """Logging handler that pushes formatted records into AgentState.log_lines.

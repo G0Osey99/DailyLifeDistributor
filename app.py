@@ -223,7 +223,7 @@ def create_app() -> Flask:
     # probe, static assets, and the invite-accept GET/POST (so a brand-new
     # invitee can hit the signup form without an existing session).
     _PUBLIC_ENDPOINTS = {
-        "auth.login", "auth.login_submit", "_health", "_health_details", "static",
+        "auth.login", "auth.login_submit", "_health", "_health_details", "_health_alerts", "static",
         "invitations.accept_get", "invitations.accept_post",
         # Phase γ: second-factor screens (the session isn't fully
         # authenticated until the second factor is verified, so a
@@ -551,6 +551,112 @@ def create_app() -> Flask:
         )
 
         return jsonify(details), 200
+
+    @app.route("/health/alerts")
+    def _health_alerts():
+        """Single endpoint an uptime monitor can watch on HTTP-status alone.
+
+        Returns 200 + ``{"ok": True, "alerts": []}`` when nothing is
+        actionable. Returns 503 + ``{"ok": False, "alerts": [{...}, ...]}``
+        when something needs human attention. The response body lists the
+        specific firing conditions so the alert email tells ops *what*
+        broke, not just *that* something broke.
+
+        What counts as 'actionable':
+          * DB unreachable (SQLite write path is dead)
+          * Any circuit breaker OPEN (Resend, image providers, LLM)
+          * YouTube quota >= 95% (uploads will start failing soon)
+          * SECRET_ENC_KEY missing (config drift mid-flight)
+
+        What's reported but NOT 503 (use /health/details for these):
+          * Resend not configured (may be intentional pre-rollout)
+          * agents_online == 0 (no SLA on that)
+          * YT quota 90-94% (warning, not critical)
+
+        Public endpoint, no auth — meant to be polled by external services.
+        """
+        from flask import jsonify
+        alerts: list[dict] = []
+
+        # DB write probe — if state.db has rotated out from under us
+        # (USB unplug, volume detached), every upload + auth call dies.
+        try:
+            with _db._get_conn() as conn:
+                conn.execute("SELECT 1").fetchone()
+        except Exception as e:
+            alerts.append({
+                "severity": "critical",
+                "code": "db_unreachable",
+                "message": f"SQLite at {_db._DB_PATH} not readable: {e}",
+            })
+
+        # Any open breaker = a real integration is failing fast for a
+        # cooldown window. Pages that depend on it will mostly succeed
+        # by serving cached/degraded results — but operators should
+        # know the underlying provider is sick.
+        try:
+            from core.circuit_breaker import _registry  # type: ignore[attr-defined]
+            for name, b in _registry.items():  # type: ignore[attr-defined]
+                if b.state.value == "open":
+                    alerts.append({
+                        "severity": "warning",
+                        "code": f"breaker_open:{name}",
+                        "message": (
+                            f"Circuit breaker '{name}' is OPEN "
+                            f"(consecutive_failures={b._consecutive_failures}). "  # type: ignore[attr-defined]
+                            "Downstream integration is failing fast for the cooldown window."
+                        ),
+                    })
+        except Exception as e:
+            alerts.append({
+                "severity": "warning",
+                "code": "breaker_introspection_failed",
+                "message": str(e),
+            })
+
+        # YT quota at 95%+ — uploads will start refusing within minutes.
+        try:
+            from core.quota import get_quota_used, DAILY_QUOTA
+            used = int(get_quota_used() or 0)
+            cap = int(DAILY_QUOTA) or 1
+            pct = 100.0 * used / cap
+            if pct >= 95.0:
+                alerts.append({
+                    "severity": "critical",
+                    "code": "yt_quota_near_cap",
+                    "message": (
+                        f"YouTube quota at {pct:.1f}% ({used}/{cap}). "
+                        "Uploads will start failing within minutes."
+                    ),
+                })
+        except Exception:
+            # Don't add an alert here — quota readout failure is its own
+            # signal but not 503-worthy (you can still upload manually).
+            pass
+
+        # SECRET_ENC_KEY missing AT RUNTIME (boot already checks this;
+        # this catches "env got cleared after process start" — rare but
+        # would silently corrupt every Fernet write going forward).
+        if not (os.environ.get("SECRET_ENC_KEY") or "").strip():
+            alerts.append({
+                "severity": "critical",
+                "code": "secret_enc_key_missing",
+                "message": (
+                    "SECRET_ENC_KEY is not set in process env. New writes "
+                    "to the secret store would corrupt every existing "
+                    "ciphertext until restored."
+                ),
+            })
+
+        critical = [a for a in alerts if a["severity"] == "critical"]
+        any_alert = bool(alerts)
+        status_code = 503 if any_alert else 200
+        return jsonify({
+            "ok": not any_alert,
+            "critical_count": len(critical),
+            "alert_count": len(alerts),
+            "alerts": alerts,
+        }), status_code
 
     from blueprints.calendar import bp as calendar_bp
     from blueprints.history import bp as history_bp

@@ -79,3 +79,78 @@ def test_render_welcome_with_agent_urls():
     assert "alice" in html and "manager" in html
     assert "Windows" in html and "macOS" in html
     assert "alice" in text
+
+
+# --- circuit-breaker behavior (added by external-integrations hardening) ----
+
+def _reset_email_breaker():
+    """Reset the module-level breaker between tests so state doesn't bleed."""
+    email._RESEND_BREAKER.record_success()
+
+
+def test_send_retries_once_on_transient_error(monkeypatch):
+    _reset_email_breaker()
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_xxx")
+    attempts = {"n": 0}
+
+    class _FlakeyResend:
+        api_key = ""
+
+        class Emails:
+            @staticmethod
+            def send(payload):
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    raise ConnectionError("simulated 5xx")
+                return {"id": "ok"}
+
+    monkeypatch.setattr(email, "resend", _FlakeyResend, raising=False)
+    ok = email.send("welcome", to="x@x.com", username="x", org_name="O")
+    assert ok is True
+    assert attempts["n"] == 2  # one retry on transient
+
+
+def test_send_does_not_retry_validation_errors(monkeypatch):
+    _reset_email_breaker()
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_xxx")
+    attempts = {"n": 0}
+
+    class _ValidationResend:
+        api_key = ""
+
+        class Emails:
+            @staticmethod
+            def send(payload):
+                attempts["n"] += 1
+                raise ValueError("validation error: invalid recipient")
+
+    monkeypatch.setattr(email, "resend", _ValidationResend, raising=False)
+    ok = email.send("welcome", to="x@x.com", username="x", org_name="O")
+    assert ok is False
+    # No retry on validation-shaped error (would fail the same way).
+    assert attempts["n"] == 1
+
+
+def test_breaker_opens_after_repeated_failures_and_fails_fast(monkeypatch):
+    _reset_email_breaker()
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_xxx")
+    attempts = {"n": 0}
+
+    class _DownResend:
+        api_key = ""
+
+        class Emails:
+            @staticmethod
+            def send(payload):
+                attempts["n"] += 1
+                raise ConnectionError("upstream 503")
+
+    monkeypatch.setattr(email, "resend", _DownResend, raising=False)
+    # Three consecutive failed sends (breaker threshold = 3).
+    for _ in range(3):
+        assert email.send("welcome", to="x@x.com", username="x", org_name="O") is False
+    failures_before_breaker_open = attempts["n"]
+    # Next call should be rejected by the breaker without touching resend.
+    assert email.send("welcome", to="x@x.com", username="x", org_name="O") is False
+    assert attempts["n"] == failures_before_breaker_open, \
+        "breaker should have fast-failed without invoking resend"

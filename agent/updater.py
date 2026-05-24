@@ -54,16 +54,46 @@ def _load_pubkey() -> bytes:
     return resources.files("agent").joinpath("release_pubkey.pem").read_bytes()
 
 
+def _fetch_with_retry(url: str, *, timeout: float, attempts: int = 2):
+    """GET with one retry on connection error. Returns the response.
+
+    The update check runs once at agent boot — a single transient flake
+    shouldn't lock the agent into another launch cycle on the old
+    version. We don't retry on 4xx (those are deterministic) and we
+    don't try harder than twice (boot must stay snappy).
+    """
+    import random
+    import time
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.get(url, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except requests.HTTPError:
+            # Server reachable, but answered 4xx/5xx — don't retry
+            # (5xx is also usually not transient for a static asset).
+            raise
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt < attempts:
+                time.sleep(0.5 + random.random() * 0.5)
+                continue
+            raise
+    # Defensive — we either returned or raised above.
+    raise last_exc  # type: ignore[misc]
+
+
 def _fetch_manifest(server_url: str) -> dict:
-    r = requests.get(server_url.rstrip("/") + "/agent/releases/manifest.json",
-                     timeout=15)
-    r.raise_for_status()
+    r = _fetch_with_retry(
+        server_url.rstrip("/") + "/agent/releases/manifest.json",
+        timeout=15,
+    )
     return r.json()
 
 
 def _fetch_bytes(url: str) -> bytes:
-    r = requests.get(url, timeout=60)
-    r.raise_for_status()
+    r = _fetch_with_retry(url, timeout=60)
     return r.content
 
 

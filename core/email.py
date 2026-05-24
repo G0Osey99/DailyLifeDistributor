@@ -1,20 +1,26 @@
 """Resend transactional email wrapper.
 
-Wired but unused: no live emails are sent in phase α (call sites land in
-PR-β invites and PR-γ recovery). render_template() is exercised by tests
-so we know the templates parse and the variable contract is stable.
-
 Falls back to a WARNING-logged no-op when RESEND_API_KEY is unset so dev
 runs and the bootstrap migration don't require an API key.
+
+Resilience: every send goes through the ``email:resend`` circuit breaker
+and one transient retry on connection error / 5xx. A 30-second Resend
+outage during a recovery flow (~5 emails) used to block the request on
+back-to-back SDK timeouts; the breaker opens after 3 consecutive
+failures and fails-fast for the next 60s so the request doesn't hang.
 """
 from __future__ import annotations
 
 import logging
 import os
+import random
+import time
 from pathlib import Path
 from typing import Tuple
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+from core import circuit_breaker as _cb
 
 try:
     import resend  # type: ignore
@@ -22,6 +28,16 @@ except ImportError:  # pragma: no cover - resend is a required pin
     resend = None  # noqa: F841
 
 log = logging.getLogger(__name__)
+
+# Breaker tuning: a single failed send is usually a transient hiccup;
+# three in a row almost certainly means Resend is down or our domain
+# verification flipped. 60s cooldown is short enough that a healthy
+# Resend recovers within the same /recover/<id>/approve request and
+# long enough that we don't hammer a down provider.
+_RESEND_BREAKER = _cb.get_breaker(
+    "email:resend", failure_threshold=3, recovery_timeout=60.0,
+)
+_TRANSIENT_RETRY_DELAY = 0.5  # seconds; jittered ±50%
 
 
 class UnknownTemplateError(LookupError):
@@ -95,16 +111,52 @@ def send(name: str, to: str, **vars) -> bool:
         log.exception("Email template render failed; skipping send")
         return False
 
-    try:
-        resend.api_key = api_key
-        resend.Emails.send({
-            "from": _FROM_ADDR,
-            "to": [to],
-            "subject": subject,
-            "html": html,
-            "text": text,
-        })
-        return True
-    except Exception:
-        log.exception("Resend send failed for template=%s to=%s", name, to)
+    # Breaker first — if Resend has been failing, fail fast.
+    if not _RESEND_BREAKER.allow():
+        log.warning(
+            "email: circuit '%s' is OPEN; skipping send template=%s to=%s",
+            _RESEND_BREAKER.name, name, to,
+        )
         return False
+
+    resend.api_key = api_key
+    payload = {
+        "from": _FROM_ADDR,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+        "text": text,
+    }
+
+    # One transient retry on connection error / 5xx. The SDK doesn't
+    # expose the response object cleanly, so we treat any exception
+    # other than what looks like a validation error (4xx-shaped
+    # messages) as retryable. A second consecutive failure trips
+    # record_failure once — not twice — to avoid skewing the breaker.
+    last_exc: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            resend.Emails.send(payload)
+            _RESEND_BREAKER.record_success()
+            return True
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc).lower()
+            # Don't retry obvious client-side validation errors —
+            # those will fail the same way every time.
+            if any(s in msg for s in (
+                "invalid", "validation", "unauthorized", "forbidden",
+                "bad request", "domain not verified",
+            )):
+                break
+            if attempt == 1:
+                # Jittered short sleep before the second attempt.
+                time.sleep(_TRANSIENT_RETRY_DELAY * (0.5 + random.random()))
+                continue
+
+    _RESEND_BREAKER.record_failure()
+    log.exception(
+        "Resend send failed for template=%s to=%s (last error: %s)",
+        name, to, last_exc,
+    )
+    return False

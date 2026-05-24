@@ -112,8 +112,59 @@ def _build_client():
     return youtube_uploader.get_authenticated_service()
 
 
+def _execute_with_retry(req, *, label: str, attempts: int = 2):
+    """Run ``req.execute()`` with one retry on transient 5xx / network.
+
+    A single Google 5xx hiccup or socket reset during a scheduled
+    calendar refresh used to wipe the entire YouTube source for that
+    run. We retry once with a short backoff. Quota errors (HTTP 403
+    with reason=quotaExceeded) are NOT retried — those are deterministic
+    and the caller should bubble them up.
+    """
+    import random
+    import time
+    try:
+        from googleapiclient.errors import HttpError
+    except ImportError:
+        HttpError = Exception  # type: ignore[misc,assignment]
+
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return req.execute()
+        except HttpError as e:
+            status = getattr(getattr(e, "resp", None), "status", None)
+            # Don't retry deterministic 4xx (auth/quota/permission).
+            if status is not None and 400 <= int(status) < 500:
+                raise
+            last_exc = e
+            if attempt < attempts:
+                wait = 0.7 + random.random() * 0.6
+                log.warning(
+                    "YT refresh %s: transient HttpError (status=%s) — "
+                    "retrying in %.1fs", label, status, wait,
+                )
+                time.sleep(wait)
+                continue
+            raise
+        except OSError as e:
+            # ConnectionResetError / socket.timeout / etc.
+            last_exc = e
+            if attempt < attempts:
+                wait = 0.7 + random.random() * 0.6
+                log.warning(
+                    "YT refresh %s: transient network error (%s) — "
+                    "retrying in %.1fs", label, e, wait,
+                )
+                time.sleep(wait)
+                continue
+            raise
+    raise last_exc  # type: ignore[misc]
+
+
 def _uploads_playlist_id(yt) -> str:
-    resp = yt.channels().list(part="contentDetails", mine=True).execute()
+    req = yt.channels().list(part="contentDetails", mine=True)
+    resp = _execute_with_retry(req, label="channels.list")
     track_quota_usage("refresh_channels_list")
     return resp["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
 
@@ -129,10 +180,11 @@ def _walk_uploads(yt, playlist_id: str, oldest_allowed: date, max_items: int = 2
     page_token = None
     yielded = 0
     while True:
-        resp = yt.playlistItems().list(
+        req = yt.playlistItems().list(
             playlistId=playlist_id, part="contentDetails,snippet",
             maxResults=50, pageToken=page_token,
-        ).execute()
+        )
+        resp = _execute_with_retry(req, label="playlistItems.list")
         track_quota_usage("refresh_playlist_items_list")
         for it in resp.get("items", []):
             published_at = it["contentDetails"].get("videoPublishedAt") \
@@ -166,10 +218,11 @@ def _search_owned_video_ids(yt, max_items: int = 100):
     ids: list[str] = []
     page_token = None
     while len(ids) < max_items:
-        resp = yt.search().list(
+        req = yt.search().list(
             part="id", forMine=True, type="video",
             order="date", maxResults=50, pageToken=page_token,
-        ).execute()
+        )
+        resp = _execute_with_retry(req, label="search.list(forMine)")
         track_quota_usage("refresh_search_list")
         for it in resp.get("items", []):
             vid = (it.get("id") or {}).get("videoId")
@@ -254,10 +307,11 @@ def fetch(window_start: date, window_end: date, max_items: int = 200) -> list[Ex
     out: list[ExternalItem] = []
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i + 50]
-        resp = yt.videos().list(
+        req = yt.videos().list(
             part="status,contentDetails,snippet",
             id=",".join(batch),
-        ).execute()
+        )
+        resp = _execute_with_retry(req, label="videos.list")
         track_quota_usage("refresh_videos_list")
         for v in resp.get("items", []):
             status_obj = v.get("status", {})

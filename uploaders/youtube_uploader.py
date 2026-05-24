@@ -173,16 +173,55 @@ def get_authenticated_service():
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
+            # 2 attempts with exponential backoff on transient network
+            # errors. We distinguish RefreshError (token genuinely bad —
+            # surface immediately, no retry) from network/5xx hiccups at
+            # Google's IDP (worth retrying; otherwise a 30s Google
+            # blip at run-start aborts the entire batch).
+            import random as _random
+            import time as _time
             try:
-                creds.refresh(Request())
-            except Exception as e:
+                from google.auth.exceptions import RefreshError as _RefreshError
+            except ImportError:
+                _RefreshError = None  # type: ignore[assignment]
+
+            last_exc: Exception | None = None
+            for attempt in (1, 2):
+                try:
+                    creds.refresh(Request())
+                    last_exc = None
+                    break
+                except Exception as e:
+                    last_exc = e
+                    is_refresh_err = (
+                        _RefreshError is not None and isinstance(e, _RefreshError)
+                    ) or "invalid_grant" in str(e).lower()
+                    if is_refresh_err:
+                        # Token genuinely bad — no retry.
+                        break
+                    if attempt == 1:
+                        logger.warning(
+                            "YouTube creds.refresh transient error (attempt 1): "
+                            "%s — retrying in ~1s", e,
+                        )
+                        _time.sleep(0.7 + _random.random() * 0.6)
+                        continue
+                    # Both attempts exhausted; fall through to raise.
+            if last_exc is not None:
+                e = last_exc
                 # M19: refresh-token revoked / expired — clean up and surface a
                 # message the user can act on.
                 try:
-                    from google.auth.exceptions import RefreshError as _RefreshError
-                    is_refresh_err = isinstance(e, _RefreshError)
-                except ImportError:
-                    is_refresh_err = "invalid_grant" in str(e).lower() or "refresh" in str(e).lower()
+                    is_refresh_err = (
+                        _RefreshError is not None and isinstance(e, _RefreshError)
+                    )
+                except Exception:
+                    is_refresh_err = False
+                if not is_refresh_err:
+                    is_refresh_err = (
+                        "invalid_grant" in str(e).lower()
+                        or "refresh" in str(e).lower()
+                    )
                 if is_refresh_err:
                     logger.warning("YouTube refresh failed — clearing stored token: %s", e)
                     _clear_token()

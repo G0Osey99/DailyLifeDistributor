@@ -40,8 +40,25 @@ from typing import Optional
 
 import requests
 
+from core import circuit_breaker as _cb
 from core import db as _db
 from core.llm_title_gen import LLAMAFILE_BASE_URL, is_llamafile_running
+
+# Per-provider breakers. Threshold 3 + 120s cool-down matches the upload
+# breakers: a single transient blip shouldn't fail-fast every subsequent
+# date, but three consecutive misses almost certainly means the provider
+# is down and waiting 15s × 2 attempts per term per date is wasted time.
+_UNSPLASH_BREAKER = _cb.get_breaker(
+    "image:unsplash", failure_threshold=3, recovery_timeout=120.0,
+)
+_PEXELS_BREAKER = _cb.get_breaker(
+    "image:pexels", failure_threshold=3, recovery_timeout=120.0,
+)
+# The image-keyword path hits the same llamafile/ollama as title generation,
+# so share the breaker — if titles are dead, keywords are too.
+_LLM_KEYWORDS_BREAKER = _cb.get_breaker(
+    "llm:title", failure_threshold=3, recovery_timeout=120.0,
+)
 
 log = logging.getLogger(__name__)
 
@@ -167,6 +184,16 @@ def _topic_terms_for_verse(verse_text: str, *, topic_hint: str = "") -> list[str
         f"Verse: {verse_text}{hint}"
     )
 
+    # Breaker check: same upstream as the title generator. If llamafile
+    # is consistently failing, skip straight to the empty-keywords
+    # fallback instead of burning 60s × 2 attempts × N dates on hope.
+    if not _LLM_KEYWORDS_BREAKER.allow():
+        log.warning(
+            "Image gatherer: circuit '%s' is OPEN; skipping LLM keyword "
+            "generation for verse", _LLM_KEYWORDS_BREAKER.name,
+        )
+        return []
+
     _MAX_LLM_ATTEMPTS = 2
     for attempt in range(1, _MAX_LLM_ATTEMPTS + 1):
         try:
@@ -192,6 +219,7 @@ def _topic_terms_for_verse(verse_text: str, *, topic_hint: str = "") -> list[str
             text = _strip_llm_wrappers(text)
             terms = json.loads(text)
             if isinstance(terms, list) and all(isinstance(t, str) and t.strip() for t in terms):
+                _LLM_KEYWORDS_BREAKER.record_success()
                 return [t.strip() for t in terms][:3]
             log.warning("Image gatherer: LLM returned non-list payload (attempt %d): %r", attempt, text[:120])
         except (requests.RequestException, json.JSONDecodeError) as e:
@@ -200,6 +228,9 @@ def _topic_terms_for_verse(verse_text: str, *, topic_hint: str = "") -> list[str
         # llamafile gets a moment to recover instead of being hammered.
         if attempt < _MAX_LLM_ATTEMPTS:
             time.sleep((2 ** (attempt - 1)) + random.uniform(0, 0.5))
+    # Both attempts exhausted without a usable payload — record the
+    # failure so the breaker can open on repeated misses.
+    _LLM_KEYWORDS_BREAKER.record_failure()
     return []
 
 
@@ -225,6 +256,15 @@ def _try_unsplash(term: str, photo_cutoff_iso: str) -> Optional[GatheredImage]:
         log.debug("Image gatherer: UNSPLASH_ACCESS_KEY not set; skipping Unsplash for %r", term)
         return None
 
+    # Fail-fast when the breaker has tripped — saves the per-term wait
+    # when Unsplash is genuinely down for the whole run.
+    if not _UNSPLASH_BREAKER.allow():
+        log.debug(
+            "Image gatherer: circuit '%s' is OPEN; skipping Unsplash for %r",
+            _UNSPLASH_BREAKER.name, term,
+        )
+        return None
+
     headers = {"Authorization": f"Client-ID {key}", "Accept-Version": "v1"}
     params = {
         "query": term,
@@ -234,7 +274,12 @@ def _try_unsplash(term: str, photo_cutoff_iso: str) -> Optional[GatheredImage]:
     }
     r = _search_with_retry(_UNSPLASH_SEARCH, headers=headers, params=params, label="Unsplash", term=term)
     if r is None:
+        # The retry helper has already exhausted its 2 attempts; treat
+        # as a breaker failure. A zero-result (200 with empty `results`)
+        # below is NOT a failure — that's a search miss, not infra.
+        _UNSPLASH_BREAKER.record_failure()
         return None
+    _UNSPLASH_BREAKER.record_success()
 
     used_ids = _db.recent_photo_ids("unsplash", photo_cutoff_iso)
     results = r.json().get("results") or []
@@ -285,11 +330,20 @@ def _try_pexels(term: str, photo_cutoff_iso: str) -> Optional[GatheredImage]:
         log.debug("Image gatherer: PEXELS_API_KEY not set; skipping Pexels for %r", term)
         return None
 
+    if not _PEXELS_BREAKER.allow():
+        log.debug(
+            "Image gatherer: circuit '%s' is OPEN; skipping Pexels for %r",
+            _PEXELS_BREAKER.name, term,
+        )
+        return None
+
     headers = {"Authorization": key}
     params = {"query": term, "orientation": "portrait", "per_page": _PER_PAGE}
     r = _search_with_retry(_PEXELS_SEARCH, headers=headers, params=params, label="Pexels", term=term)
     if r is None:
+        _PEXELS_BREAKER.record_failure()
         return None
+    _PEXELS_BREAKER.record_success()
 
     used_ids = _db.recent_photo_ids("pexels", photo_cutoff_iso)
     photos = r.json().get("photos") or []

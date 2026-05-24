@@ -191,8 +191,14 @@ from agent import state as _st  # noqa: E402
 from agent.state import AgentState as _AgentState  # noqa: E402
 _state: "_AgentState | None" = None
 
-# Backoff constants
-_RECONNECT_DELAY = 3   # seconds between reconnect attempts
+# Backoff constants for the reconnect loop. The base is 3s (what we used
+# to have, hard-coded), the ceiling is 60s, and the exponent doubles each
+# consecutive failure — so a relay outage gets probed at 3, 6, 12, 24, 48,
+# then 60s forever, with ±20% jitter on every attempt to avoid a thundering
+# herd when many paired agents try to reconnect at the same moment after a
+# server restart. A successful connection resets the counter.
+_RECONNECT_BASE_DELAY = 3.0
+_RECONNECT_MAX_DELAY = 60.0
 _AUTH_ERR_CODES = {401, 403}
 
 # Single-job invariant: the agent runs one upload at a time. Track the
@@ -427,6 +433,7 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
     print("Press Ctrl+C to stop.")
 
     consecutive_auth_failures = 0
+    consecutive_connect_failures = 0
 
     while not shutdown_event.is_set():
         if _state is not None:
@@ -439,6 +446,7 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
                 _state.set_connection(_st.CONN_ONLINE)
                 _state.append_log(f"Connected as {_device_name()}")
             consecutive_auth_failures = 0
+            consecutive_connect_failures = 0
             # Bind conn into the callback's default arg so the closure can't
             # accidentally pick up a later iteration's connection.
             while conn.run_once(lambda m, c=conn: _on_message(c, m)):
@@ -517,8 +525,23 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
 
         if shutdown_event.is_set():
             break
+        # Exponential backoff with jitter — see _RECONNECT_BASE_DELAY /
+        # _RECONNECT_MAX_DELAY at module top. consecutive_connect_failures
+        # is incremented here (after a failed attempt) and reset to 0
+        # immediately upon a successful connect() above.
+        consecutive_connect_failures += 1
+        import random as _random
+        backoff = min(
+            _RECONNECT_BASE_DELAY * (2 ** (consecutive_connect_failures - 1)),
+            _RECONNECT_MAX_DELAY,
+        )
+        jitter = backoff * (0.8 + 0.4 * _random.random())  # ±20%
+        log.debug(
+            "agent: reconnect attempt %d in %.1fs (capped %.0fs)",
+            consecutive_connect_failures, jitter, _RECONNECT_MAX_DELAY,
+        )
         # Wait for the reconnect delay but wake immediately if shutdown fires.
-        shutdown_event.wait(timeout=_RECONNECT_DELAY)
+        shutdown_event.wait(timeout=jitter)
 
     print("Goodbye!")
 

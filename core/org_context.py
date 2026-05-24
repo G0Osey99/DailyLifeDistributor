@@ -30,7 +30,13 @@ def real_user_id() -> Optional[int]:
 
 
 def current_org_id() -> Optional[int]:
-    """The user's selected membership org. Real, not impersonated."""
+    """The user's selected membership org. Real, not impersonated.
+
+    Mirrors ``core.auth.current_org_id()``; the duplicate is intentional
+    so callers can import both real and effective org from one module.
+    Role checks should keep reading this (or the session key directly);
+    only credential reads use ``effective_org_id()``.
+    """
     oid = session.get("current_org_id")
     return int(oid) if oid is not None else None
 
@@ -42,6 +48,7 @@ def acting_as_org_id() -> Optional[int]:
 
 
 def is_impersonating() -> bool:
+    """True when the program owner has set an acting_as_org_id in session."""
     return acting_as_org_id() is not None
 
 
@@ -52,7 +59,10 @@ def effective_org_id() -> Optional[int]:
     None means 'no session / no membership' — callers must treat that
     as a hard miss (don't fall back to legacy unscoped).
     """
-    return acting_as_org_id() or current_org_id()
+    acting = acting_as_org_id()
+    if acting is not None:
+        return acting
+    return current_org_id()
 
 
 def forbidden_during_impersonation(view):

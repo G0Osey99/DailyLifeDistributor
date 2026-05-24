@@ -536,6 +536,8 @@ def sessions_status():
             abort(401)
     from core.playwright_session import has_session
     from core.llm_title_gen import is_llamafile_running
+    from core.org_context import effective_org_id
+    org_id = effective_org_id()
     out: dict = {}
     out["youtube"] = {
         "ok": bool(_cached_yt_authenticated()),
@@ -543,28 +545,38 @@ def sessions_status():
         "label_off": "YouTube needs auth",
     }
     out["simplecast"] = {
-        "ok": bool(has_session(os.path.join(PROJECT_ROOT, "simplecast_session.json"))),
+        "ok": bool(has_session(os.path.join(PROJECT_ROOT, "simplecast_session.json"), org_id=org_id)),
         "label_on": "SimpleCast session",
         "label_off": "SimpleCast needs login",
     }
     out["vista_social"] = {
-        "ok": bool(has_session(os.path.join(PROJECT_ROOT, "vista_social_session.json"))),
+        "ok": bool(has_session(os.path.join(PROJECT_ROOT, "vista_social_session.json"), org_id=org_id)),
         "label_on": "Vista Social session",
         "label_off": "Vista Social needs login",
     }
     out["rock"] = {
-        "ok": bool(has_session(os.path.join(PROJECT_ROOT, "rock_session.json"))),
+        "ok": bool(has_session(os.path.join(PROJECT_ROOT, "rock_session.json"), org_id=org_id)),
         "label_on": "Rock session",
         "label_off": "Rock needs login",
     }
     # Agent online — read from the process-wide relay registered by
-    # blueprints.agent at startup. core.relay.online_agent_count() walks
-    # the default relay set via set_default_relay(), so we don't have to
-    # reach across to blueprints.agent (which would mean a circular
-    # import) and don't have to use module-private state.
+    # blueprints.agent at startup, then filtered to the device pool the
+    # current request would actually dispatch to. Without the filter the
+    # sidebar reports "Agent online" when the only online agent belongs
+    # to a different tenant — misleading, since clicking Upload would
+    # refuse to dispatch to it.
     try:
-        from core.relay import online_agent_count
-        agent_count = online_agent_count()
+        from core.relay import _default_relay, _default_account
+        from core import agent_dispatch as _ad
+        eligible = _ad._eligible_device_ids()
+        if _default_relay is None:
+            agent_count = 0
+        else:
+            online = _default_relay.online_agents(_default_account)
+            if eligible is None:
+                agent_count = len(online)
+            else:
+                agent_count = sum(1 for a in online if a["device_id"] in eligible)
     except Exception:
         agent_count = 0
     out["agent"] = {

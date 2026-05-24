@@ -57,6 +57,13 @@ def _scoped(name: str, org_id: int | None) -> str:
 
 def _write(storage_name: str, kind: str, raw: bytes, *, org_id: int | None = None) -> None:
     """Write an encrypted value directly by its literal storage name."""
+    # Invariant: a platform:* storage name must NEVER carry a non-None org_id.
+    # The two namespaces are intentionally orthogonal; a row with both prefixed
+    # name and org_id set would confuse the future (name, org_id) PK migration.
+    assert (not storage_name.startswith("platform:")) or org_id is None, (
+        f"_write({storage_name!r}, org_id={org_id!r}): platform names must "
+        "have org_id=None"
+    )
     token = crypto.encrypt(raw)
     with _get_conn() as conn:
         conn.execute(

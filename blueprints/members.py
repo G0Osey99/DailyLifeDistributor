@@ -16,6 +16,7 @@ from flask import (
 
 from core import audit as _audit
 from core import db, invitations
+from core.org_context import forbidden_during_impersonation
 from core.permissions import _lookup_role, require_role
 
 
@@ -76,6 +77,7 @@ def members_page():
 
 
 @bp.route("/settings/members/<int:user_id>/role", methods=["POST"])
+@forbidden_during_impersonation
 @require_role("owner")
 def change_role(user_id: int):
     new_role = (request.form.get("role") or "").strip().lower()

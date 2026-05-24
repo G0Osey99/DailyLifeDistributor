@@ -19,6 +19,7 @@ from flask import (
 
 import core.config as core_config
 from core.hosted import is_hosted
+from core.org_context import forbidden_during_impersonation
 from core.permissions import is_program_owner as _is_program_owner
 
 _log = logging.getLogger(__name__)
@@ -663,6 +664,7 @@ def devices_page():
 
 
 @bp.route("/settings/change-password", methods=["POST"])
+@forbidden_during_impersonation
 def change_password_route():
     current = request.form.get("current") or ""
     new = request.form.get("new") or ""

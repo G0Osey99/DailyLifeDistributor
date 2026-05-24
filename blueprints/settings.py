@@ -8,6 +8,7 @@ import os
 import yaml
 from flask import (
     Blueprint,
+    abort,
     flash,
     jsonify,
     redirect,
@@ -158,31 +159,31 @@ def settings():
         ExcelParser(load_config()).invalidate_cache()
         session.reload_config()
 
-        uploaded = request.files.get("client_secrets_file")
-        if uploaded and uploaded.filename:
-            # Cap size, parse JSON, and require an OAuth installed/web client
-            # block. Otherwise a stray binary upload silently overwrites a
-            # valid secrets file, and the next OAuth attempt fails with a
-            # confusing JSON parse error far away from the upload.
-            _MAX_SECRETS_BYTES = 256 * 1024
-            blob = uploaded.read(_MAX_SECRETS_BYTES + 1)
-            if len(blob) > _MAX_SECRETS_BYTES:
-                flash("client_secrets.json too large (>256 KB).", "danger")
-                return redirect(url_for("settings.settings"))
+        # client_secrets is platform-shared (every tenant auths through the
+        # program owner's GCP project). Only program-owners can upload it;
+        # org users don't see the row, but a hand-crafted POST also fails here.
+        from core import user_store
+        from core.org_context import real_user_id
+        uid = real_user_id()
+        po = user_store.get_user_by_id(uid) if uid is not None else None
+        is_program_owner = bool(po and po.get("program_owner"))
+        client_secrets_file = request.files.get("youtube_client_secrets")
+        if client_secrets_file and client_secrets_file.filename:
+            if not is_program_owner:
+                abort(403)
+            blob = client_secrets_file.read()
             try:
-                parsed = json.loads(blob.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as e:
-                flash(f"client_secrets.json is not valid JSON: {e}", "danger")
+                parsed = json.loads(blob)
+            except json.JSONDecodeError:
+                flash("client_secrets.json is not valid JSON.", "danger")
                 return redirect(url_for("settings.settings"))
-            if not isinstance(parsed, dict) or not (
-                "installed" in parsed or "web" in parsed
-            ):
-                flash(
-                    "client_secrets.json missing 'installed' or 'web' key — "
-                    "is this an OAuth client secrets file?",
-                    "danger",
-                )
+            if "installed" not in parsed and "web" not in parsed:
+                flash("client_secrets.json missing 'installed' or 'web' key — "
+                      "is this an OAuth client secrets file?", "danger")
                 return redirect(url_for("settings.settings"))
+            # Keep the on-disk copy for the legacy single-tenant USB path
+            # (LEGACY_PASSWORD_ENABLED). Multi-tenant production reads from the
+            # platform store.
             dest = os.path.join(PROJECT_ROOT, "client_secrets.json")
             try:
                 with open(dest, "wb") as f:
@@ -191,31 +192,36 @@ def settings():
                 flash(f"Could not save client_secrets.json ({e}).", "danger")
                 return redirect(url_for("settings.settings"))
             from core import secrets_store
-            secrets_store.set_blob("youtube.client_secrets", blob)
+            secrets_store.set_platform_blob("youtube.client_secrets", blob)
 
         flash("Settings saved successfully!", "success")
         return redirect(url_for("settings.settings"))
 
     config = load_config()
+    from core import user_store, secrets_store as _ss
+    from core.org_context import real_user_id, effective_org_id
+    uid = real_user_id()
+    po = user_store.get_user_by_id(uid) if uid is not None else None
+    is_program_owner = bool(po and po.get("program_owner"))
 
     secrets_path = os.path.join(PROJECT_ROOT, "client_secrets.json")
     # Check the encrypted store too, not just disk: the upload persists the blob
     # to the store (which survives redeploys), but the on-disk copy lives on the
     # ephemeral container fs. Disk-only made it look "lost" after every redeploy
     # even though the secret was safe — match how sessions report presence.
-    from core import secrets_store as _ss_cs
     client_secrets_found = (
-        os.path.isfile(secrets_path) or _ss_cs.has_secret("youtube.client_secrets")
+        os.path.isfile(secrets_path) or _ss.has_platform_secret("youtube.client_secrets")
     )
     from core.playwright_session import has_session
+    org_id = effective_org_id()
     simplecast_session_found = has_session(
-        os.path.join(PROJECT_ROOT, "simplecast_session.json")
+        os.path.join(PROJECT_ROOT, "simplecast_session.json"), org_id=org_id,
     )
     vista_social_session_found = has_session(
-        os.path.join(PROJECT_ROOT, "vista_social_session.json")
+        os.path.join(PROJECT_ROOT, "vista_social_session.json"), org_id=org_id,
     )
     rock_session_found = has_session(
-        os.path.join(PROJECT_ROOT, "rock_session.json")
+        os.path.join(PROJECT_ROOT, "rock_session.json"), org_id=org_id,
     )
 
     # Intentionally do NOT pass raw .env values to the template — they
@@ -225,17 +231,22 @@ def settings():
     # and from `config` above.
     from core import secrets_store
     from core.auth import _HASH_SECRET
+    # Platform-scoped secrets (youtube.client_secrets) are only visible and
+    # manageable by program owners.  Per-org users see only their org's keys.
+    _platform_only = {"youtube.client_secrets"}
     known_secrets = [
-        {**spec, "is_set": secrets_store.has_secret(spec["name"])}
+        {**spec, "is_set": secrets_store.has_secret(spec["name"], org_id=org_id)}
         for spec in KNOWN_SECRETS
+        if spec["name"] not in _platform_only or is_program_owner
     ]
     known_names = {spec["name"] for spec in KNOWN_SECRETS}
     # Anything stored that isn't a known slot (e.g. a manually-added key) —
     # surface it too so nothing is hidden, with overwrite + clear.
-    extra_secrets = [n for n in secrets_store.list_secret_names()
+    extra_secrets = [n for n in secrets_store.list_secret_names(org_id=org_id)
                      if n != _HASH_SECRET and n not in known_names]
     return render_template(
         "settings.html",
+        is_program_owner=is_program_owner,
         config=config,
         client_secrets_found=client_secrets_found,
         simplecast_session_found=simplecast_session_found,
@@ -468,7 +479,8 @@ def clear_youtube_token():
     """Clear the stored YouTube OAuth token and redirect back to settings."""
     from uploaders.youtube_uploader import _clear_token, _YT_TOKEN_NAME
     from core import secrets_store
-    if secrets_store.has_secret(_YT_TOKEN_NAME):
+    from core.org_context import effective_org_id
+    if secrets_store.has_secret(_YT_TOKEN_NAME, org_id=effective_org_id()):
         _clear_token()
         invalidate_yt_auth_cache()
         flash("YouTube token cleared.", "success")
@@ -605,7 +617,8 @@ def set_secret_route():
         return redirect(url_for("settings.settings"))
     try:
         from core import secrets_store
-        secrets_store.set_secret(name, value)
+        from core.org_context import effective_org_id
+        secrets_store.set_secret(name, value, org_id=effective_org_id())
         flash(f"Secret '{name}' saved.", "success")
     except Exception as e:
         flash(f"Could not save secret: {e}", "danger")
@@ -620,7 +633,8 @@ def clear_secret_route():
         return redirect(url_for("settings.settings"))
     try:
         from core import secrets_store
-        secrets_store.delete_secret(name)
+        from core.org_context import effective_org_id
+        secrets_store.delete_secret(name, org_id=effective_org_id())
         flash(f"Secret '{name}' cleared.", "success")
     except Exception as e:
         flash(f"Could not clear secret: {e}", "danger")

@@ -10,12 +10,30 @@ _TARGET_ARCH = os.environ.get("DLD_AGENT_TARGET_ARCH") or None
 
 block_cipher = None
 
+# customtkinter ships JSON themes + PNG assets that PyInstaller needs to
+# carry along. The community hook (auto-loaded from pip-installed
+# pyinstaller-hooks-contrib) collects them; collect_data_files makes the
+# bundling explicit so a fresh dev env without that hook still ships a
+# functional GUI binary.
+from PyInstaller.utils.hooks import collect_data_files
+_ctk_data = collect_data_files('customtkinter')
+
 a = Analysis(
     ['agent/main.py'],
     pathex=['.'],
     binaries=[],
-    datas=[('agent/release_pubkey.pem', 'agent')],
-    hiddenimports=['core.file_scanner', 'keyring.backends.Windows', 'keyring.backends.macOS'],
+    datas=[('agent/release_pubkey.pem', 'agent')] + _ctk_data,
+    hiddenimports=[
+        'core.file_scanner',
+        'keyring.backends.Windows',
+        'keyring.backends.macOS',
+        # GUI deps — explicit so an analysis-time miss doesn't surface
+        # as a runtime ImportError in the bundled binary.
+        'customtkinter',
+        'tkinter',
+        'tkinter.font',
+        'tkinter.ttk',
+    ],
     hookspath=[],
     runtime_hooks=[],
     excludes=['playwright', 'flask', 'flask_sock', 'openpyxl'],  # server-side; agent doesn't need them

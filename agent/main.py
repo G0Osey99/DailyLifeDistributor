@@ -184,6 +184,14 @@ def configure_logging(*, log_dir: Optional[str] = None,
 # Module-level shutdown flag.  Signal handlers set this; the run loop checks it.
 _shutdown_event = threading.Event()
 
+# Module-level GUI state bridge. Set by main() when GUI mode is enabled.
+# When non-None, _ensure_paired routes the pairing prompt through the GUI
+# instead of stdin, and the run loop streams connection-status changes
+# into it. CLI mode (--no-gui) leaves it None and the agent behaves as
+# it always did.
+from agent.state import AgentState as _AgentState  # noqa: E402
+_state: "_AgentState | None" = None
+
 # Backoff constants
 _RECONNECT_DELAY = 3   # seconds between reconnect attempts
 _AUTH_ERR_CODES = {401, 403}
@@ -212,12 +220,21 @@ def _install_signal_handlers() -> None:
         signal.signal(signal.SIGTERM, _handle)
 
 
+def _prompt_pairing_code(server_url: str) -> str:
+    """Get a pairing code from the user — GUI modal or stdin."""
+    if _state is not None:
+        return _state.request_pairing_code()
+    print(f"This device is not paired with {server_url}.")
+    return input("Enter the pairing code shown on the website: ").strip()
+
+
 def _ensure_paired(server_url: str) -> str:
     token = config.get_token()
     if token:
         return token
-    print(f"This device is not paired with {server_url}.")
-    code = input("Enter the pairing code shown on the website: ").strip()
+    code = _prompt_pairing_code(server_url).strip()
+    if not code:
+        raise SystemExit("Pairing cancelled.")
     # Compute HWID + friendly hostname locally so the server can render
     # a meaningful device picker. compute_hwid_hash() never raises (it
     # falls back to a hostname-derived seed); get_friendly_hostname()
@@ -230,9 +247,12 @@ def _ensure_paired(server_url: str) -> str:
         raise SystemExit("Pairing failed — check the code and try again.")
     if isinstance(result, dict) and result.get("relinked"):
         prev = result.get("previous_name") or _device_name()
-        print(f"✓ Re-linked to {prev} (replaced a prior pairing on this hardware).")
+        msg = f"Re-linked to {prev} (replaced a prior pairing on this hardware)."
     else:
-        print("✓ Paired successfully.")
+        msg = "Paired successfully."
+    print(f"✓ {msg}")
+    if _state is not None:
+        _state.append_log(msg)
     return config.get_token()
 
 
@@ -352,6 +372,9 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
 
         def _run_plan():
             global _active_job_id
+            if _state is not None:
+                from agent import state as _st
+                _state.set_activity(_st.ACT_UPLOADING)
             try:
                 dispatch.handle_job_plan(plan=msg, transport=transport_wrapper)
             except Exception as e:
@@ -359,6 +382,9 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
             finally:
                 with _active_job_lock:
                     _active_job_id = None
+                if _state is not None:
+                    from agent import state as _st
+                    _state.set_activity(_st.ACT_IDLE)
 
         threading.Thread(
             target=_run_plan,
@@ -376,6 +402,17 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
     """
     if shutdown_event is None:
         shutdown_event = _shutdown_event
+
+    if _state is not None:
+        from agent import state as _st
+        _state.server_url = server_url
+        _state.set_identity(
+            device_name=_device_name(),
+            hostname=_hostname_mod.get_friendly_hostname(),
+            hwid_short=(_hwid_mod.compute_hwid_hash() or "")[:8],
+            version=__version__,
+        )
+        _state.set_connection(_st.CONN_STARTING)
 
     token = _ensure_paired(server_url)
 
@@ -396,10 +433,17 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
     consecutive_auth_failures = 0
 
     while not shutdown_event.is_set():
+        if _state is not None:
+            from agent import state as _st
+            _state.set_connection(_st.CONN_CONNECTING)
         conn = AgentConnection(server_url, token, shutdown_event=shutdown_event)
         try:
             conn.connect()
             print(f"✓ Connected ({_device_name()})")
+            if _state is not None:
+                from agent import state as _st
+                _state.set_connection(_st.CONN_ONLINE)
+                _state.append_log(f"Connected as {_device_name()}")
             consecutive_auth_failures = 0
             # Bind conn into the callback's default arg so the closure can't
             # accidentally pick up a later iteration's connection.
@@ -441,8 +485,17 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
                         "This device's pairing has been revoked or expired. "
                         "Re-pair from the website and restart the agent."
                     )
+                    if _state is not None:
+                        from agent import state as _st
+                        _state.set_connection(
+                            _st.CONN_AUTH_FAILED,
+                            message="Re-pair from the website",
+                        )
                     break
             log.debug("agent connection dropped; reconnecting", exc_info=True)
+            if _state is not None:
+                from agent import state as _st
+                _state.set_connection(_st.CONN_DISCONNECTED)
         finally:
             conn.close()
 
@@ -456,6 +509,12 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
                 "\nThis device's pairing was revoked on the server. "
                 "Enter a new pairing code to continue."
             )
+            if _state is not None:
+                from agent import state as _st
+                _state.set_connection(
+                    _st.CONN_AUTH_FAILED,
+                    message="Pairing revoked — enter a new code",
+                )
             _token_revoked_event.clear()
             shutdown_event.clear()
             try:
@@ -500,6 +559,13 @@ def main() -> None:
         action="version",
         version=f"dld-agent {__version__}",
     )
+    ap.add_argument(
+        "--no-gui",
+        action="store_true",
+        help="CLI-only mode (skip the desktop window). Default behavior "
+             "is to launch the GUI; use this for headless servers or "
+             "scripted automation.",
+    )
     args = ap.parse_args()
 
     log_path = configure_logging(log_dir=args.log_dir, verbose=args.verbose)
@@ -508,7 +574,54 @@ def main() -> None:
     _boot_write(f"main: configure_logging ok, log_dir={log_path}")
 
     _install_signal_handlers()
-    run(args.server)
+
+    if args.no_gui:
+        run(args.server)
+        return
+
+    # GUI mode: window on the main thread, network loop on a daemon
+    # thread that updates the shared AgentState.
+    try:
+        from agent.gui import AgentGUI, StateLogHandler
+    except Exception:
+        log.exception(
+            "GUI failed to import — falling back to CLI mode. "
+            "Pass --no-gui to suppress this message."
+        )
+        run(args.server)
+        return
+
+    global _state
+    _state = _AgentState(server_url=args.server, version=__version__)
+
+    # Mirror log records into the GUI's activity-log box.
+    handler = StateLogHandler(_state)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s",
+                                           datefmt="%H:%M:%S"))
+    logging.getLogger().addHandler(handler)
+
+    gui = AgentGUI(_state, shutdown_event=_shutdown_event)
+
+    def _network_thread():
+        try:
+            run(args.server)
+        except SystemExit as e:
+            # Pairing cancelled / explicit shutdown — surface to the GUI log.
+            if _state is not None:
+                _state.append_log(str(e) or "Stopped.")
+        except Exception:
+            log.exception("Network loop crashed")
+        finally:
+            _shutdown_event.set()
+
+    t = threading.Thread(target=_network_thread, daemon=True,
+                         name="agent-network")
+    t.start()
+
+    gui.run()
+    # Window closed → make sure the network thread sees the shutdown.
+    _shutdown_event.set()
+    _state.provide_pairing_code(None)
 
 
 if __name__ == "__main__":

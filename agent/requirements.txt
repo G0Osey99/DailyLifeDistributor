@@ -2,3 +2,7 @@ simple-websocket>=1.0,<2
 requests>=2.32.2,<3
 keyring>=24,<26
 py-machineid>=0.6,<1
+# v0.6.5: CustomTkinter for the desktop GUI. Pin <6 because 6.x is
+# expected to land breaking changes on widget APIs (per the project's
+# semver policy in its README).
+customtkinter>=5.2,<6

@@ -15,3 +15,45 @@ def test_audit_log_has_acting_as_org_id():
 
 def test_audit_log_archive_has_acting_as_org_id():
     assert "acting_as_org_id" in _columns("audit_log_archive")
+
+
+import pytest
+from flask import Flask
+
+from core import org_context
+
+
+@pytest.fixture()
+def app_ctx():
+    app = Flask(__name__)
+    app.secret_key = "test"
+    with app.test_request_context():
+        yield
+
+
+def test_effective_org_id_returns_none_outside_session(app_ctx):
+    assert org_context.effective_org_id() is None
+
+
+def test_effective_org_id_returns_current_when_not_acting(app_ctx):
+    from flask import session
+    session["current_org_id"] = 3
+    assert org_context.effective_org_id() == 3
+    assert org_context.is_impersonating() is False
+    assert org_context.acting_as_org_id() is None
+
+
+def test_effective_org_id_returns_acting_when_set(app_ctx):
+    from flask import session
+    session["current_org_id"] = 3
+    session["acting_as_org_id"] = 11
+    assert org_context.effective_org_id() == 11
+    assert org_context.is_impersonating() is True
+    assert org_context.acting_as_org_id() == 11
+
+
+def test_real_user_id_is_always_session_user_id(app_ctx):
+    from flask import session
+    session["user_id"] = 7
+    session["acting_as_org_id"] = 11
+    assert org_context.real_user_id() == 7

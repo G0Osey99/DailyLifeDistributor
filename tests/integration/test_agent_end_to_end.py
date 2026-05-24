@@ -23,6 +23,12 @@ def live(tmp_path, monkeypatch):
     import app as m; importlib.reload(m)
     from werkzeug.serving import make_server
     srv = make_server("127.0.0.1", 0, m.app, threaded=True)
+    # Request-handler threads default to daemon_threads=False on
+    # ThreadingMixIn. If a websocket stays connected at teardown,
+    # those non-daemon threads keep the Python interpreter alive
+    # forever — that's what hung CI run 26361639941 for >1h after
+    # this test failed. Daemon threads die with the process.
+    srv.daemon_threads = True
     port = srv.socket.getsockname()[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     time.sleep(0.2)
@@ -42,21 +48,43 @@ def test_agent_main_pong(live, monkeypatch):
 
     from agent import main as agent_main
     threading.Thread(target=agent_main.run, args=(server_url,), daemon=True).start()
-    time.sleep(0.8)  # give agent time to connect
+
+    # Poll the relay directly instead of sleeping a fixed 0.8s. On CI under
+    # load (run 26361639941) the agent hadn't finished its websocket
+    # handshake by the time the browser opened its socket, so no presence
+    # frame was ever in the queue and receive() timed out → None →
+    # json.loads(None) → TypeError. Wait up to 10s for the agent to land.
+    from core import relay as _relay
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        if _relay.online_agent_count() >= 1:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("agent never connected to relay within 10s")
 
     import requests
     s = requests.Session(); s.post(f"{server_url}/login", data={"password": "pw"})
     cookie = "; ".join(f"{k}={v}" for k, v in s.cookies.get_dict().items())
     browser = simple_websocket.Client(f"ws://127.0.0.1:{port}/agent/ws",
                                       headers={"Cookie": cookie})
-    # Read presence messages until we see online=True (tolerate ordering races).
-    for _ in range(5):
-        first = json.loads(browser.receive(timeout=5))
-        if first.get("type") == "presence" and first["payload"]["online"] is True:
-            break
-    else:
-        pytest.fail("agent never reported presence=online within 5 messages")
-    browser.send(json.dumps({"v": 1, "type": "ping", "payload": {"n": 42}}))
-    pong = json.loads(browser.receive(timeout=5))
-    assert pong["type"] == "pong" and pong["payload"]["n"] == 42
-    browser.close()
+    try:
+        # Read presence messages until we see online=True (tolerate
+        # ordering races). receive() returns None on timeout; guard against
+        # it so a slow CI doesn't produce a confusing TypeError.
+        for _ in range(5):
+            raw = browser.receive(timeout=5)
+            if raw is None:
+                pytest.fail("relay sent no presence frame within 5s")
+            first = json.loads(raw)
+            if first.get("type") == "presence" and first["payload"]["online"] is True:
+                break
+        else:
+            pytest.fail("agent never reported presence=online within 5 messages")
+        browser.send(json.dumps({"v": 1, "type": "ping", "payload": {"n": 42}}))
+        raw = browser.receive(timeout=5)
+        assert raw is not None, "no pong frame received within 5s"
+        pong = json.loads(raw)
+        assert pong["type"] == "pong" and pong["payload"]["n"] == 42
+    finally:
+        browser.close()

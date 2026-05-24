@@ -149,8 +149,10 @@ def _scrape_email_channel(page, guid: str, window_start: date,
 def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
     # Guard on the encrypted store, not the on-disk file — see rock_source.fetch
     # for the full reasoning. Post-migrate_secrets the plaintext file is
-    # shredded; has_session() also accepts an in-store blob.
-    if not has_session(str(_SESSION_FILE)):
+    # shredded; has_session() also accepts an in-store blob. org_id picks
+    # the active tenant's slot (refresh worker's thread-local override).
+    from core.org_context import effective_org_id
+    if not has_session(str(_SESSION_FILE), org_id=effective_org_id()):
         raise SessionExpiredError("rock_session.json missing")
 
     guids = _email_channel_guids()

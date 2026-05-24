@@ -272,7 +272,12 @@ def _wait_for_platform_lock(
             "blocked_by_user_id": holder.get("locked_by_user_id"),
         })
     except Exception:  # noqa: BLE001 — never fail dispatch because of an SSE drop
-        pass
+        # Not fatal; the dispatch keeps going. But log at debug so a
+        # consistently-broken SSE handler is at least visible during triage.
+        _log.debug(
+            "platform_lock_wait emit failed (row=%s platform=%s)",
+            row_id, platform, exc_info=True,
+        )
     deadline = time.monotonic() + max(0.0, timeout_s)
     while time.monotonic() < deadline:
         time.sleep(max(0.05, poll_interval_s))

@@ -340,6 +340,14 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
         try:
             page.wait_for_selector("[data-date]", timeout=20_000)
         except Exception:
+            # Empty calendar vs. broken selector / login wall are
+            # indistinguishable from the return value. Log so the
+            # latter is visible to ops.
+            logger.warning(
+                "vista: no [data-date] cells after 20s — likely a "
+                "broken selector or unauthenticated session",
+                exc_info=True,
+            )
             return []
 
         raw_events = _capture_events_in_window(page, window_start, window_end)

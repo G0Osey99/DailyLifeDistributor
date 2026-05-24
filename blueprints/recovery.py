@@ -14,7 +14,7 @@ from flask import (
     Blueprint, abort, current_app, redirect, render_template, request,
     session, url_for,
 )
-from itsdangerous import URLSafeTimedSerializer
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from blueprints.auth import login_required
 from core import audit as _audit
@@ -116,11 +116,19 @@ def reset_submit():
         ), 400
     try:
         data = _reset_serializer().loads(token, max_age=3600)  # 1 hour
-    except Exception:
+    except (BadSignature, SignatureExpired):
+        # Narrow except: anything other than tamper/expiry is a server
+        # bug and should surface, not get swallowed as "token invalid".
         return render_template(
             "recover_reset.html",
             token=token,
             error="Token expired or invalid.",
+        ), 400
+    if not isinstance(data, dict) or "rid" not in data or "uid" not in data:
+        return render_template(
+            "recover_reset.html",
+            token=token,
+            error="Token payload is malformed.",
         ), 400
     rid = data["rid"]
     uid = data["uid"]

@@ -6,6 +6,7 @@ code AND emails it to the user (so the test fixture can capture it).
 """
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -13,6 +14,8 @@ import bcrypt
 
 from core import db as _db
 from core import email as _email
+
+log = logging.getLogger(__name__)
 
 _TTL = timedelta(minutes=10)
 _BCRYPT_ROUNDS = 10
@@ -49,7 +52,12 @@ def generate_login_code(user_id: int) -> str:
             )
         except Exception:
             # Non-fatal: code is still in DB; user can request another.
-            pass
+            # Log so a broken Resend setup is visible — silent failure
+            # here is a real security UX hole.
+            log.warning(
+                "2FA email send to %s failed (user_id=%s); user can "
+                "request a fresh code", user["email"], user_id, exc_info=True,
+            )
     return code
 
 
@@ -68,5 +76,12 @@ def verify_login_code(user_id: int, code: str) -> bool:
                 _db.mark_email_2fa_code_used(row["id"])
                 return True
         except Exception:
+            # bcrypt.checkpw raises on malformed hash bytes — a corrupt
+            # row shouldn't poison the verify (other rows might match)
+            # but should be visible to ops so it can be cleaned up.
+            log.warning(
+                "bcrypt.checkpw failed on email_2fa_code id=%s; "
+                "row may be corrupt", row.get("id"), exc_info=True,
+            )
             continue
     return False

@@ -600,44 +600,71 @@ function initRemoteLogin(){
         btn.addEventListener('click', async ()=>{
             const service = btn.dataset.service;
             const body = new URLSearchParams({service});
-            const r = await fetch('/remote-login/start', {method:'POST', body});
-            const d = await r.json().catch(()=>({}));
-            if(r.status === 409){
-                // A login is already in progress — re-attach to its live stream.
-                await rlStatus();
+            btn.disabled = true;
+            try {
+                const r = await fetch('/remote-login/start', {method:'POST', body});
+                const d = await r.json().catch(()=>({}));
+                if(r.status === 409){
+                    // A login is already in progress — re-attach to its live stream.
+                    await rlStatus();
+                    rlSetScreen(true);
+                    rlStartPolling();
+                    return;
+                }
+                if(!r.ok || !d.ok){
+                    alert((d && d.error) ? d.error : 'Could not start remote login.');
+                    return;
+                }
+                rlRender(d.status);
                 rlSetScreen(true);
                 rlStartPolling();
-                return;
+            } catch (err) {
+                // Network failure / fetch threw — without this catch the
+                // button stayed disabled forever after one hiccup.
+                console.error('rl-connect fetch failed:', err);
+                alert('Network error contacting the server. Try again.');
+            } finally {
+                btn.disabled = false;
             }
-            if(!r.ok || !d.ok){
-                alert((d && d.error) ? d.error : 'Could not start remote login.');
-                return;
-            }
-            rlRender(d.status);
-            rlSetScreen(true);
-            rlStartPolling();
         });
     });
     const save = document.getElementById('rl-save');
     if(save) save.addEventListener('click', async ()=>{
         save.disabled = true;
-        const r = await fetch('/remote-login/save', {method:'POST'});
-        const d = await r.json().catch(()=>({}));
-        if(!r.ok || !d.ok){
+        try {
+            const r = await fetch('/remote-login/save', {method:'POST'});
+            const d = await r.json().catch(()=>({}));
+            if(!r.ok || !d.ok){
+                alert((d && d.error) ? d.error : 'Save failed.');
+                return;
+            }
+            rlRender(d.status);              // stops streaming + hides the panel
+            if(typeof showToast === 'function'){ showToast('Session saved.', 'success'); }
+            // Reload so the platform row reflects the newly-cached session.
+            setTimeout(()=>location.reload(), 1000);
+        } catch (err) {
+            console.error('rl-save fetch failed:', err);
+            alert('Network error saving the session. Try again.');
+        } finally {
+            // Re-enable on any error path. The success path also re-enables
+            // before the 1s reload kicks in, which is harmless.
             save.disabled = false;
-            alert((d && d.error) ? d.error : 'Save failed.');
-            return;
         }
-        rlRender(d.status);              // stops streaming + hides the panel
-        if(typeof showToast === 'function'){ showToast('Session saved.', 'success'); }
-        // Reload so the platform row reflects the newly-cached session.
-        setTimeout(()=>location.reload(), 1000);
     });
     const cancel = document.getElementById('rl-cancel');
     if(cancel) cancel.addEventListener('click', async ()=>{
-        const r = await fetch('/remote-login/cancel', {method:'POST'});
-        const d = await r.json().catch(()=>({}));
-        rlRender(d.status || {active:false, phase:'idle'});
+        cancel.disabled = true;
+        try {
+            const r = await fetch('/remote-login/cancel', {method:'POST'});
+            const d = await r.json().catch(()=>({}));
+            rlRender(d.status || {active:false, phase:'idle'});
+        } catch (err) {
+            console.error('rl-cancel fetch failed:', err);
+            // Cancel-on-error: force the UI back to idle anyway.
+            rlRender({active:false, phase:'idle'});
+        } finally {
+            cancel.disabled = false;
+        }
     });
     // Resume display if a login is already in progress (e.g. page reload).
     rlStatus();

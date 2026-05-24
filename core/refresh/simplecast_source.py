@@ -160,6 +160,17 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
         try:
             page.wait_for_selector("a[href*='/episodes/']", timeout=15_000)
         except Exception:
+            # Returning [] silently hides two very different cases: an
+            # empty calendar (legit) vs. a broken selector / login wall
+            # (regression). Log at warning so the latter is visible —
+            # if the show genuinely has zero episodes the page would
+            # still render *something* and we'd usually see other
+            # anchors first.
+            _log.warning(
+                "simplecast: no '/episodes/' anchors after 15s — "
+                "likely a broken selector or unauthenticated session",
+                exc_info=True,
+            )
             return []
 
         # Try clicking "Load more" up to 5 times

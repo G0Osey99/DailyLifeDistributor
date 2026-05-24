@@ -405,7 +405,12 @@ def register_sockets(sock) -> None:
                         "payload": {"reason": "rate_limit_exceeded"},
                     }))
                 except Exception:
-                    pass
+                    # WS already half-closed — peer never sees the
+                    # error frame. Non-fatal but worth a trace for triage.
+                    _log.debug(
+                        "agent_socket: rate-limit notice send failed for ip=%s",
+                        ip, exc_info=True,
+                    )
                 return
 
         token = request.args.get("token", "")

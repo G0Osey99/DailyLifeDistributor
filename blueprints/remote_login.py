@@ -63,6 +63,10 @@ def start():
     except remote_login.RemoteLoginError as e:
         return jsonify({"ok": False, "error": str(e)}), 409
     except Exception as e:  # noqa: BLE001
+        # Surface the message to the UI but also log the stack so ops
+        # can triage the next time something breaks in this path —
+        # the JSON response gives users only str(e), not a traceback.
+        _log.exception("remote-login/start: manager.start(%s) failed", service)
         return jsonify({"ok": False, "error": f"could not start: {e}"}), 500
     # Bring up a fresh single-use VNC password for this session. If it fails,
     # don't leave a half-started login around.
@@ -70,6 +74,7 @@ def start():
         vnc.start_session()
     except Exception as e:  # noqa: BLE001
         manager.cancel()
+        _log.exception("remote-login/start: vnc.start_session failed")
         return jsonify({"ok": False, "error": f"could not start VNC: {e}"}), 500
     return jsonify({"ok": True, "status": _status_dict()})
 
@@ -81,6 +86,7 @@ def save():
     except remote_login.RemoteLoginError as e:
         return jsonify({"ok": False, "error": str(e)}), 409
     except Exception as e:  # noqa: BLE001
+        _log.exception("remote-login/save: manager.save failed")
         return jsonify({"ok": False, "error": str(e)}), 500
     return jsonify({"ok": True, "status": _status_dict()})
 

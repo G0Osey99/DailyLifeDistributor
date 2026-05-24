@@ -612,5 +612,8 @@ def suggest_titles():
     try:
         suggestions = generate_title_suggestions(transcript, num_suggestions=count)
     except Exception as exc:  # noqa: BLE001
+        # Surface the message in the JSON response AND log the stack
+        # so ops can triage; without this we only ever see str(exc).
+        _log.exception("title generation failed (count=%s)", count)
         return jsonify({"error": f"Title generation failed: {exc}"}), 500
     return jsonify({"suggestions": suggestions or []})

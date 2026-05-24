@@ -329,8 +329,10 @@
     async function loadColumns() {
         const sheet = sheetSel.value;
         if (!sheet) return;
+        const statusEl = $("#mapping-status");
         try {
             const r = await fetch(`/media/spreadsheet/columns?sheet=${encodeURIComponent(sheet)}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const data = await r.json();
             const cols = data.columns || [];
             $all(".mapping-column").forEach((sel) => {
@@ -343,7 +345,14 @@
                 if (cols.includes(cur)) sel.value = cur;
             });
             renderSheetPreview(cols, data.preview || []);
-        } catch (err) { /* ignore */ }
+            if (statusEl) statusEl.textContent = "";
+        } catch (err) {
+            // Silent failure left the dropdowns empty with no
+            // explanation. Surface to the user + log for triage.
+            console.error("loadColumns failed:", err);
+            if (statusEl) statusEl.textContent =
+                "Couldn't load sheet columns. Try a different sheet or refresh.";
+        }
     }
 
     function renderSheetPreview(cols, rows) {
@@ -371,8 +380,12 @@
     }
 
     async function loadExistingMapping() {
+        // A missing mapping is a normal first-run case — only log when
+        // the fetch itself fails (network / 5xx). The empty state below
+        // (no mapping applied) is the safe default either way.
         try {
             const r = await fetch("/media/mapping");
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const data = await r.json();
             const m = data.mapping || {};
             if (m.sheet_name && sheetSel.querySelector(`option[value="${CSS.escape(m.sheet_name)}"]`)) {
@@ -383,7 +396,9 @@
                 const v = m[sel.dataset.key];
                 if (v) sel.value = v;
             });
-        } catch (err) { /* ignore */ }
+        } catch (err) {
+            console.warn("loadExistingMapping failed (will start from blank):", err);
+        }
     }
 
     function buildMapping() {
@@ -396,16 +411,29 @@
 
     $("#save-mapping-btn")?.addEventListener("click", async () => {
         const mapping = buildMapping();
+        const saved = $("#mapping-saved");
         try {
-            await fetch("/media/mapping", {
+            const r = await fetch("/media/mapping", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(mapping),
             });
-            const saved = $("#mapping-saved");
-            saved.textContent = "✓ saved";
-            setTimeout(() => { saved.textContent = ""; }, 2000);
-        } catch (err) { /* ignore */ }
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            if (saved) {
+                saved.style.color = "";
+                saved.textContent = "✓ saved";
+                setTimeout(() => { saved.textContent = ""; }, 2000);
+            }
+        } catch (err) {
+            // Silent failure here meant the mapping dropped on the
+            // floor and the user thought it had been saved. Show
+            // a red inline status + log.
+            console.error("save mapping failed:", err);
+            if (saved) {
+                saved.style.color = "var(--err, #c4332c)";
+                saved.textContent = "✗ save failed — try again";
+            }
+        }
     });
 
     // ── Scan: filenames → matched dates ──────────────────────────────────

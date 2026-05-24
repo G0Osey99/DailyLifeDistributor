@@ -9,6 +9,7 @@ keys from the module-level PendingResults singleton in agent/dispatch.py.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from typing import Callable, Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -98,14 +99,29 @@ class AgentConnection:
             if raw is None:
                 # Poll timeout: loop and re-check shutdown event.
                 continue
-            msg = json.loads(raw)
+            try:
+                msg = json.loads(raw)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                # Malformed frame from the server — DON'T crash the
+                # receive loop (the old behavior bubbled out of run_once
+                # and looked like a disconnect). Skip the bad frame and
+                # keep listening.
+                _log = logging.getLogger(__name__)
+                _log.warning(
+                    "agent transport: dropping malformed WS frame "
+                    "(%d bytes)", len(raw) if isinstance(raw, (str, bytes)) else -1,
+                )
+                continue
             if isinstance(msg, dict) and msg.get("type") == "pending_results_ack":
                 # C3: clear the acked keys from the module-level singleton.
                 try:
                     from agent.dispatch import _pending_results
                     _pending_results.clear_acked(msg.get("acked") or [])
                 except Exception:
-                    pass  # non-fatal; worst case we re-send on next reconnect
+                    # Non-fatal: worst case we re-send on next reconnect.
+                    logging.getLogger(__name__).debug(
+                        "pending_results clear_acked failed", exc_info=True,
+                    )
             on_message(msg)
             return True
         # Shutdown event was set — signal the caller to exit the message loop.

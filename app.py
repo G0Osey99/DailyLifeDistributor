@@ -252,11 +252,17 @@ def create_app() -> Flask:
 
     @app.before_request
     def _enforce_2fa():
-        uid = None
+        # NOTE on error handling: every except-pass here previously dropped
+        # DB / session errors without a trace. Replaced with log.exception:
+        # the enforcer still falls through (user proceeds to the page they
+        # requested — they ARE authenticated; we'd just skipped pushing
+        # them to /settings/2fa). Ops now sees a stack instead of silence.
+        _log = logging.getLogger(__name__)
+        from flask import session as _sess
         try:
-            from flask import session as _sess
             uid = _sess.get("user_id")
         except Exception:
+            _log.exception("2FA enforcer: session read failed")
             return
         if not uid:
             return
@@ -266,12 +272,14 @@ def create_app() -> Flask:
         try:
             org = _db.get_org(org_id)
         except Exception:
+            _log.exception("2FA enforcer: get_org(%s) failed", org_id)
             return
         if not org or not org.get("require_2fa"):
             return
         try:
             user = _db.get_user_by_id(uid)
         except Exception:
+            _log.exception("2FA enforcer: get_user_by_id(%s) failed", uid)
             return
         if not user:
             return

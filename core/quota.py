@@ -52,6 +52,13 @@ def _load_daily_quota() -> int:
         value = (cfg.get("youtube") or {}).get("daily_quota", 10000)
         return int(value)
     except Exception:
+        # Bad YAML / missing section / non-numeric value — silently
+        # using 10000 hides config drift. Log once at import time.
+        import logging
+        logging.getLogger(__name__).warning(
+            "core.quota: could not read youtube.daily_quota from config; "
+            "falling back to 10000", exc_info=True,
+        )
         return 10000
 
 

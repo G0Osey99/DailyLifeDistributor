@@ -5,6 +5,7 @@ ONCE at generation time; the database never sees them after that.
 """
 from __future__ import annotations
 
+import logging
 import secrets
 import string
 from datetime import datetime, timezone
@@ -12,6 +13,8 @@ from datetime import datetime, timezone
 import bcrypt
 
 from core import db as _db
+
+log = logging.getLogger(__name__)
 
 _ALPHABET = string.ascii_uppercase + string.digits
 _CODE_LEN = 8
@@ -53,6 +56,12 @@ def verify_recovery_code(user_id: int, code: str) -> bool:
                 _db.mark_recovery_code_used(row["id"])
                 return True
         except Exception:
+            # Malformed hash row — keep iterating (other rows may match)
+            # but log so ops can find + clean the corrupt entry.
+            log.warning(
+                "bcrypt.checkpw failed on recovery_code id=%s; "
+                "row may be corrupt", row.get("id"), exc_info=True,
+            )
             continue
     return False
 

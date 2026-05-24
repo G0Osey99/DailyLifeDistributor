@@ -10,6 +10,7 @@ return silently (no enumeration).
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app, url_for
@@ -17,6 +18,8 @@ from flask import current_app, url_for
 from core import audit as _audit
 from core import db as _db
 from core import email as _email
+
+log = logging.getLogger(__name__)
 
 _REQ_TTL = timedelta(hours=48)
 _RATE_WINDOW = timedelta(hours=24)
@@ -68,8 +71,13 @@ def submit_request(username: str, note: str) -> int | None:
                 approve_url=approve_url,
             )
         except Exception:
-            # Non-fatal: log via the email module, keep iterating.
-            pass
+            # Non-fatal: keep iterating so other Owners still get
+            # notified. But log — silent failure of a security email
+            # means a real recovery request could go unanswered.
+            log.warning(
+                "recovery_request email to owner=%s for requester=%s failed",
+                o.get("email"), user.get("email"), exc_info=True,
+            )
     _audit.write_event(
         action="user.recovery_requested",
         actor_user_id=user["id"],

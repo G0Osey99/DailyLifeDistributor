@@ -99,7 +99,13 @@ def organizations_create():
             ua=request.headers.get("User-Agent", ""),
         )
     except Exception:
-        pass
+        # Audit-log write failed (DB hiccup, schema drift). Don't block
+        # the org creation — it's already committed — but make the drop
+        # visible to ops so we don't lose compliance trail silently.
+        import logging
+        logging.getLogger(__name__).exception(
+            "audit.write_event(org.created) failed for slug=%r", slug,
+        )
     return redirect(url_for("admin.organizations_list"))
 
 
@@ -243,7 +249,11 @@ def users_force_reset():
     """Placeholder: PR-β wires the actual Resend send. For now it just
     flips password_changed_at to NULL so the next login is blocked until
     the user calls /reset-password (also PR-β)."""
-    user_id = int(request.form.get("user_id") or 0)
+    try:
+        user_id = int(request.form.get("user_id") or 0)
+    except (TypeError, ValueError):
+        # Non-numeric form value — treat as missing.
+        user_id = 0
     if not user_id:
         return redirect(url_for("admin.users_list"))
     from core import db as _db

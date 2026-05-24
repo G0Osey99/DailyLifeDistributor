@@ -1,6 +1,7 @@
 """Login/logout routes and the login_required decorator."""
 from __future__ import annotations
 
+import logging
 import os
 import urllib.parse
 from functools import wraps
@@ -8,10 +9,11 @@ from functools import wraps
 from flask import (
     Blueprint, current_app, redirect, render_template, request, session, url_for,
 )
-from itsdangerous import URLSafeTimedSerializer
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from core import auth
 
+log = logging.getLogger(__name__)
 bp = Blueprint("auth", __name__)
 
 _SESSION_KEY = "authenticated"
@@ -181,8 +183,18 @@ def _consume_partial_token(tok: str) -> int | None:
     s = URLSafeTimedSerializer(current_app.secret_key, salt="2fa-pending")
     try:
         data = s.loads(tok, max_age=300)
-        return int(data["uid"])
-    except Exception:
+    except (BadSignature, SignatureExpired):
+        # Tampered / expired / missing — caller treats as "go back to login".
+        return None
+    # Anything past the decode (KeyError on missing uid, ValueError on
+    # non-int) is a bug, not a user error — let it surface so we see it.
+    uid = data.get("uid") if isinstance(data, dict) else None
+    if uid is None:
+        return None
+    try:
+        return int(uid)
+    except (TypeError, ValueError):
+        log.warning("partial token decoded but uid is not an int: %r", uid)
         return None
 
 
@@ -191,16 +203,22 @@ def _audit_event_safe(**kw) -> None:
     try:
         from core import audit as _audit
         _audit.write_event(**kw)
-    except Exception:  # pragma: no cover
-        pass
+    except Exception:
+        # Audit writes mustn't block the request. Log so ops sees the
+        # drop instead of compliance trail silently vanishing.
+        log.warning("audit.write_event(%s) failed",
+                    kw.get("action", "?"), exc_info=True)
 
 
 def _notify_new_device_safe(user_id: int, ip: str, ua: str) -> None:
     try:
         from core import login_notifications as _ln
         _ln.notify_if_new_device(user_id, ip, ua)
-    except Exception:  # pragma: no cover
-        pass
+    except Exception:
+        log.warning(
+            "new-device notification for user=%s ip=%s failed",
+            user_id, ip, exc_info=True,
+        )
 
 
 def _finalize_login(user_id: int, second_factor: str) -> None:
@@ -214,7 +232,12 @@ def _finalize_login(user_id: int, second_factor: str) -> None:
     try:
         user_store.update_last_login_at(user_id)
     except Exception:
-        pass
+        # last_login_at feeds the new-device-sighting heuristic; a silent
+        # drop here means a real signal-of-compromise (login from a new
+        # IP) could be missed because we never updated the row.
+        log.warning(
+            "update_last_login_at(user=%s) failed", user_id, exc_info=True,
+        )
     _audit_event_safe(
         action="user.login",
         actor_user_id=user_id,

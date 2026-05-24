@@ -1,6 +1,7 @@
 """Holds in-memory upload session state (selected dates, edits, results)."""
 
 import json
+import logging
 import os
 import re
 import threading
@@ -9,6 +10,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 from zoneinfo import ZoneInfo
 

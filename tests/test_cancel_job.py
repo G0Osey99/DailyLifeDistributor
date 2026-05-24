@@ -7,7 +7,6 @@ Covers:
   - core.agent_dispatch.cancel_job picks up device_id from either
     register_job(device_id=...) OR the start()-recorded dispatch map
 """
-import json
 import queue
 
 import pytest

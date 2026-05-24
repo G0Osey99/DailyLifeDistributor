@@ -1,6 +1,5 @@
 # agent/tests/test_main.py
 """Minimal tests for agent/main.py _on_message dispatch — B9 + Phase 3."""
-import pytest
 from unittest.mock import MagicMock
 
 

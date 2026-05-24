@@ -1,7 +1,6 @@
 """Tests for the agent's whoami_ping / whoami_pong handler."""
 from __future__ import annotations
 
-import pytest
 
 from agent import config, main as agent_main
 

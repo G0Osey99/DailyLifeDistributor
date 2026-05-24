@@ -1,4 +1,3 @@
-import pytest
 from flask import Flask, jsonify
 from core import db, permissions, user_store
 

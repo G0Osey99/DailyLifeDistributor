@@ -1,6 +1,5 @@
 # agent/tests/test_dispatch.py
 """Tests for agent/dispatch.py — B7."""
-import pytest
 from agent import dispatch
 
 
@@ -158,7 +157,6 @@ def test_handle_job_plan_calls_shim_shutdown_even_on_crash(monkeypatch):
 
 def test_resolve_paths_uses_latest_results_when_cached(monkeypatch):
     """_resolve_paths returns paths from the scan cache without re-scanning."""
-    from agent import scan
     # Prime the module-level cache directly.
     import agent.scan as _s
     with _s._last_lock:

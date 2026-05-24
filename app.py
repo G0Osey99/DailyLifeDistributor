@@ -368,7 +368,6 @@ def create_app() -> Flask:
         # Multi-tenant phase α: header switch-org dropdown only renders when
         # the user has more than one membership.
         from core import auth as _auth, org_store as _os, user_store as _us
-        from flask import session as _sess
         uid = _auth.current_user_id()
         # `is_authenticated` covers both the new user_id session and the
         # legacy shared-password session, so the Sign-out button shows for

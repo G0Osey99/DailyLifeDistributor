@@ -20,7 +20,7 @@ import json
 import os
 
 from flask import (
-    Blueprint, abort, redirect, render_template, request,
+    Blueprint, redirect, render_template, request,
     session as flask_session, url_for,
 )
 

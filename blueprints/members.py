@@ -10,7 +10,7 @@ Role rules:
 from __future__ import annotations
 
 from flask import (
-    Blueprint, abort, current_app, flash, redirect, render_template,
+    Blueprint, abort, flash, redirect, render_template,
     request, session, url_for,
 )
 

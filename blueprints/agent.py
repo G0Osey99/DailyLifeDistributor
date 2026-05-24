@@ -14,7 +14,7 @@ import secrets
 import threading
 import time
 from collections import deque
-from typing import Callable, Deque, Dict, Optional, Tuple
+from typing import Deque, Dict, Tuple
 
 from flask import Blueprint, abort, jsonify, request, send_file, session
 

@@ -1,4 +1,3 @@
-import os
 from agent import scan
 
 

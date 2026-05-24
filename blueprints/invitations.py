@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Optional
 
 from flask import (
     Blueprint, abort, current_app, flash, redirect, render_template,

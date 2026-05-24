@@ -1,7 +1,6 @@
 """Tests for agent.hostname — friendly-hostname normalization."""
 from __future__ import annotations
 
-import pytest
 
 from agent import hostname
 

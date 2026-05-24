@@ -1,5 +1,4 @@
 """Tests for apply_pending_results — idempotent server-side ingest + ack."""
-import pytest
 
 
 def test_pending_results_idempotent_application():

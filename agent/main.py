@@ -79,11 +79,9 @@ except Exception:
 import argparse
 import logging
 import logging.handlers
-import os
 import signal
 import socket
 import threading
-import time
 from typing import Optional
 
 try:
@@ -189,6 +187,7 @@ _shutdown_event = threading.Event()
 # instead of stdin, and the run loop streams connection-status changes
 # into it. CLI mode (--no-gui) leaves it None and the agent behaves as
 # it always did.
+from agent import state as _st  # noqa: E402
 from agent.state import AgentState as _AgentState  # noqa: E402
 _state: "_AgentState | None" = None
 
@@ -373,7 +372,6 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
         def _run_plan():
             global _active_job_id
             if _state is not None:
-                from agent import state as _st
                 _state.set_activity(_st.ACT_UPLOADING)
             try:
                 dispatch.handle_job_plan(plan=msg, transport=transport_wrapper)
@@ -383,7 +381,6 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
                 with _active_job_lock:
                     _active_job_id = None
                 if _state is not None:
-                    from agent import state as _st
                     _state.set_activity(_st.ACT_IDLE)
 
         threading.Thread(
@@ -404,7 +401,6 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
         shutdown_event = _shutdown_event
 
     if _state is not None:
-        from agent import state as _st
         _state.server_url = server_url
         _state.set_identity(
             device_name=_device_name(),
@@ -434,14 +430,12 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
 
     while not shutdown_event.is_set():
         if _state is not None:
-            from agent import state as _st
             _state.set_connection(_st.CONN_CONNECTING)
         conn = AgentConnection(server_url, token, shutdown_event=shutdown_event)
         try:
             conn.connect()
             print(f"✓ Connected ({_device_name()})")
             if _state is not None:
-                from agent import state as _st
                 _state.set_connection(_st.CONN_ONLINE)
                 _state.append_log(f"Connected as {_device_name()}")
             consecutive_auth_failures = 0
@@ -486,7 +480,6 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
                         "Re-pair from the website and restart the agent."
                     )
                     if _state is not None:
-                        from agent import state as _st
                         _state.set_connection(
                             _st.CONN_AUTH_FAILED,
                             message="Re-pair from the website",
@@ -494,7 +487,6 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
                     break
             log.debug("agent connection dropped; reconnecting", exc_info=True)
             if _state is not None:
-                from agent import state as _st
                 _state.set_connection(_st.CONN_DISCONNECTED)
         finally:
             conn.close()
@@ -510,7 +502,6 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
                 "Enter a new pairing code to continue."
             )
             if _state is not None:
-                from agent import state as _st
                 _state.set_connection(
                     _st.CONN_AUTH_FAILED,
                     message="Pairing revoked — enter a new code",

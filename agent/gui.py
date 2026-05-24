@@ -10,12 +10,10 @@ tokens (templates/base.html) so the agent visually matches autoalert.pro.
 from __future__ import annotations
 
 import logging
-import sys
 import threading
 import tkinter as tk
 import tkinter.font
 import webbrowser
-from typing import Optional
 
 import customtkinter as ctk
 

@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import builtins
-import importlib
 import re
 import sys
 
-import pytest
 
 from agent import hwid
 

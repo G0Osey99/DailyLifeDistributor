@@ -21,9 +21,7 @@ Terminology:
 
 from __future__ import annotations
 
-import importlib
 
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers to normalise events from the two paths into a common vocabulary

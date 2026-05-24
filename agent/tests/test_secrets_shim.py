@@ -1,6 +1,5 @@
 # agent/tests/test_secrets_shim.py
-import json, os, sys, tempfile
-import pytest
+import json, os, sys
 from agent import secrets_shim
 
 

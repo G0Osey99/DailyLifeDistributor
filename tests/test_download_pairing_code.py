@@ -8,7 +8,6 @@ from __future__ import annotations
 import re
 import secrets
 
-import pytest
 
 
 def _make_user(app):

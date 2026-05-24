@@ -9,7 +9,6 @@ from __future__ import annotations
 import shutil
 from collections import namedtuple
 
-import pytest
 
 from core import media_session as ms
 

@@ -7,7 +7,6 @@ docs/superpowers/specs/2026-05-22-hybrid-upload-agent-phase3-design.md.
 """
 from __future__ import annotations
 import logging
-from typing import Any
 from core import db as _db
 from core import secrets_store as _ss
 from core import image_gatherer as _img

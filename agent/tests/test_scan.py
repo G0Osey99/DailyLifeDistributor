@@ -18,8 +18,6 @@ Audit summary (2026-05-22):
   Conclusion: _KIND_MAP in scan.py covers all required kinds.
   These tests lock in that coverage so regressions surface loudly.
 """
-import os
-import pytest
 from agent import scan as _scan
 
 

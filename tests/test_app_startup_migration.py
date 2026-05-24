@@ -1,4 +1,3 @@
-import pytest
 
 
 def test_create_app_runs_migration_when_env_present(monkeypatch):

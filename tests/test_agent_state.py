@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import threading
 
-import pytest
 
 from agent import state as _st
 

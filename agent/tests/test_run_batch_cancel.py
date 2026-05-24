@@ -5,7 +5,6 @@ event with ``error_type: cancelled`` and skip the underlying uploader.
 """
 import threading
 
-import pytest
 
 from agent import run_batch
 

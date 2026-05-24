@@ -15,7 +15,6 @@ from core.playwright_session import (
     PlaywrightSession,
     SessionConfig,
     has_session,
-    url_marker_login_check,
 )
 
 log = logging.getLogger(__name__)

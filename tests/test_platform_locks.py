@@ -5,7 +5,6 @@ the row's expires_at.
 """
 from __future__ import annotations
 
-import time
 
 from core import platform_locks
 

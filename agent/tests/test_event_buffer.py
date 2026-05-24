@@ -1,5 +1,4 @@
 """Tests for EventBuffer — bounded in-memory buffer + replay on reconnect."""
-import time
 from agent.dispatch import EventBuffer
 
 

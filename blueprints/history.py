@@ -16,11 +16,13 @@ bp = Blueprint("history", __name__)
 
 @bp.route("/history")
 def history():
-    """Show past upload sessions and their records."""
-    sessions = _db.list_sessions(limit=50)
+    """Show past upload sessions and their records, scoped to the active org."""
+    from core.org_context import effective_org_id
+    org_id = effective_org_id()
+    sessions = _db.list_sessions(limit=50, org_id=org_id)
 
     for s in sessions:
-        records = _db.get_history(session_id=s["id"], limit=1000)
+        records = _db.get_history(session_id=s["id"], limit=1000, org_id=org_id)
         s["total_uploads"] = len(records)
         s["total_success"] = sum(1 for r in records if r.get("success"))
         s["records"] = records

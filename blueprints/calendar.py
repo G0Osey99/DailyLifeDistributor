@@ -124,7 +124,12 @@ def calendar_view():
     # Date-windowed query rather than LIMIT-based; without this, months whose
     # rows have been pushed past the limit by newer uploads silently render
     # empty even though the count badges appear correct elsewhere.
-    history_records = _db.get_history_for_window(iso_start, iso_end)
+    # Scoped to the active org (impersonation-aware): when acting as a tenant,
+    # the calendar shows that tenant's runs only.
+    from core.org_context import effective_org_id
+    history_records = _db.get_history_for_window(
+        iso_start, iso_end, org_id=effective_org_id(),
+    )
 
     history_for_merge: list[dict] = []
     for r in history_records:

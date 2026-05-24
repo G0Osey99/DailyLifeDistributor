@@ -40,15 +40,24 @@ def _scoped(name: str, org_id: int | None) -> str:
 
     ``org_id`` is None  → legacy unscoped (single-tenant) name.
     ``org_id`` is int   → ``org:<id>:<name>``. Prefix is reserved.
+
+    Raises ValueError if *name* already starts with a reserved prefix
+    (``platform:`` or ``org:``) — defense-in-depth so callers can't
+    accidentally cross tenant/platform scope.
     """
+    if name.startswith("platform:") or name.startswith("org:"):
+        raise ValueError(
+            f"secret name {name!r} uses a reserved prefix; "
+            "use set_platform_secret or pass org_id, not both."
+        )
     if org_id is None:
         return name
     return f"org:{int(org_id)}:{name}"
 
 
-def _set(name: str, kind: str, raw: bytes, *, org_id: int | None = None) -> None:
+def _write(storage_name: str, kind: str, raw: bytes, *, org_id: int | None = None) -> None:
+    """Write an encrypted value directly by its literal storage name."""
     token = crypto.encrypt(raw)
-    storage_name = _scoped(name, org_id)
     with _get_conn() as conn:
         conn.execute(
             "INSERT INTO secrets (name, kind, value, updated_at, org_id) "
@@ -61,8 +70,8 @@ def _set(name: str, kind: str, raw: bytes, *, org_id: int | None = None) -> None
         conn.commit()
 
 
-def _get_raw(name: str, *, org_id: int | None = None) -> bytes | None:
-    storage_name = _scoped(name, org_id)
+def _read(storage_name: str) -> bytes | None:
+    """Read and decrypt by literal storage name; None if missing/corrupt."""
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT value FROM secrets WHERE name=?", (storage_name,),
@@ -77,6 +86,14 @@ def _get_raw(name: str, *, org_id: int | None = None) -> bytes | None:
             storage_name,
         )
         return None
+
+
+def _set(name: str, kind: str, raw: bytes, *, org_id: int | None = None) -> None:
+    _write(_scoped(name, org_id), kind, raw, org_id=org_id)
+
+
+def _get_raw(name: str, *, org_id: int | None = None) -> bytes | None:
+    return _read(_scoped(name, org_id))
 
 
 def set_secret(name: str, plaintext: str, *, org_id: int | None = None) -> None:
@@ -117,11 +134,25 @@ def delete_secret(name: str, *, org_id: int | None = None) -> None:
         conn.commit()
 
 
+# ---------------------------------------------------------------------------
+# Platform-scoped namespace
+#
+# Secrets that are shared across every tenant (the GCP OAuth client used by
+# all orgs for YouTube authentication is the canonical example) live under
+# the ``platform:<name>`` storage prefix. They are NOT visible from the
+# per-org accessors above — reads MUST come through these wrappers, which
+# guarantees no caller accidentally lands a tenant secret in platform scope
+# (or vice versa).
+# ---------------------------------------------------------------------------
+
+_PLATFORM_PREFIX = "platform:"
+
+
 def list_secret_names(*, org_id: int | None = None) -> list[str]:
     """List secret names visible in scope *org_id*.
 
     ``org_id`` is None  → only legacy (unscoped) names, prefix-stripped of
-                          any accidental ``org:N:`` collisions.
+                          any accidental ``org:N:`` or ``platform:`` rows.
     ``org_id`` is int   → only secrets stored under that scope, returned
                           with the scope prefix stripped.
     """
@@ -130,12 +161,52 @@ def list_secret_names(*, org_id: int | None = None) -> list[str]:
             "SELECT name FROM secrets ORDER BY name"
         ).fetchall()
     if org_id is None:
-        return [r["name"] for r in rows if not r["name"].startswith("org:")]
+        return [
+            r["name"] for r in rows
+            if not r["name"].startswith("org:")
+            and not r["name"].startswith(_PLATFORM_PREFIX)
+        ]
     prefix = f"org:{int(org_id)}:"
     return [
         r["name"][len(prefix):] for r in rows
         if r["name"].startswith(prefix)
     ]
+
+
+def _platform_scoped(name: str) -> str:
+    return f"{_PLATFORM_PREFIX}{name}"
+
+
+def set_platform_secret(name: str, plaintext: str) -> None:
+    _write(_platform_scoped(name), "kv", plaintext.encode("utf-8"), org_id=None)
+
+
+def get_platform_secret(name: str) -> str | None:
+    raw = _read(_platform_scoped(name))
+    return None if raw is None else raw.decode("utf-8")
+
+
+def set_platform_blob(name: str, data: bytes) -> None:
+    _write(_platform_scoped(name), "blob", data, org_id=None)
+
+
+def get_platform_blob(name: str) -> bytes | None:
+    return _read(_platform_scoped(name))
+
+
+def has_platform_secret(name: str) -> bool:
+    with _get_conn() as conn:
+        return conn.execute(
+            "SELECT 1 FROM secrets WHERE name=?", (_platform_scoped(name),),
+        ).fetchone() is not None
+
+
+def delete_platform_secret(name: str) -> None:
+    with _get_conn() as conn:
+        conn.execute(
+            "DELETE FROM secrets WHERE name=?", (_platform_scoped(name),),
+        )
+        conn.commit()
 
 
 @contextmanager

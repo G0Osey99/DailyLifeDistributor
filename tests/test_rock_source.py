@@ -64,15 +64,40 @@ def test_scrape_channel_emits_items_for_in_window_rows(monkeypatch):
     page.wait_for_timeout = MagicMock()
     page.goto = MagicMock()
 
+    # Pass today as 2026-06-01 so 2026-05-22 (the row's date) is in the
+    # past and the status reads "published". The pre-fix code hardcoded
+    # "active" regardless of date, which then fell through the calendar
+    # UI's default-to-"published" branch — including for future-dated
+    # rows that should have shown as "scheduled".
     out = r._scrape_channel(page, "guid-1",
-                            date(2026, 1, 1), date(2026, 12, 31))
+                            date(2026, 1, 1), date(2026, 12, 31),
+                            today=date(2026, 6, 1))
     assert len(out) == 1
     item = out[0]
     assert item.platform == "rock"
     assert item.external_id == "12345"
     assert item.iso_date == "2026-05-22"
     assert item.title == "My Title"
-    assert item.status == "active"
+    assert item.status == "published"
+
+
+def test_scrape_channel_future_dated_row_is_scheduled():
+    """Future rows must surface as 'scheduled' so the calendar paints them
+    in the right tone (info chip, not green check)."""
+    page = MagicMock()
+    page.url = "https://rock.lcbcchurch.com/page/343?ContentChannelGuid=x"
+    page.evaluate = MagicMock(return_value=[{
+        "id": "67890",
+        "cells": ["Future Sermon", "", "12/25/2027"],
+    }])
+    page.wait_for_selector = MagicMock()
+    page.wait_for_timeout = MagicMock()
+    page.goto = MagicMock()
+    out = r._scrape_channel(page, "guid-1",
+                            date(2026, 1, 1), date(2028, 12, 31),
+                            today=date(2026, 6, 1))
+    assert len(out) == 1
+    assert out[0].status == "scheduled"
 
 
 def test_scrape_channel_raises_on_login_redirect(monkeypatch):

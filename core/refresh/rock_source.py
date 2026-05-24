@@ -115,13 +115,23 @@ def _build_session_cfg(target_url: str) -> SessionConfig:
 
 
 def _scrape_channel(page, guid: str, window_start: date,
-                    window_end: date) -> list[ExternalItem]:
+                    window_end: date,
+                    today: date | None = None) -> list[ExternalItem]:
     """Load one channel's listing and emit ExternalItems.
 
     Split out of ``fetch`` so ``rock_email_source`` can reuse the navigation
     + login-detection + page-size-expansion plumbing without depending on
     PlaywrightSession lifecycle details.
+
+    *today* defaults to the system date. Per-row status is "published" when
+    the row's date is on/before today, "scheduled" when in the future —
+    matching `rock_email_source._rows_to_items`. Without this gate every
+    row collapsed to a hardcoded "active" string, which fell through the
+    calendar's status-rank table to the default-"published" branch and
+    surfaced future dates as already-sent.
     """
+    if today is None:
+        today = datetime.now().date()
     url = _channel_list_url(guid)
     page.goto(url, wait_until="domcontentloaded", timeout=60_000)
     if _looks_like_login(page.url):
@@ -167,7 +177,7 @@ def _scrape_channel(page, guid: str, window_start: date,
             scheduled_time="",
             title=title,
             url=f"{_BASE_URL}/ContentChannelItem/{r['id']}",
-            status="active",
+            status="published" if d <= today else "scheduled",
             raw_json=json.dumps({"channel_guid": guid}),
         ))
     return out

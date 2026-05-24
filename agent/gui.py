@@ -401,12 +401,12 @@ class AgentGUI:
         # Primary CTA — text + color may flip to "Re-pair device" in
         # auth-failed state, so we keep a handle to it.
         self.primary_btn = ctk.CTkButton(
-            footer, text="Open Dashboard",
+            footer, text="Open dashboard  →",
             command=self._primary_action,
             fg_color=PAL["accent"], hover_color=PAL["accent_hover"],
             text_color="#ffffff", corner_radius=7,
             font=(self._font, 11, "bold"),
-            height=28, width=130,
+            height=30, width=150,
         )
         self.primary_btn.place(relx=1.0, x=-18, rely=0.5, anchor="e")
 
@@ -923,7 +923,7 @@ class AgentGUI:
             )
         else:
             self.primary_btn.configure(
-                text="Open Dashboard",
+                text="Open dashboard  →",
                 fg_color=PAL["accent"], hover_color=PAL["accent_hover"],
             )
             tone = PAL["accent"] if snap["activity"] == ACT_UPLOADING else PAL["text_dim"]

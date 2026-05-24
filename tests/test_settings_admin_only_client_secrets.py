@@ -76,3 +76,23 @@ def test_program_owner_upload_lands_in_platform_scope(app):
     assert secrets_store.has_platform_secret("youtube.client_secrets") is True
     assert secrets_store.has_secret("youtube.client_secrets") is False
     assert secrets_store.has_secret("youtube.client_secrets", org_id=org["id"]) is False
+
+
+def test_oversized_client_secrets_upload_rejected(app):
+    """A multi-MB payload must be rejected before it lands in the store."""
+    import io
+    org = org_store.create_org(name="LCBC", slug="lcbc")
+    po = user_store.create_user(
+        username="po", email="po@x", password="pw1234567", program_owner=True,
+    )
+    org_store.add_membership(user_id=po["id"], org_id=org["id"], role="owner")
+    client = app.test_client()
+    _login_as(client, po["id"], org["id"])
+    big = b'{"web":{"client_id":"x","extra":"' + b"A" * (300 * 1024) + b'"}}'
+    res = client.post("/settings", data={
+        "youtube_client_secrets": (io.BytesIO(big), "client_secrets.json"),
+    }, content_type="multipart/form-data", follow_redirects=False)
+    # Either redirect with flash (302) OR a non-success 4xx; the key
+    # invariant is that the platform secret is NOT populated.
+    assert res.status_code in (302, 400, 413)
+    assert secrets_store.has_platform_secret("youtube.client_secrets") is False

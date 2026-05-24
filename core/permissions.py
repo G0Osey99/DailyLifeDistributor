@@ -53,7 +53,7 @@ def _lookup_role(user_id: int, org_id: int) -> Optional[str]:
     return row["role"] if row else None
 
 
-def _is_program_owner(user_id: int) -> bool:
+def is_program_owner(user_id: int) -> bool:
     with db._get_conn() as conn:
         row = conn.execute(
             "SELECT program_owner FROM users WHERE id = ?", (user_id,),
@@ -96,7 +96,7 @@ def require_role(*roles: str):
                 if wants_json:
                     return ("", 401)
                 return redirect(url_for("auth.login", next=request.path))
-            if _is_program_owner(user_id):
+            if is_program_owner(user_id):
                 return fn(*args, **kwargs)
             org_id = session.get("current_org_id")
             if not org_id:

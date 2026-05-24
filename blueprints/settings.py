@@ -19,6 +19,7 @@ from flask import (
 
 import core.config as core_config
 from core.hosted import is_hosted
+from core.permissions import is_program_owner as _is_program_owner
 
 _log = logging.getLogger(__name__)
 
@@ -162,19 +163,19 @@ def settings():
         # client_secrets is platform-shared (every tenant auths through the
         # program owner's GCP project). Only program-owners can upload it;
         # org users don't see the row, but a hand-crafted POST also fails here.
-        from core import user_store
         from core.org_context import real_user_id
         uid = real_user_id()
-        po = user_store.get_user_by_id(uid) if uid is not None else None
-        is_program_owner = bool(po and po.get("program_owner"))
         client_secrets_file = request.files.get("youtube_client_secrets")
         if client_secrets_file and client_secrets_file.filename:
-            if not is_program_owner:
+            if uid is None or not _is_program_owner(uid):
                 abort(403)
-            blob = client_secrets_file.read()
+            blob = client_secrets_file.read(256 * 1024 + 1)
+            if len(blob) > 256 * 1024:
+                flash("client_secrets.json too large (>256 KB).", "danger")
+                return redirect(url_for("settings.settings"))
             try:
                 parsed = json.loads(blob)
-            except json.JSONDecodeError:
+            except (UnicodeDecodeError, json.JSONDecodeError):
                 flash("client_secrets.json is not valid JSON.", "danger")
                 return redirect(url_for("settings.settings"))
             if "installed" not in parsed and "web" not in parsed:
@@ -198,11 +199,10 @@ def settings():
         return redirect(url_for("settings.settings"))
 
     config = load_config()
-    from core import user_store, secrets_store as _ss
+    from core import secrets_store as _ss
     from core.org_context import real_user_id, effective_org_id
     uid = real_user_id()
-    po = user_store.get_user_by_id(uid) if uid is not None else None
-    is_program_owner = bool(po and po.get("program_owner"))
+    is_program_owner = uid is not None and _is_program_owner(uid)
 
     secrets_path = os.path.join(PROJECT_ROOT, "client_secrets.json")
     # Check the encrypted store too, not just disk: the upload persists the blob

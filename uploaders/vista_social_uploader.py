@@ -456,14 +456,20 @@ def upload_post(entry, elements=None, progress_callback=None) -> dict:
     ) if vs_caption else ""
     caption = caption_source.strip()
     if vs_caption:
-        try:
-            from core.config import load_config
-            footer = (load_config().get("description_footers", {}).get("vista_social", "") or "").strip()
-        except Exception as e:
-            # M6: log so a missing/broken config is diagnosable rather than
-            # silently producing footer-less captions.
-            logger.warning("Vista Social: failed to load footer from config: %s", e)
-            footer = ""
+        # Prefer the per-org footer baked into the entry at build time;
+        # fall back to load_config() for entries built by older paths.
+        entry_footer = getattr(entry, "vista_social_description_footer", None)
+        if entry_footer is not None:
+            footer = (entry_footer or "").strip()
+        else:
+            try:
+                from core.config import load_config
+                footer = (load_config().get("description_footers", {}).get("vista_social", "") or "").strip()
+            except Exception as e:
+                # M6: log so a missing/broken config is diagnosable rather than
+                # silently producing footer-less captions.
+                logger.warning("Vista Social: failed to load footer from config: %s", e)
+                footer = ""
         if footer:
             caption = f"{caption}\n\n{footer}" if caption else footer
 

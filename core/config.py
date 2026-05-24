@@ -50,6 +50,36 @@ def invalidate_config_cache() -> None:
         _CACHE_MTIME = None
 
 
+def effective_config(org_id: int | None = None) -> dict:
+    """Return the config dict with *org_id*'s overrides merged on top.
+
+    Overlay rules: each section from ``core.org_settings`` (currently
+    ``scheduling`` and ``description_footers``) replaces matching keys on
+    the global ``config.yaml`` subtree. Other keys at the same path are
+    preserved. ``org_id=None`` returns ``load_config()`` verbatim — used
+    by the legacy single-tenant USB install + any code path with no
+    request context.
+
+    The overlay is shallow per section: ``{"scheduling": {"youtube_video":
+    "08:00"}}`` overrides only that one time while preserving the rest
+    of the global scheduling subtree (timezone, other platforms).
+    """
+    cfg = load_config()
+    if org_id is None:
+        return cfg
+    try:
+        from core import org_settings as _os
+    except Exception:  # pragma: no cover — defensive, the import always succeeds
+        return cfg
+    for section in ("scheduling", "description_footers"):
+        overlay = _os.get_section(int(org_id), section)
+        if not overlay:
+            continue
+        cfg.setdefault(section, {})
+        cfg[section].update(overlay)
+    return cfg
+
+
 def default_platforms(config: dict) -> dict:
     platforms_cfg = config.get("platforms", {})
     return {

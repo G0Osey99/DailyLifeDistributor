@@ -422,6 +422,20 @@ def init_db() -> None:
                 PRIMARY KEY (org_id, quota_date)
             )
         """)
+        # Per-org configuration overlay. Each (org_id, section) holds a JSON
+        # blob that overrides the corresponding subtree in config.yaml when
+        # read via core.config.effective_config(org_id). Today's known
+        # sections: "scheduling", "description_footers". Adding more sections
+        # is a write-shape choice in core.org_settings, not a schema change.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS org_settings (
+                org_id INTEGER NOT NULL,
+                section TEXT NOT NULL,
+                value_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (org_id, section)
+            )
+        """)
         conn.commit()
 
 

@@ -134,6 +134,17 @@ class ReviewEntry:
     # Kept separate so an Instagram-tuned Excel column can override the
     # YouTube description when present.
     vista_caption: str = ""
+    # Per-org description footers baked in at build time from the effective
+    # config (org_settings overlay on config.yaml). Uploaders prefer these
+    # over the load_config() lookup so the right footer flows to the agent
+    # path too — the agent's local config.yaml wouldn't have them. An empty
+    # string is a legitimate "no footer for this platform" value; None means
+    # the entry was built by old code that didn't populate the field, and
+    # the uploader should fall back to load_config() for backwards compat.
+    youtube_video_description_footer: Optional[str] = None
+    youtube_shorts_description_footer: Optional[str] = None
+    podcast_description_footer: Optional[str] = None
+    vista_social_description_footer: Optional[str] = None
     llm_title_suggestions: list = field(default_factory=list)
     platforms_enabled: dict = field(default_factory=dict)
     elements: UploadElements = field(default_factory=UploadElements)
@@ -204,9 +215,27 @@ class SessionState:
         for the lifetime of the process."""
         self._config = _load_config()
 
+    def _effective_cfg(self) -> dict:
+        """Per-call config with the active org's overrides applied.
+
+        When invoked inside a request context, looks up effective_org_id()
+        and merges org_settings on top of config.yaml. Outside a request
+        context (legacy callers, tests without app context), falls back to
+        the singleton's cached _config from load_config().
+        """
+        try:
+            from core.config import effective_config
+            from core.org_context import effective_org_id
+            oid = effective_org_id()
+            if oid is not None:
+                return effective_config(oid)
+        except Exception:  # noqa: BLE001 — never let a misconfigured overlay break build_entry
+            pass
+        return self._config
+
     def _default_schedule(self, iso_date: str, time_str: str) -> datetime:
         """Build a timezone-aware datetime from a date and time string."""
-        tz_name = self._config.get("scheduling", {}).get("timezone", "America/New_York")
+        tz_name = self._effective_cfg().get("scheduling", {}).get("timezone", "America/New_York")
         tz = ZoneInfo(tz_name)
         # M23: a malformed `global_times` value (e.g. "ten" or "10:00:00")
         # used to 500 the index POST. Fall back to 09:00 with a warning so
@@ -241,7 +270,7 @@ class SessionState:
         }
 
     def _scheduled_times(self) -> tuple[str, str, str, str]:
-        sched = self._config.get("scheduling", {})
+        sched = self._effective_cfg().get("scheduling", {})
         return (
             self.global_times.get("youtube_video") or sched.get("youtube_video", "10:00"),
             self.global_times.get("youtube_shorts") or sched.get("youtube_shorts", "12:00"),
@@ -265,6 +294,11 @@ class SessionState:
         meta = meta or {}
         yt_video_time, yt_shorts_time, sc_time, vs_time = self._scheduled_times()
         platforms_enabled = self._resolve_global_platforms(global_platforms)
+        # Bake the active org's description footers into the entry so they
+        # flow with the row through the upload path — including across the
+        # wire to the agent. Uploaders fall back to load_config() when the
+        # field is None (rows built by old code paths).
+        _footers = self._effective_cfg().get("description_footers", {}) or {}
 
         display_date = datetime.strptime(iso_date, "%Y-%m-%d").strftime("%B %d, %Y")
 
@@ -299,6 +333,10 @@ class SessionState:
             podcast_schedule_dt=self._default_schedule(iso_date, sc_time),
             vista_schedule_dt=self._default_schedule(iso_date, vs_time),
             vista_caption=meta.get("vista_caption", "") or meta.get("description", ""),
+            youtube_video_description_footer=_footers.get("youtube_video", ""),
+            youtube_shorts_description_footer=_footers.get("youtube_shorts", ""),
+            podcast_description_footer=_footers.get("podcast", ""),
+            vista_social_description_footer=_footers.get("vista_social", ""),
             llm_title_suggestions=[],
             platforms_enabled=platforms_enabled,
             elements=self._default_elements(),

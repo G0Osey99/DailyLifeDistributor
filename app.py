@@ -202,19 +202,6 @@ def create_app() -> Flask:
             "Secret auto-import failed; continuing (run python -m scripts.migrate_secrets manually)."
         )
 
-    # Restore browser sessions from the encrypted store. A container rebuild
-    # wipes the materialized *_session.json files under /app, so without this
-    # the box reads as logged-out after every redeploy even though the blobs
-    # persist on the dld-data volume.
-    try:
-        from core.playwright_session import materialize_known_sessions
-        _restored = materialize_known_sessions()
-        if _restored:
-            logging.getLogger(__name__).info(
-                "Restored %d browser session(s) from the encrypted store.", _restored
-            )
-    except Exception:
-        logging.getLogger(__name__).exception("Session restore at startup failed")
 
     from blueprints.auth import bp as auth_bp, is_authenticated
     app.register_blueprint(auth_bp)

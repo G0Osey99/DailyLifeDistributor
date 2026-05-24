@@ -834,14 +834,15 @@ def mark_email_2fa_code_used(code_id: int) -> None:
 
 
 def insert_audit_event(*, org_id, actor_user_id, action, target_type, target_id,
-                       metadata, ip, user_agent, created_at) -> int:
+                       metadata, ip, user_agent, created_at,
+                       acting_as_org_id=None) -> int:
     with _get_conn() as c:
         cur = c.execute(
             "INSERT INTO audit_log (org_id, actor_user_id, action, target_type, "
-            "target_id, metadata, ip, user_agent, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "target_id, metadata, ip, user_agent, created_at, acting_as_org_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (org_id, actor_user_id, action, target_type, target_id,
-             metadata, ip, user_agent, created_at),
+             metadata, ip, user_agent, created_at, acting_as_org_id),
         )
         c.commit()
         return cur.lastrowid

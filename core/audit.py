@@ -23,10 +23,26 @@ def write_event(
     metadata: dict[str, Any] | None = None,
     ip: str | None = None,
     ua: str | None = None,
+    acting_as_org_id: int | None = None,
 ) -> int:
-    """Persist an audit event and return its row id."""
+    """Persist an audit event and return its row id.
+
+    When ``acting_as_org_id`` is not supplied, falls back to the
+    flask session's ``acting_as_org_id`` value if a request context
+    is active. Callers in non-request code paths can pass it
+    explicitly (or leave it None for non-impersonated actions).
+    """
     now = datetime.now(timezone.utc).isoformat()
     meta_json = json.dumps(metadata, default=str) if metadata is not None else None
+    if acting_as_org_id is None:
+        try:
+            from flask import has_request_context, session
+            if has_request_context():
+                v = session.get("acting_as_org_id")
+                if v is not None:
+                    acting_as_org_id = int(v)
+        except Exception:
+            pass
     return _db.insert_audit_event(
         org_id=org_id,
         actor_user_id=actor_user_id,
@@ -37,4 +53,5 @@ def write_event(
         ip=ip,
         user_agent=ua,
         created_at=now,
+        acting_as_org_id=acting_as_org_id,
     )

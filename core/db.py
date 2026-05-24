@@ -293,6 +293,19 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_audit_actor_time "
             "ON audit_log(actor_user_id, created_at)"
         )
+        # Phase per-org-creds: every audit row carries the impersonated org
+        # (NULL when the actor was acting as themselves) so an investigator
+        # can answer "what did the program owner do while acting as org N?"
+        # in one query.
+        for _t in ("audit_log", "audit_log_archive"):
+            cols = {r[1] for r in conn.execute(
+                f"PRAGMA table_info('{_t}')"
+            ).fetchall()}
+            if "acting_as_org_id" not in cols:
+                conn.execute(
+                    f"ALTER TABLE {_t} "
+                    f"ADD COLUMN acting_as_org_id INTEGER"
+                )
         # Phase γ: 2FA + audit log additions.
         # users.totp_enabled — boolean flag separate from totp_secret_encrypted
         # so we can disable without dropping the secret (and vice versa).

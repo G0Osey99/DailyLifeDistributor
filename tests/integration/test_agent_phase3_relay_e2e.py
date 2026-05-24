@@ -77,6 +77,10 @@ def running_server(tmp_path, monkeypatch):
 
     from werkzeug.serving import make_server
     srv = make_server("127.0.0.1", 0, app_mod.app, threaded=True)
+    # ThreadingMixIn.daemon_threads defaults to False, so any websocket
+    # connection still open at teardown keeps Python from exiting and
+    # hangs the whole CI suite. Make request-handler threads daemons.
+    srv.daemon_threads = True
     port = srv.socket.getsockname()[1]
     server_url = f"http://127.0.0.1:{port}"
     t = threading.Thread(target=srv.serve_forever, daemon=True)

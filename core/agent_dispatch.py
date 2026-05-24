@@ -306,39 +306,72 @@ def _relay_online_agents() -> list[dict]:
         return []
 
 
+def _eligible_device_ids() -> set[str] | None:
+    """Devices the current request is allowed to dispatch to.
+
+    * Impersonating (``acting_as_org_id`` set): ONLY the program owner's own
+      paired devices. The impersonated org's own agents are NOT used for
+      these jobs — the explicit support pattern is "owner runs the support
+      job on their own machine using the target org's credentials shipped
+      in the envelope."
+    * Not impersonating: the device pool of the current org — every
+      non-revoked device owned by a user with a membership in
+      ``effective_org_id``. Prevents org A's job from running on org B's
+      agent.
+    * Legacy / single-tenant (``LEGACY_PASSWORD_ENABLED`` session with no
+      ``user_id`` and no ``current_org_id``): returns ``None`` to signal
+      "no filtering" — the USB single-tenant install has exactly one user
+      and no tenant model, so the existing system-wide pick is correct.
+    """
+    from core.org_context import (
+        effective_org_id, is_impersonating, real_user_id,
+    )
+    if is_impersonating():
+        uid = real_user_id()
+        if uid is None:
+            return set()  # impossible-in-practice: impersonation requires a user_id
+        return {d["id"] for d in _devices.list_devices_for_user(uid)}
+    org_id = effective_org_id()
+    if org_id is None:
+        return None  # legacy single-tenant — no filter
+    return _devices.list_device_ids_in_org(org_id)
+
+
 def _pick_device(device_id: str | None = None,
                  browser_ip: str | None = None) -> dict:
     """Pick the target device using the explicit-first fallback chain.
 
-    Order:
-      1. If *device_id* is given AND that device is currently online on
-         the relay → return its row.
-      2. If the user has exactly one online device → return it.
-      3. If exactly one online device's connect_ip == *browser_ip*
+    Order (after restricting candidates to the eligible set — see
+    :func:`_eligible_device_ids`):
+
+      1. If *device_id* is given AND that device is currently online AND
+         eligible → return its row.
+      2. If the eligible online set has exactly one device → return it.
+      3. If exactly one eligible online device's connect_ip == *browser_ip*
          (same-network) → return it.
-      4. Fall back to most_recently_seen_online() (last known good).
+      4. Fall back to most_recently_seen_online() (last known good),
+         restricted to the eligible set.
 
     Raises NoAgentOnlineError if no device qualifies (relay empty AND
-    no recently-seen row).
+    no recently-seen eligible row).
 
     *browser_ip* may be None — that simply disables same-network matching
     so the chain skips straight to step 4.
     """
+    eligible = _eligible_device_ids()  # None means "no filter" (legacy)
     online = _relay_online_agents()
+    if eligible is not None:
+        online = [a for a in online if a["device_id"] in eligible]
     online_ids = {a["device_id"] for a in online}
 
-    # (1) Explicit device_id wins if it's currently online.
+    # (1) Explicit device_id wins if it's currently online AND eligible.
     if device_id and device_id in online_ids:
-        row = _devices.find_by_hwid("")  # placeholder, replaced below
-        # Look up the persisted row by id; fall back to a minimal stub if the
-        # device was paired in a previous DB but list_devices doesn't surface
-        # it (shouldn't happen — verify_device_token created the row).
         all_rows = {d["id"]: d for d in _devices.list_devices()}
         row = all_rows.get(device_id) or {"id": device_id, "name": "device"}
         _logger.info("_pick_device: explicit device_id=%s", device_id)
         return row
 
-    # (2) Single online → trivially pick it.
+    # (2) Single online (in the eligible set) → trivially pick it.
     if len(online) == 1:
         only_id = online[0]["device_id"]
         all_rows = {d["id"]: d for d in _devices.list_devices()}
@@ -347,8 +380,8 @@ def _pick_device(device_id: str | None = None,
         return row
 
     # (3) Same-network — only fires when the browser_ip is known and
-    # exactly one online device matches it. Multiple matches → ambiguous,
-    # fall through to (4) so we don't silently pick the wrong one.
+    # exactly one eligible online device matches it. Multiple matches →
+    # ambiguous, fall through to (4) so we don't silently pick the wrong one.
     if browser_ip and browser_ip != "unknown":
         matches = [a for a in online if a.get("connect_ip") == browser_ip]
         if len(matches) == 1:
@@ -361,8 +394,10 @@ def _pick_device(device_id: str | None = None,
             )
             return row
 
-    # (4) Most-recently-seen — the original behavior.
+    # (4) Most-recently-seen — restricted to the eligible set.
     dev = _devices.most_recently_seen_online()
+    if dev is not None and eligible is not None and dev.get("id") not in eligible:
+        dev = None  # most-recent-seen exists but doesn't belong to this scope
     if dev is None:
         raise NoAgentOnlineError("no paired agent is online")
     _logger.info("_pick_device: fallback most-recently-seen device_id=%s",

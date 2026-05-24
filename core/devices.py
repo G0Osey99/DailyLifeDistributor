@@ -171,6 +171,29 @@ def list_devices() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def list_device_ids_in_org(org_id: int) -> set[str]:
+    """Return ids of every non-revoked device owned by a user in *org_id*.
+
+    The "org's device pool" is the union of devices owned by every member of
+    the org — devices themselves are owned by users (see ``agent_devices.user_id``)
+    and users belong to one or more orgs via ``org_memberships``. Used by the
+    dispatch (``core.agent_dispatch._pick_device``) and the sidebar status feed
+    (``blueprints.settings.sessions_status``) so a job dispatched from org A's
+    session never picks an agent paired to a user in org B.
+    """
+    if org_id is None:
+        return set()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT d.id AS id "
+            "FROM agent_devices d "
+            "JOIN org_memberships m ON d.user_id = m.user_id "
+            "WHERE m.org_id = ? AND COALESCE(d.revoked, 0) = 0",
+            (int(org_id),),
+        ).fetchall()
+    return {r["id"] for r in rows}
+
+
 def list_devices_for_user(user_id: int) -> list[dict]:
     """Devices owned by *user_id*. NULL-owner rows (legacy / pre-α) excluded."""
     if user_id is None:

@@ -299,8 +299,19 @@ def _release_run(run_id: str) -> None:
 
 
 def _run_batch_worker(job_id, run_id, dates, summary, file_paths,
-                      entries_snapshot, session_id, app):
-    """Background worker: run one batch, stream events, delete its temp files."""
+                      entries_snapshot, session_id, app, *, org_id=None):
+    """Background worker: run one batch, stream events, delete its temp files.
+
+    *org_id* is the effective org resolved at request time. The worker
+    runs in a thread without a Flask request context, so
+    ``effective_org_id()`` cannot recover it from ``flask.session``;
+    threading-local override (``core.org_context.override``) propagates
+    it to every credential read inside this worker (the uploader
+    thread pool inherits it because ``override`` is thread-local on
+    each spawned thread — see the explicit override inside the inner
+    executor in core.upload_jobs.run_batch).
+    """
+    from core import org_context as _oc
     job = upload_jobs.get_job(job_id)
     q = job["queue"] if job else None
     # Cooperative cancel: register_job created an Event keyed by job_id.
@@ -317,7 +328,7 @@ def _run_batch_worker(job_id, run_id, dates, summary, file_paths,
 
     consumed: set = set()
     try:
-        with app.app_context():
+        with app.app_context(), _oc.override(org_id):
             consumed = upload_jobs.run_batch(
                 dates=dates, summary=summary, file_paths=file_paths,
                 session_id=session_id, emit=emit, entries_snapshot=entries_snapshot,
@@ -463,11 +474,17 @@ def batch_run():
         return jsonify({"job_id": job_id})
 
     app_obj = current_app._get_current_object()  # type: ignore[attr-defined]
+    # Capture the effective org at request time; the worker thread can't
+    # read flask.session and needs this to honor impersonation when its
+    # uploaders' credential reads call effective_org_id().
+    from core.org_context import effective_org_id as _eoi
+    captured_org_id = _eoi()
     try:
         threading.Thread(
             target=_run_batch_worker,
             args=(job_id, run_id, dates, summary, file_paths, entries_snapshot,
                   session.session_id, app_obj),
+            kwargs={"org_id": captured_org_id},
             name=f"media-batch-{run_id[:8]}",
             daemon=True,
         ).start()

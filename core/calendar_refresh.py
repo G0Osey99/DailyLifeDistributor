@@ -42,12 +42,26 @@ class ExternalItem:
 _LOCK = threading.Lock()
 
 
-def _fetch_one(source, start: date, end: date, timeout_sec: int) -> dict:
-    """Run one source under a thread-pool timeout, return a result dict."""
+def _fetch_one(source, start: date, end: date, timeout_sec: int,
+               *, org_id: int | None = None) -> dict:
+    """Run one source under a thread-pool timeout, return a result dict.
+
+    *org_id* sets the per-thread org override on the inner worker so the
+    source's credential reads (which call ``effective_org_id()``) see the
+    org of the request that triggered the refresh. Without this, the
+    inner worker thread has no Flask context and the read falls through
+    to the empty legacy unscoped slot.
+    """
+    from core import org_context as _oc
     name = source.NAME
+
+    def _run_with_org():
+        with _oc.override(org_id):
+            return source.fetch(start, end)
+
     try:
         with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(source.fetch, start, end)
+            fut = ex.submit(_run_with_org)
             items = fut.result(timeout=timeout_sec)
     except FuturesTimeoutError:
         # IMPORTANT: ThreadPoolExecutor cannot kill a Python thread, so the
@@ -112,7 +126,10 @@ def run_refresh(
         per_source_results: dict[str, dict] = {}
         with ThreadPoolExecutor(max_workers=max(len(sources), 1)) as pool:
             futures = {
-                pool.submit(_fetch_one, s, start, end, source_timeout_sec): s
+                pool.submit(
+                    _fetch_one, s, start, end, source_timeout_sec,
+                    org_id=org_id,
+                ): s
                 for s in sources
             }
             for fut in as_completed(futures):

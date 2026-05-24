@@ -1,4 +1,7 @@
-FROM python:3.12-slim
+# Pinned minor + distro for reproducible rebuilds and to keep
+# supply-chain decisions explicit. Bump deliberately — `python:3.12-slim`
+# floats to whatever Debian + 3.12 micro version is current.
+FROM python:3.12.7-slim-bookworm
 
 # Chromium (not Google Chrome) so the image builds on both arm64 and amd64 —
 # Google ships no arm64 Linux Chrome. Playwright is pointed at this binary via

@@ -63,10 +63,10 @@ def login_required(view):
     return wrapped
 
 
-def _legacy_enabled() -> bool:
-    return (os.environ.get("LEGACY_PASSWORD_ENABLED", "") or "").lower() in (
-        "1", "true", "yes",
-    )
+# Single source of truth for the legacy-mode flag lives in core.auth.
+# Keep the underscored name here as a re-export so the existing template
+# context + call sites in this module don't need to change.
+_legacy_enabled = auth.legacy_enabled
 
 
 @bp.route("/login", methods=["GET"])

@@ -8,9 +8,10 @@ google-api-python-client>=2.120.0,<3
 # 2.32.0 fixed CVE-2024-35195 (a Session kept verify=False across requests
 # after the first unverified call); 2.32.2 drops the 2.32.0/2.32.1 regressions.
 requests>=2.32.2,<3
-# 43.0.1 ships OpenSSL 3.3.2, fixing CVE-2024-6119 (denial of service in X.509
-# name checks). Keep the upper bound so a major bump is a deliberate change.
-cryptography>=43.0.1,<46
+# 46.0.7 fixes PYSEC-2026-35, PYSEC-2026-36, CVE-2026-26007.
+# Earlier 43.0.1 was already past the OpenSSL 3.3.2 line (CVE-2024-6119).
+# Keep an upper bound so a major bump is a deliberate change.
+cryptography>=46.0.7,<47
 playwright>=1.40.0,<2
 # Server-side WebSocket for the hybrid-agent relay (pulls in simple-websocket).
 flask-sock>=0.7,<1
@@ -29,7 +30,5 @@ flask-wtf>=1.2,<2
 # Phase γ: 2FA + audit log.
 # bcrypt for backup recovery codes + email-2FA codes (cost-resistant hashing).
 # APScheduler for the nightly audit_log archive job.
-# freezegun is test-only — pinned here for reproducibility.
 bcrypt>=4.1,<5
 apscheduler>=3.10,<4
-freezegun>=1.4,<2

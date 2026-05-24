@@ -1,5 +1,7 @@
 -r requirements.txt
-pytest>=8.0.0,<9
+# 9.0.3 fixes CVE-2025-71176 (dev-only impact: processing untrusted
+# test artifacts on a developer machine).
+pytest>=9.0.3,<10
 # Fail any single test that hangs > pytest.ini's `timeout` (60s) with a
 # traceback instead of letting CI sit silent for 10+ minutes. `thread`
 # method works on every platform.

@@ -151,6 +151,12 @@ def create_app() -> Flask:
         MAX_CONTENT_LENGTH=int(
             os.environ.get("MAX_CONTENT_LENGTH_BYTES", str(110 * 1024 * 1024))
         ),
+        # Public-facing base URL used when generating absolute links for
+        # outbound emails (invites, recovery, new-device). Until this was
+        # wired, callers fell back to a hardcoded autoalert.pro string in
+        # three modules — a custom deploy on a different host would have
+        # mailed everyone links pointing at LCBC's instance.
+        BASE_URL=os.environ.get("BASE_URL", "https://autoalert.pro").rstrip("/"),
     )
 
     # M25: a corrupt state.db (USB unplug mid-write, stray SIGKILL) used to

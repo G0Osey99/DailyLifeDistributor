@@ -16,6 +16,10 @@ log = logging.getLogger(__name__)
 _OPTIONAL_KEYS: tuple[tuple[str, str], ...] = (
     ("UNSPLASH_ACCESS_KEY", "Unsplash image gather"),
     ("PEXELS_API_KEY", "Pexels image gather"),
+    # Without RESEND_API_KEY all outbound mail silently no-ops (per
+    # core/email.send fallback). That's fine for dev but ops needs to
+    # know at boot, not on the first invite hours later.
+    ("RESEND_API_KEY", "transactional email (invites, 2FA, recovery)"),
 )
 
 # Numeric env vars that, if set, must parse as int. Bad value = fail fast.

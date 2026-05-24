@@ -1,0 +1,101 @@
+# Docker build-context exclusions. Mirrors .gitignore for the
+# secrets / runtime-state items + adds dev-only paths (git history,
+# tests, docs, bundled Python interpreters, agent build artifacts).
+#
+# Without this, `COPY . .` in deploy/Dockerfile bakes every file in
+# the repo tree into the image layers. That's catastrophic for the
+# files marked SECRET below — even after fixing the Dockerfile to
+# delete them, they remain visible in earlier layers and on registry
+# pushes.
+
+# -----------------------------------------------------------------------
+# SECRETS — never include in any layer.
+# -----------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+client_secrets.json
+token.json
+*_session.json
+deploy/.env
+deploy/.env.*
+!deploy/.env.example
+
+# Encrypted secret store + sqlite journals. Even encrypted, these
+# don't belong in the image — they're per-deploy runtime state and
+# live in the dld-data named volume on the VPS.
+state.db
+state.db-*
+*.db
+*.db-journal
+
+# Browser-automation captures (HTML/PNG diff dumps) — may contain
+# screenshots of authenticated sessions.
+rock_failure_*.png
+rock_email_form.png
+rock_email_form.html
+rock_email_form_fields.json
+rock_email_mcp_filled.png
+_mcp_cookies.json
+
+# Generated cookies / playwright-mcp debug logs.
+.playwright-mcp/
+
+# -----------------------------------------------------------------------
+# BULKY — keeps build context small and rebuild fast.
+# -----------------------------------------------------------------------
+# Per-host bundled Python interpreters + binaries (Mac launch path);
+# CLAUDE.md notes this dir can be ~3GB.
+bin/*
+!bin/README.md
+
+# Model weights of any kind.
+*.gguf
+*.pt
+*.pth
+
+# Logs (runtime).
+logs/
+
+# Per-run upload temp dirs.
+.uploads/
+
+# -----------------------------------------------------------------------
+# REPO META — not needed in the runtime image.
+# -----------------------------------------------------------------------
+.git
+.gitignore
+.gitattributes
+.github/
+.worktrees/
+
+# Docs, tests, agent build artifacts (server image doesn't need any).
+tests/
+docs/
+agent/tests/
+dist/
+build/
+*.spec
+scripts/build_agent.py
+
+# IDE / OS junk.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Python bytecode / packaging artifacts.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Dev-time tools.
+.venv/
+venv/
+.coverage
+htmlcov/

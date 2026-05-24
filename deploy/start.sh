@@ -8,7 +8,11 @@ DISPLAY="${DISPLAY:-:99}"
 export DISPLAY
 
 # Virtual display the headed Chrome renders into.
-Xvfb "$DISPLAY" -screen 0 1280x800x24 &
+# -nolisten tcp prevents Xvfb from binding port 6000+; without it the
+# X server is reachable on the container's network without xauth, which
+# any sidecar / co-tenant container could connect to and read keystrokes
+# off the headed Chrome.
+Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp &
 
 # Wait for the X socket so x11vnc doesn't race ahead of Xvfb.
 sock="/tmp/.X11-unix/X${DISPLAY#:}"

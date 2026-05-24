@@ -104,16 +104,25 @@ def reset_lockouts() -> None:
 from flask import session as _flask_session
 
 
-def _legacy_enabled() -> bool:
+def legacy_enabled() -> bool:
+    """True iff the operator opted the deploy into the pre-multi-tenant
+    shared-password login. Canonical helper for the project — every other
+    parse site (blueprints/auth.py, core/permissions.py) should import
+    this, not re-implement the env parsing."""
     return (os.environ.get("LEGACY_PASSWORD_ENABLED", "") or "").lower() in (
         "1", "true", "yes",
     )
 
 
+# Back-compat alias — kept so any external import that still uses the
+# underscored name doesn't break. Remove in a follow-up.
+_legacy_enabled = legacy_enabled
+
+
 def is_authenticated() -> bool:
     if _flask_session.get("user_id") is not None:
         return True
-    if _legacy_enabled() and bool(_flask_session.get("authenticated")):
+    if legacy_enabled() and bool(_flask_session.get("authenticated")):
         return True
     return False
 

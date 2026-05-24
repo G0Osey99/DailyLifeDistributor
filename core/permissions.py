@@ -61,10 +61,9 @@ def _is_program_owner(user_id: int) -> bool:
     return bool(row and row["program_owner"])
 
 
-def _legacy_mode() -> bool:
-    return os.environ.get("LEGACY_PASSWORD_ENABLED", "").lower() in (
-        "1", "true", "yes",
-    )
+# Re-export of core.auth.legacy_enabled so the role decorators below
+# can call _legacy_mode() unchanged without re-implementing the parse.
+from core.auth import legacy_enabled as _legacy_mode
 
 
 def require_role(*roles: str):

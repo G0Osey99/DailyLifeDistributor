@@ -138,8 +138,8 @@ class AgentGUI:
     """Main agent window. One instance per process."""
 
     POLL_MS = 500
-    PULSE_MS = 40          # 25 fps is plenty for a slow breathing pulse
-    PULSE_PERIOD_MS = 2400
+    PULSE_MS = 33          # ~30 fps — smoother breathing
+    PULSE_PERIOD_MS = 2000 # one full ping every 2s, matches the design CSS
     SESSIONS_POLL_MS = 15_000   # match the web app's sb-conn-list cadence
     SESSIONS_TIMEOUT_S = 5
     # Display order + pretty names for the rows. The endpoint also returns
@@ -270,12 +270,44 @@ class AgentGUI:
         )
         self.hero_title.pack(anchor="w", pady=(0, 2))
 
-        self.hero_subtitle = ctk.CTkLabel(
-            hero_text, text="",
+        # Subtitle row — mixed inline color so the server hostname can
+        # render as a clickable accent-blue link, matching the design.
+        # Tk's CTkLabel doesn't support inline rich text, so we build
+        # the subtitle as a horizontal row of three labels (left chunk
+        # + clickable hostname + right chunk). _refresh_from_state
+        # configures each label's text per state.
+        self.hero_subtitle_row = ctk.CTkFrame(hero_text, fg_color="transparent")
+        self.hero_subtitle_row.pack(anchor="w", pady=(2, 10), fill="x")
+
+        self.hero_subtitle_left = ctk.CTkLabel(
+            self.hero_subtitle_row, text="",
             text_color=PAL["text_muted"], font=(self._font, 11),
-            anchor="w", justify="left", wraplength=380,
         )
-        self.hero_subtitle.pack(anchor="w", pady=(2, 10))
+        self.hero_subtitle_left.pack(side="left")
+
+        self.hero_subtitle_link = ctk.CTkLabel(
+            self.hero_subtitle_row, text="",
+            text_color=PAL["accent"], font=(self._font, 11),
+            cursor="hand2",
+        )
+        # Clicking the hostname opens the dashboard, same as the
+        # primary footer CTA. Bound on the label so it acts as a link.
+        self.hero_subtitle_link.bind(
+            "<Button-1>", lambda _e: self._open_dashboard(),
+        )
+        self.hero_subtitle_link.pack(side="left")
+
+        self.hero_subtitle_right = ctk.CTkLabel(
+            self.hero_subtitle_row, text="",
+            text_color=PAL["text_muted"], font=(self._font, 11),
+        )
+        self.hero_subtitle_right.pack(side="left")
+
+        # Back-compat shim — older code paths still set .hero_subtitle.
+        # Point it at the left label so existing configure() calls don't
+        # crash; _refresh_from_state has been updated to use the row
+        # API directly.
+        self.hero_subtitle = self.hero_subtitle_left
 
         # Chips row — built dynamically from snapshot state.
         self.chips_row = ctk.CTkFrame(hero_text, fg_color="transparent")
@@ -653,28 +685,65 @@ class AgentGUI:
             c.create_oval(28, 28, 36, 36, fill="#fff", outline="", tags="static")
 
     def _tick_pulse(self) -> None:
-        """Animate the pulse halo + spinner glyph. Cheap — only the
-        canvas items tagged "pulse" / "spin" are deleted each frame."""
+        """Animate the pulse halo + spinner glyph.
+
+        Redesigned vs. the previous version to fix two stutters:
+
+        1. _paint_hero_static was being called on every frame, re-deleting
+           and re-drawing 5-10 canvas items each tick. The disc + glyph
+           flickered through every transition. Now the static layer is
+           drawn once per state-change (from _refresh_from_state) and the
+           pulse layer is stacked BELOW it so it can't obscure the disc
+           — no static repaint needed here.
+
+        2. Linear easing made the motion feel robotic. Now uses an
+           ease-out-cubic ramp so the ring decelerates as it expands,
+           and holds invisible for the last 30% of the cycle before
+           restarting. This matches the CSS @keyframes agentPulse
+           recipe from the design HTML (scale 1.0 → 2.4, opacity
+           0.6 → 0 in the first 70%, hold for the remainder).
+
+        Two staggered rings (large + small) give the breathing more
+        depth without doubling the cost — both are simple ovals.
+        """
         if self.shutdown_event.is_set():
             return
         try:
             view = self._last_hero or _hero_view(CONN_STARTING, ACT_IDLE)
-            now = self.root.tk.call("clock", "milliseconds") if False else int(_now_ms())
-            # Pulse phase 0..1 across PULSE_PERIOD_MS
+            now = int(_now_ms())
             phase = (now % self.PULSE_PERIOD_MS) / self.PULSE_PERIOD_MS
 
             c = self.hero_canvas
             c.delete("pulse")
 
             if view["pulse"]:
-                # Halo grows from r=22 → r=32 and fades hero-color → bg.
-                r = 22 + 10 * phase
-                color = _blend(view["color"], PAL["shell_panel"], phase)
-                c.create_oval(32 - r, 32 - r, 32 + r, 32 + r,
-                              fill=color, outline="", tags="pulse")
-                # Re-draw the static layers above the halo so the
-                # gradient halo doesn't cover the disc.
-                self._paint_hero_static(view)
+                self._draw_pulse_ring(
+                    c, phase,
+                    base_color=view["color"],
+                    r_start=12.0, r_end=28.0,
+                    visible_for=0.70,
+                    start_alpha=0.60,
+                    width=2,
+                )
+                # Second, slightly-offset ring for depth — matches the
+                # design's agentPulseLarge keyframes (smaller travel,
+                # longer visible window, lower max alpha).
+                offset_phase = (phase + 0.35) % 1.0
+                self._draw_pulse_ring(
+                    c, offset_phase,
+                    base_color=view["color"],
+                    r_start=14.0, r_end=22.0,
+                    visible_for=0.80,
+                    start_alpha=0.45,
+                    width=1,
+                )
+                # Stack the freshly-drawn pulse layer BENEATH the static
+                # disc so the disc never has to be repainted. raise_()
+                # ensures any newly-drawn 'static' items also stay on top.
+                try:
+                    c.tag_lower("pulse", "static")
+                except tk.TclError:
+                    pass  # 'static' not drawn yet (first tick) — no-op.
 
             if view["glyph"] == "spinner":
                 c.delete("spin")
@@ -688,6 +757,36 @@ class AgentGUI:
         finally:
             if not self.shutdown_event.is_set():
                 self.root.after(self.PULSE_MS, self._tick_pulse)
+
+    def _draw_pulse_ring(self, c: tk.Canvas, phase: float, *,
+                         base_color: str, r_start: float, r_end: float,
+                         visible_for: float, start_alpha: float,
+                         width: int) -> None:
+        """Draw one frame of a radar-ping ring on canvas *c*.
+
+        ``visible_for`` is the fraction of the cycle the ring is
+        visible (the rest is hold-invisible time). ``start_alpha`` is
+        the simulated opacity at phase=0 — Tk has no real alpha so we
+        blend the base color toward shell_panel to fake it.
+        """
+        if phase >= visible_for:
+            return  # hold-invisible portion of the cycle
+        # Normalize phase into [0, 1] within the visible window.
+        p = phase / visible_for
+        # Ease-out cubic: starts fast, decelerates as it expands. The
+        # eye reads this as a 'ping' more than a 'pulse'.
+        eased = 1 - (1 - p) ** 3
+        r = r_start + (r_end - r_start) * eased
+        # Fade alpha linearly within the visible window. The
+        # blend-toward-bg approximation is good enough that the ring
+        # appears to fade out smoothly against the white panel.
+        alpha = start_alpha * (1 - p)
+        ring_color = _blend(PAL["shell_panel"], base_color, alpha)
+        c.create_oval(
+            32 - r, 32 - r, 32 + r, 32 + r,
+            outline=ring_color, fill="", width=width,
+            tags="pulse",
+        )
 
     # ─── polling ───────────────────────────────────────────────────────
     def _poll(self) -> None:
@@ -712,24 +811,36 @@ class AgentGUI:
 
         self.hero_title.configure(text=view["title"])
 
-        # Subtitle reads from server URL + identity. We compose this so it
-        # mirrors the canvas mockup: "Linked to <url> as <hostname>"
-        # while uploading: "<service> · <detail>" (uses activity_detail).
+        # Subtitle row — three-label composition lets the server hostname
+        # render as a clickable accent-blue link in the middle, matching
+        # the design's "Linked to autoalert.pro as RykersLaptop". Each
+        # branch sets all three labels (left, link, right); empty text
+        # ('' ) collapses a label so it doesn't show.
         if snap["activity"] == ACT_UPLOADING and snap["activity_detail"]:
-            self.hero_subtitle.configure(text=snap["activity_detail"])
+            self.hero_subtitle_left.configure(text=snap["activity_detail"])
+            self.hero_subtitle_link.configure(text="")
+            self.hero_subtitle_right.configure(text="")
         elif snap["connection"] == CONN_ONLINE:
             host = snap["hostname"] or snap["device_name"] or "this device"
             server = _strip_scheme(snap["server_url"]) or "the server"
-            self.hero_subtitle.configure(text=f"Linked to {server} as {host}")
+            self.hero_subtitle_left.configure(text="Linked to ")
+            self.hero_subtitle_link.configure(text=server)
+            self.hero_subtitle_right.configure(text=f" as {host}")
         elif snap["connection"] == CONN_AUTH_FAILED:
-            self.hero_subtitle.configure(
+            self.hero_subtitle_left.configure(
                 text="Token rejected — paste a fresh pairing code to continue.",
             )
+            self.hero_subtitle_link.configure(text="")
+            self.hero_subtitle_right.configure(text="")
         elif snap["connection"] in (CONN_CONNECTING, CONN_STARTING, CONN_DISCONNECTED):
             server = _strip_scheme(snap["server_url"]) or "server"
-            self.hero_subtitle.configure(text=f"Reaching {server}…")
+            self.hero_subtitle_left.configure(text="Reaching ")
+            self.hero_subtitle_link.configure(text=server)
+            self.hero_subtitle_right.configure(text="…")
         else:
-            self.hero_subtitle.configure(text="")
+            self.hero_subtitle_left.configure(text="")
+            self.hero_subtitle_link.configure(text="")
+            self.hero_subtitle_right.configure(text="")
 
         # Version line in the header
         bits = []

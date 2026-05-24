@@ -156,13 +156,48 @@ def count_user_devices(user_id: int) -> int:
 
 
 def list_devices() -> list[dict]:
+    """All devices, system-wide. Reserved for program-owner / admin views.
+
+    Per-tenant code paths must call :func:`list_devices_for_user` instead —
+    surfacing the full list to a logged-in non-admin leaks cross-tenant
+    device inventory.
+    """
     with _get_conn() as conn:
         rows = conn.execute(
             "SELECT id, name, created_at, last_seen_at, revoked, "
-            "hwid_hash, hostname "
+            "hwid_hash, hostname, user_id "
             "FROM agent_devices ORDER BY created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def list_devices_for_user(user_id: int) -> list[dict]:
+    """Devices owned by *user_id*. NULL-owner rows (legacy / pre-α) excluded."""
+    if user_id is None:
+        return []
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, name, created_at, last_seen_at, revoked, "
+            "hwid_hash, hostname, user_id "
+            "FROM agent_devices WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (int(user_id),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_device_owner(device_id: str) -> int | None:
+    """Return the ``user_id`` that owns *device_id*, or None if missing /
+    legacy unowned. Used by the ownership-check decorators on
+    /agent/devices/<id>/* endpoints to prevent cross-tenant tampering."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM agent_devices WHERE id = ?", (device_id,),
+        ).fetchone()
+    if not row:
+        return None
+    uid = row["user_id"] if hasattr(row, "keys") else row[0]
+    return int(uid) if uid is not None else None
 
 
 def find_by_hwid(hwid_hash: str) -> dict | None:

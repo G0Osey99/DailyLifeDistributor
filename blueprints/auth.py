@@ -96,6 +96,10 @@ def login_submit():
     if not username and _legacy_enabled():
         if auth.verify_password(password):  # old shared-password verify
             auth.clear_failures(ip)
+            # Mitigate session fixation: rotate the session id by
+            # clearing first, then mark authenticated. Matches the
+            # modern user-id branch at line 143.
+            session.clear()
             session["authenticated"] = True
             session.permanent = True
             return redirect(_safe_next(request.args.get("next", "")))
@@ -265,6 +269,17 @@ def login_2fa_post():
     uid = _consume_partial_token(tok)
     if uid is None:
         return redirect(url_for("auth.login"))
+    # Brute-force guard: TOTP is 6 digits / 30s window — a 1000-rps
+    # attacker with the partial token in hand would otherwise sweep
+    # the keyspace inside a single drift window. The auth.* helpers
+    # are reused so per-IP lockouts apply to both /login and the 2FA
+    # second step under the same budget.
+    ip = _client_ip()
+    if auth.is_locked(ip):
+        return render_template(
+            "login_2fa.html", tok=tok,
+            error="Too many failed attempts. Try again later.",
+        ), 429
     code = (request.form.get("code") or "").strip()
     from core import db as _db
     from core import recovery as _recovery
@@ -278,7 +293,13 @@ def login_2fa_post():
     elif _recovery.verify_recovery_code(uid, code):
         used = "recovery_code"
     if not used:
-        return render_template("login_2fa.html", tok=tok, error="Invalid code"), 400
+        auth.record_failure(ip)
+        # Re-mint so the user can retry one more time without going back to /login.
+        fresh_tok = _issue_partial_token(uid)
+        return render_template(
+            "login_2fa.html", tok=fresh_tok, error="Invalid code",
+        ), 400
+    auth.clear_failures(ip)
     _finalize_login(uid, used)
     return redirect("/")
 
@@ -303,14 +324,25 @@ def login_email_2fa_post():
     uid = _consume_partial_token(tok)
     if uid is None:
         return redirect(url_for("auth.login"))
+    # Brute-force guard — same posture as /login/2fa. 6-digit emailed
+    # codes valid for 10 minutes are otherwise wide open to anyone who
+    # captured the partial token (5min validity).
+    ip = _client_ip()
+    if auth.is_locked(ip):
+        return render_template(
+            "login_email_2fa.html", tok=tok,
+            error="Too many failed attempts. Try again later.",
+        ), 429
     code = (request.form.get("code") or "").strip()
     from core import email_2fa as _email_2fa
     if not _email_2fa.verify_login_code(uid, code):
+        auth.record_failure(ip)
         # Re-issue a token so the form can retry without redirecting to /login.
         fresh_tok = _issue_partial_token(uid)
         return render_template(
             "login_email_2fa.html", tok=fresh_tok, error="Invalid code",
         ), 400
+    auth.clear_failures(ip)
     _finalize_login(uid, "email")
     return redirect("/")
 
@@ -361,6 +393,18 @@ def first_password_set_post():
     return redirect("/")
 
 
+def _safe_referrer_redirect(default_endpoint: str):
+    """Redirect to request.referrer, but only if it's same-origin.
+
+    `Referer` is fully attacker-controlled (the browser will send whatever
+    `Referrer-Policy` allows from a malicious source page). Bare
+    `redirect(request.referrer)` is an open redirect; we run it through
+    the same `_safe_next` validator the login flow uses.
+    """
+    target = urllib.parse.urlparse(request.referrer or "").path
+    return redirect(_safe_next(target) or url_for(default_endpoint))
+
+
 @bp.route("/account/switch_org", methods=["POST"])
 def switch_org():
     if not is_authenticated():
@@ -370,7 +414,7 @@ def switch_org():
     except ValueError:
         new_org_id = 0
     if not new_org_id:
-        return redirect(request.referrer or url_for("scan.index"))
+        return _safe_referrer_redirect("scan.index")
     from core import org_store
     uid = auth.current_user_id()
     mem = org_store.get_membership(user_id=uid, org_id=new_org_id)
@@ -378,4 +422,4 @@ def switch_org():
         from flask import abort
         abort(403)
     session["current_org_id"] = new_org_id
-    return redirect(request.referrer or url_for("scan.index"))
+    return _safe_referrer_redirect("scan.index")

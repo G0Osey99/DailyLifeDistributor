@@ -214,9 +214,62 @@ def pair_redeem():
     return jsonify(body)
 
 
+# --- Ownership / role helpers for device-management endpoints --------------
+# Pre-fix: every authenticated user (in any org) could list, rename, or
+# revoke every paired device system-wide. Now scoped to the caller's
+# user_id, with program-owners (and legacy shared-password sessions for
+# rollback compatibility) getting unrestricted access.
+
+def _current_user_id() -> int | None:
+    from flask import session as _sess
+    uid = _sess.get("user_id")
+    try:
+        return int(uid) if uid is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_program_owner_or_legacy() -> bool:
+    """True for the program-owner role OR the legacy single-tenant session.
+
+    Legacy sessions don't have a user_id at all and the entire single-
+    tenant deploy is the device pool — restricting to "owned by current
+    user" would return an empty list. So we keep the wide-open view in
+    legacy mode (matches pre-α behavior; turning off LEGACY_PASSWORD_ENABLED
+    is the proper multi-tenant posture).
+    """
+    from flask import session as _sess
+    if _sess.get("authenticated") and _sess.get("user_id") is None:
+        return True
+    uid = _current_user_id()
+    if uid is None:
+        return False
+    try:
+        from core import user_store as _us
+        u = _us.get_user_by_id(uid)
+        return bool(u and u.get("program_owner"))
+    except Exception:
+        return False
+
+
+def _device_owned_by_caller_or_admin(device_id: str) -> bool:
+    if _is_program_owner_or_legacy():
+        return True
+    owner = devices.get_device_owner(device_id)
+    caller = _current_user_id()
+    return owner is not None and caller is not None and owner == caller
+
+
 @bp.route("/agent/devices", methods=["GET"])
 def list_devices():
-    return jsonify({"devices": devices.list_devices()})
+    # Scope to the calling user's devices. Program-owner / legacy
+    # session sees everything.
+    if _is_program_owner_or_legacy():
+        return jsonify({"devices": devices.list_devices()})
+    uid = _current_user_id()
+    if uid is None:
+        return jsonify({"devices": []})
+    return jsonify({"devices": devices.list_devices_for_user(uid)})
 
 
 @bp.route("/agent/devices/online", methods=["GET"])
@@ -237,7 +290,17 @@ def list_devices_online():
     browser_ip = _client_ip()
     # Look up persisted name/hostname/hwid for each online agent. We don't
     # want to issue N queries in the worst case; one bulk listing is fine.
-    db_devices = {d["id"]: d for d in devices.list_devices()}
+    # Filter by ownership unless the caller is program-owner / legacy.
+    if _is_program_owner_or_legacy():
+        owned_devices = devices.list_devices()
+    else:
+        uid = _current_user_id()
+        owned_devices = devices.list_devices_for_user(uid) if uid else []
+    db_devices = {d["id"]: d for d in owned_devices}
+    # Drop online entries that aren't owned by the caller — the relay
+    # tracks the whole account room, so without this filter we'd leak
+    # the existence of other users' online agents.
+    online = [e for e in online if e["device_id"] in db_devices]
 
     out: list[dict] = []
     for entry in online:
@@ -262,6 +325,10 @@ def list_devices_online():
 
 @bp.route("/agent/devices/<device_id>/revoke", methods=["POST"])
 def revoke_device(device_id):
+    # Ownership gate: pre-fix, any authenticated user in any org could
+    # revoke any device system-wide (a multi-tenant DoS).
+    if not _device_owned_by_caller_or_admin(device_id):
+        return jsonify({"error": "device not found"}), 404
     devices.revoke_device(device_id)
     return jsonify({"ok": True})
 
@@ -280,6 +347,9 @@ def rename_device(device_id):
     ``{"error": "..."}`` with 400 / 404 / 410 on validation / not-found /
     revoked.
     """
+    # Ownership gate (rename was previously open to any session).
+    if not _device_owned_by_caller_or_admin(device_id):
+        return jsonify({"error": "device not found"}), 404
     data = request.get_json(silent=True) or {}
     raw = data.get("name", "")
     try:

@@ -67,10 +67,16 @@
     </div>
     <div>
       {% if email_2fa_enabled %}
-        <form method="post" action="/settings/2fa/disable" onsubmit="return confirm('Disable email 2FA?');">
-          <input type="hidden" name="method" value="email">
-          <button type="submit" class="btn btn-sm btn-destructive">Disable</button>
-        </form>
+        <div class="inline-form" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <form method="post" action="/settings/2fa/send-email-code" style="display:inline;">
+            <button type="submit" class="btn btn-sm btn-secondary">Send code</button>
+          </form>
+          <form method="post" action="/settings/2fa/disable" class="inline-form" onsubmit="return confirm('Disable email 2FA?');">
+            <input type="hidden" name="method" value="email">
+            <input name="code" pattern="[0-9]{6}" placeholder="123456" required style="width:120px;font-family:var(--font-mono);letter-spacing:2px;text-align:center;">
+            <button type="submit" class="btn btn-sm btn-destructive">Disable</button>
+          </form>
+        </div>
       {% else %}
         <form method="post" action="/settings/2fa/enable-email">
           <button type="submit" class="btn btn-primary">Enable email codes</button>

@@ -8,7 +8,10 @@ Three endpoints:
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timezone
+
+log = logging.getLogger(__name__)
 
 from flask import (
     Blueprint, abort, current_app, redirect, render_template, request,
@@ -70,6 +73,22 @@ def approve(request_id: int):
         approver_id, rrow["user_id"]
     ):
         abort(403)
+    # Privilege-escalation guard: an org Owner who shares a room with the
+    # program-owner could otherwise approve a forged recovery request for
+    # them and take over the master account (including the program_owner
+    # flag, since recovery also wipes 2FA). Only a program-owner may
+    # approve recovery for another program-owner.
+    target = _db.get_user_by_id(rrow["user_id"])
+    if target and target.get("program_owner"):
+        approver = _db.get_user_by_id(approver_id)
+        if not approver or not approver.get("program_owner"):
+            log.warning(
+                "recovery.approve: %s (uid=%s) attempted to approve "
+                "recovery for program-owner (uid=%s) — refused",
+                (_db.get_user_by_id(approver_id) or {}).get("username"),
+                approver_id, rrow["user_id"],
+            )
+            abort(403)
     now = datetime.now(timezone.utc).isoformat()
     token = _reset_serializer().dumps(
         {"uid": rrow["user_id"], "rid": request_id}

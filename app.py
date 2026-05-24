@@ -118,6 +118,26 @@ def create_app() -> Flask:
     from core import crypto
     crypto.validate_master_key()
 
+    # Security: refuse to boot when the legacy shared-password is enabled on
+    # the hosted multi-tenant deploy. Legacy sessions bypass @require_role,
+    # @require_program_owner, and @require_authenticated_json (see
+    # core/permissions.py); mixing that with multi-tenant invitations would
+    # let any holder of the shared password act with every role in every
+    # org. Tests / local USB installs can still flip the env var; the gate
+    # only fires when HOSTED=true.
+    from core.hosted import is_hosted
+    _legacy_on = (os.environ.get("LEGACY_PASSWORD_ENABLED", "") or "").lower() in (
+        "1", "true", "yes",
+    )
+    if _legacy_on and is_hosted():
+        raise RuntimeError(
+            "Refusing to boot: LEGACY_PASSWORD_ENABLED=true on a HOSTED "
+            "deploy bypasses all role gates. Unset one of LEGACY_PASSWORD_ENABLED "
+            "or HOSTED before restarting. Multi-tenant rollback path is to "
+            "set LEGACY_PASSWORD_ENABLED=true ONLY on the single-tenant USB "
+            "install (HOSTED unset)."
+        )
+
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -540,6 +560,28 @@ def create_app() -> Flask:
     # Stash on app.extensions so blueprints can grab the same instance without
     # re-importing the limiter (avoids two separate Limiter() instances).
     app.extensions["dld_limiter"] = limiter
+
+    # Rate-limit the recovery + auth endpoints that take user-controlled
+    # input. /recover lets anyone submit a request for any username; we
+    # already cap PER USER at 1/24h inside submit_request, but without
+    # an IP cap an attacker can spam Owners' inboxes (phish fatigue) and
+    # enumerate via timing side channels. /login is already covered by
+    # auth.is_locked but a flask-limiter ceiling on top is cheap defense
+    # in depth. Apply via the same view-functions trick as the agent
+    # blueprint — limiter exists only after Limiter(app=...).
+    for endpoint, limit in (
+        ("recovery.recover_submit", "5 per minute"),
+        ("recovery.reset_submit", "10 per hour"),
+        ("auth.login_2fa_post", "10 per minute"),
+        ("auth.login_email_2fa_post", "10 per minute"),
+        ("auth.first_password_set_post", "10 per minute"),
+    ):
+        view = app.view_functions.get(endpoint)
+        if view is None:
+            # Blueprint not registered (e.g. test app skipping recovery) —
+            # silently skip rather than fail-boot.
+            continue
+        app.view_functions[endpoint] = limiter.limit(limit)(view)
 
     if os.environ.get("HYBRID_AGENT_ENABLED", "").lower() in ("1", "true", "yes"):
         from flask_sock import Sock

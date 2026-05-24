@@ -123,6 +123,24 @@ def enable_email_2fa():
     return redirect(url_for("twofa.settings_2fa"))
 
 
+@bp.post("/settings/2fa/send-email-code")
+@login_required
+def send_email_code():
+    """Mint a fresh email 2FA code for the current user.
+
+    Lets the user request a code they'll need to disable email 2FA
+    (proof of factor possession). Only useful when email 2FA is
+    already enabled — refuses otherwise.
+    """
+    user = _current_user()
+    if not user or not user.get("email_2fa_enabled"):
+        flash("Email 2FA is not enabled for this account.")
+        return redirect(url_for("twofa.settings_2fa"))
+    _email_2fa.generate_login_code(user["id"])
+    flash("Sent a 6-digit code to your email. It expires in 10 minutes.")
+    return redirect(url_for("twofa.settings_2fa"))
+
+
 @bp.post("/settings/2fa/disable")
 @login_required
 def disable_2fa():
@@ -141,6 +159,19 @@ def disable_2fa():
             ), 400
         _db.set_user_totp(user["id"], None, enabled=False)
     elif method == "email":
+        # Disabling email 2FA must require proof of factor possession —
+        # otherwise a hijacked session (XSS, stolen cookie, brief
+        # unattended browser) can strip the second factor with one POST.
+        # Verify a fresh emailed code, same posture as TOTP disable.
+        if not user.get("email_2fa_enabled"):
+            return ("Email 2FA is not enabled", 400)
+        if not code or not _email_2fa.verify_login_code(user["id"], code):
+            return render_template(
+                "settings_2fa.html",
+                totp_enabled=bool(user.get("totp_enabled")),
+                email_2fa_enabled=True,
+                error="Invalid or expired email code. Click 'Send code' first.",
+            ), 400
         _db.set_user_email_2fa(user["id"], False)
     else:
         return ("Unknown method", 400)

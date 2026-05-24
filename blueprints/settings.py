@@ -712,6 +712,7 @@ def org_require_2fa():
         metadata={"changes": {"require_2fa": [before, enabled]}},
     )
     # Land back on /settings/security since that's where the operator
-    # most likely came from; the form action is /settings/org/require-2fa
-    # so a redirect home is fine if /settings/org doesn't exist yet.
-    return redirect(request.referrer or url_for("settings.security_get"))
+    # most likely came from. Validate the referrer through auth._safe_next
+    # so a forged Referer can't turn this into an open redirect.
+    from blueprints.auth import _safe_referrer_redirect
+    return _safe_referrer_redirect("settings.security_get")

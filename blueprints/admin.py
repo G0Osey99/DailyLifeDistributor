@@ -1,9 +1,12 @@
 """Program-owner admin (multi-tenant phase α).
 
-Routes here are gated by users.program_owner = TRUE. The org-create form
-is bare-bones in α — invite-on-create lands in PR-β. The user-list page
-has a force-password-reset action that writes nothing yet (placeholder;
-email sending wires up in PR-β).
+Routes here are gated by ``users.program_owner = TRUE``. The user-list
+page exposes a force-password-reset action that flips
+``password_changed_at = NULL`` so the target is required to set a new
+password via ``/login/first-password-set`` on next login. The owner-self
+and cross-owner cases are guarded: a program-owner cannot force-reset
+another program-owner (privilege escalation), and the action is
+audit-logged as ``user.force_password_reset``.
 """
 from __future__ import annotations
 
@@ -246,21 +249,66 @@ def admin_audit_log():
 @bp.route("/users/force_reset", methods=["POST"])
 @require_program_owner
 def users_force_reset():
-    """Placeholder: PR-β wires the actual Resend send. For now it just
-    flips password_changed_at to NULL so the next login is blocked until
-    the user calls /reset-password (also PR-β)."""
+    """Flip ``password_changed_at = NULL`` so the target user is forced
+    through ``/login/first-password-set`` on next login.
+
+    Guards:
+      * non-numeric ``user_id`` is treated as missing (no-op redirect).
+      * a program-owner cannot force-reset another program-owner — that
+        would let any compromised owner take over the master account.
+      * the action is audit-logged so ops can correlate a forced reset
+        with any follow-up logins by the target.
+    """
+    from flask import flash
     try:
         user_id = int(request.form.get("user_id") or 0)
     except (TypeError, ValueError):
         # Non-numeric form value — treat as missing.
         user_id = 0
     if not user_id:
+        flash("No user selected.", "error")
         return redirect(url_for("admin.users_list"))
     from core import db as _db
+    target = _db.get_user_by_id(user_id)
+    if not target:
+        flash("User not found.", "error")
+        return redirect(url_for("admin.users_list"))
+    actor_id = auth.current_user_id()
+    if target.get("program_owner") and target.get("id") != actor_id:
+        # Cross-owner force-reset is an escalation vector — a hijacked
+        # owner could otherwise lock the master account.
+        flash(
+            "Cannot force-reset another program-owner; use /recover.",
+            "error",
+        )
+        return redirect(url_for("admin.users_list"))
     with _db._get_conn() as c:
         c.execute(
             "UPDATE users SET password_changed_at=NULL WHERE id=?",
             (user_id,),
         )
         c.commit()
+    try:
+        from core import audit as _audit
+        _audit.write_event(
+            action="user.force_password_reset",
+            actor_user_id=actor_id,
+            target_type="user", target_id=user_id,
+            metadata={"target_username": target.get("username")},
+            ip=request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+            ua=request.headers.get("User-Agent", ""),
+        )
+    except Exception:
+        # Audit-log write failed (DB hiccup); don't undo the reset, but
+        # surface the drop so ops sees a missing compliance trail.
+        import logging
+        logging.getLogger(__name__).exception(
+            "audit.write_event(user.force_password_reset) failed uid=%s",
+            user_id,
+        )
+    flash(
+        f"Forced password reset for {target.get('username')!r}. "
+        "They will be required to set a new password on next login.",
+        "success",
+    )
     return redirect(url_for("admin.users_list"))

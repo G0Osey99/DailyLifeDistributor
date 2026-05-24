@@ -81,3 +81,62 @@ def test_admin_users_list_shows_all(app):
         resp = c.get("/admin/users")
         assert resp.status_code == 200
         assert b"x" in resp.data
+
+
+def test_admin_force_reset_clears_password_changed_at(app):
+    from core import db as _db
+    with app.test_client() as c:
+        _owner_login(c)
+        target = user_store.create_user(
+            username="resetme", email="r@x.com", password="pw12345678!",
+        )
+        user_store.update_password(target["id"], "anotherpw12345")
+        assert _db.get_user_by_id(target["id"])["password_changed_at"] is not None
+        resp = c.post(
+            "/admin/users/force_reset",
+            data={"user_id": str(target["id"])},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+        after = _db.get_user_by_id(target["id"])
+        assert after["password_changed_at"] is None
+
+
+def test_admin_force_reset_refuses_other_program_owner(app):
+    from core import db as _db
+    with app.test_client() as c:
+        _owner_login(c)
+        # Second program-owner — should NOT be force-resettable by the first.
+        other = user_store.create_user(
+            username="root2", email="root2@x.com", password="pwbootstrap1234",
+            program_owner=True,
+        )
+        user_store.update_password(other["id"], "anotherpw12345")
+        before = _db.get_user_by_id(other["id"])["password_changed_at"]
+        resp = c.post(
+            "/admin/users/force_reset",
+            data={"user_id": str(other["id"])},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+        # Nothing changed for the other program-owner.
+        after = _db.get_user_by_id(other["id"])["password_changed_at"]
+        assert after == before
+
+
+def test_admin_force_reset_writes_audit(app):
+    from core import db as _db
+    with app.test_client() as c:
+        _owner_login(c)
+        target = user_store.create_user(
+            username="audited", email="a@x.com", password="pw12345678!",
+        )
+        user_store.update_password(target["id"], "anotherpw12345")
+        c.post(
+            "/admin/users/force_reset",
+            data={"user_id": str(target["id"])},
+        )
+        rows = _db.list_audit_events(
+            action_prefix="user.force_password_reset", limit=10,
+        )
+        assert any(int(r["target_id"]) == target["id"] for r in rows)

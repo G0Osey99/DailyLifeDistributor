@@ -460,3 +460,172 @@ Three UX gaps the audit caught and this PR closes:
   progress (agent-path only — web-only-path cancel is a future addition).
   Wire types are documented in
   `docs/superpowers/specs/2026-05-22-hybrid-upload-agent-phase3-design.md`.
+
+## Commit / push / merge / redeploy workflow
+
+The deploy target is the `dld` container on `dropshippa`, reached over WSL
+SSH. The CI workflow at `.github/workflows/ci.yml` runs on **pushes to
+`main` and on pull requests** — it does NOT run on pushes to other
+branches alone, so feature work without an open PR gets no CI.
+
+### 1. Branch + work
+
+```bash
+git switch -c feat/<short-topic>   # or fix/<topic>, docs/<topic>
+# edit, add tests
+python -m pytest tests/ -q          # full suite (Windows: Python 3.13)
+python scripts/check_secret_scoping.py   # lint required on prod paths
+```
+
+Local Python is 3.13; CI uses 3.12. Failures that reproduce only in one
+version are usually Flask-context timing or stdlib differences — note
+which when filing a follow-up.
+
+### 2. Commit
+
+Use a HEREDOC for the message so newlines + blank lines survive:
+
+```bash
+git add <specific files>            # avoid `git add -A` unless you've reviewed
+git commit -F - <<'MSG'
+type(scope): one-line subject under ~70 chars
+
+Body explains *why* (constraint, failure mode, prior incident). Wrap at
+~72 cols. Mention the test plan + the SHA of any prior commit that
+established context.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+MSG
+```
+
+Conventional-Commit-ish prefixes used in this repo: `feat`, `fix`,
+`docs`, `test`, `refactor`, `chore`. The scope in parens (`feat(audit):`,
+`fix(per-org):`) shows up in the squash-merge title on GitHub.
+
+### 3. Push + open PR
+
+```bash
+git push -u origin <branch>
+gh pr create --base main --head <branch> \
+  --title "type(scope): subject" \
+  --body "$(cat <<'EOF'
+## Summary
+Short paragraph: what changed, why.
+
+## Test plan
+- [x] new tests with paths
+- [x] full suite count
+- [x] lint clean
+EOF
+)"
+```
+
+Drafts (`--draft`) are useful when an initiative spans many PRs and you
+only want CI gating; `gh pr ready <num>` graduates them later.
+
+### 4. Watch CI
+
+CI normally completes in ~2–3 min. Run watch in the background so you
+don't tie up the foreground:
+
+```bash
+gh run list --branch <branch> --limit 1     # confirm the run started
+gh run watch <run-id> --exit-status         # run in background
+```
+
+If CI fails, prefer fixing on the same branch + re-pushing over force
+operations. If a run hangs >10 min, it's almost certainly a leaked
+websocket fixture (see `pytest.ini` comment about `timeout_method =
+thread`). Cancel via `gh run cancel <id>` and inspect the dump.
+
+### 5. Merge
+
+Squash-merge with branch delete. Branch protection is NOT enforced —
+`gh pr merge` will merge even on failed CI, so always confirm CI green
+yourself before merging:
+
+```bash
+gh run view <run-id> --json status,conclusion    # confirm "success"
+gh pr merge <num> --squash --delete-branch
+```
+
+If `--delete-branch` complains about a worktree using the branch, that's
+fine — `git worktree remove <path>` afterwards.
+
+### 6. Sync local main
+
+```bash
+git switch main
+git pull origin main
+```
+
+### 7. Deploy to dropshippa
+
+The compose stack lives at `/root/DailyLifeDistributor/deploy/`. The
+Flask container is the `app` service (container name `dld`). State volume
+`/data` is external — survives container rebuild.
+
+```bash
+wsl ssh dropshippa "cd /root/DailyLifeDistributor \
+  && git pull origin main 2>&1 | tail -3 \
+  && cd deploy && docker compose up -d --build app 2>&1 | tail -5"
+```
+
+The rebuild takes ~30 s on incremental Python-only changes, longer on
+fresh dependency installs. `up -d --build app` rebuilds the image,
+recreates the container, and starts it; other services (ollama, caddy,
+cloudflared) stay running.
+
+### 8. Smoke test
+
+After ~6–8 s for boot:
+
+```bash
+curl -sS -o /dev/null -w "GET /          → HTTP %{http_code}\n" https://autoalert.pro/
+curl -sS -o /dev/null -w "GET /dashboard → HTTP %{http_code}\n" https://autoalert.pro/dashboard
+curl -sS https://autoalert.pro/health/details | python -c "import sys, json; d=json.load(sys.stdin); print('health:', 'ok' if d.get('secret_enc_key_set') else 'broken')"
+```
+
+Expected: `/` is `200` (public landing), `/dashboard` is `302` (auth gate
+redirects to `/login`), health reports `ok`. For DB-touching changes,
+verify the schema migration:
+
+```bash
+wsl ssh dropshippa "docker exec dld python -c \"
+from core import db
+with db._get_conn() as c:
+    cols = [r[1] for r in c.execute(\\\"PRAGMA table_info('<table>')\\\").fetchall()]
+print(cols)\""
+```
+
+### Agent binaries (special case)
+
+A tag like `agent-v0.6.X` triggers the `release-agent` workflow which
+builds and publishes Windows + macOS-universal binaries to GitHub
+Releases. The VPS doesn't pull these automatically — after a successful
+release build:
+
+```bash
+# Verify GH release has the artifacts
+gh release view agent-v0.6.X --json assets
+
+# The VPS stores binaries at /root/dld-releases/. The release workflow
+# also uploads them there via a separate step — confirm presence:
+wsl ssh dropshippa "ls -la /root/dld-releases/ | head -10"
+```
+
+Don't bump the agent tag on PRs that touch only `tests/`, `core/`,
+`blueprints/`, or `templates/` — the bundled agent binary doesn't carry
+those changes. Only changes under `agent/` warrant a new tag.
+
+### Common pitfalls
+
+- **Forgetting `gh pr ready`** on a draft PR — CI runs but the PR isn't
+  surfaced to reviewers. Confirm with `gh pr view <num> --json state`.
+- **`git add -A` after a debugging session** can stage `__pycache__/`,
+  `*.log`, or local secrets. Stage specific files unless you just ran
+  `git status` and reviewed the list.
+- **Test files with LF/CRLF line-ending warnings** are normal on Windows
+  + Git's autocrlf — the warnings don't change file content.
+- **Hung CI** is almost always a leaked websocket fixture; `pytest.ini`
+  has the relay/server-fixture commentary on this.

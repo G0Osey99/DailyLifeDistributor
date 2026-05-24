@@ -79,7 +79,6 @@ def real_user_id() -> Optional[int]:
     Returns None when called outside a Flask request context (e.g. the
     hybrid agent path or background threads with no app context pushed).
     """
-    from flask import has_request_context
     if not has_request_context():
         return None
     uid = session.get("user_id")
@@ -93,7 +92,6 @@ def current_org_id() -> Optional[int]:
     so callers can import both real and effective org from one module.
     Returns None outside a Flask request context.
     """
-    from flask import has_request_context
     if not has_request_context():
         return None
     oid = session.get("current_org_id")
@@ -102,7 +100,6 @@ def current_org_id() -> Optional[int]:
 
 def acting_as_org_id() -> Optional[int]:
     """The org the program owner is impersonating, or None."""
-    from flask import has_request_context
     if not has_request_context():
         return None
     oid = session.get("acting_as_org_id")

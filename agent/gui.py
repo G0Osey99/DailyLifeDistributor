@@ -568,27 +568,57 @@ class AgentGUI:
                     )
             except Exception as e:
                 log.warning("sessions poll: get_token raised: %s", e, exc_info=True)
-        url = _to_http(server.rstrip("/")) + "/sessions/status"
-        if token:
-            url = url + "?" + urllib.parse.urlencode({"token": token})
+        base_url = _to_http(server.rstrip("/")) + "/sessions/status"
+        params = {"token": token} if token else None
         self._sessions_inflight = True
+
+        # Snapshot the token presence into a local so the worker can
+        # log it without re-reading state from off-thread.
+        had_token = bool(token)
+        _log_url = base_url + (("?token=" + token[:8] + "…") if token else "")
 
         def worker() -> None:
             data = None
             unreachable = False
+            status_code: int | None = None
+            err_str = ""
             try:
-                req = urllib.request.Request(
-                    url, headers={"Accept": "application/json"},
+                # Use requests (not urllib) — the agent already depends on
+                # it and ships its own bundled CA cert chain. urllib's
+                # urlopen on PyInstaller-Windows can fail SSL verification
+                # in some envs because it relies on the OS cert store
+                # which the packaged binary may not see.
+                import requests as _requests
+                resp = _requests.get(
+                    base_url,
+                    params=params,
+                    headers={"Accept": "application/json"},
+                    timeout=self.SESSIONS_TIMEOUT_S,
                 )
-                with urllib.request.urlopen(req, timeout=self.SESSIONS_TIMEOUT_S) as resp:
-                    if 200 <= resp.status < 300:
-                        body = resp.read().decode("utf-8", errors="replace")
-                        data = _json.loads(body)
-                    else:
-                        unreachable = True
-            except Exception:
-                log.debug("sessions/status fetch failed", exc_info=True)
+                status_code = resp.status_code
+                if 200 <= resp.status_code < 300:
+                    data = resp.json()
+                else:
+                    unreachable = True
+            except Exception as _exc:
+                err_str = repr(_exc)
                 unreachable = True
+            # Log every poll outcome at INFO so the agent.log file
+            # captures evidence when the panel reads 'unknown'. Useful
+            # when triaging "why is my sessions panel blank?" — the
+            # log line says exactly which leg failed (token missing,
+            # HTTP 401, network error, etc.).
+            if data is not None:
+                log.info(
+                    "sessions poll OK · had_token=%s url=%s · %d keys",
+                    had_token, _log_url, len(data) if isinstance(data, dict) else -1,
+                )
+            else:
+                log.warning(
+                    "sessions poll FAIL · had_token=%s url=%s · "
+                    "status=%s err=%s",
+                    had_token, _log_url, status_code, err_str or "(none)",
+                )
             # Hop back to the main thread. Tk widget config from a
             # background thread is undefined behavior on some platforms.
             self.root.after(0, self._on_sessions_data, data, unreachable)

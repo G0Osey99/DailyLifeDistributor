@@ -1,8 +1,16 @@
 """Unit tests for the remote-login state machine (fake browser, no Chrome)."""
 import pytest
+from flask import Flask
 
 from core import remote_login
 from core.playwright_session import SessionConfig
+
+
+@pytest.fixture()
+def app_ctx():
+    app = Flask(__name__); app.secret_key = "t"
+    with app.test_request_context():
+        yield
 
 
 class FakeBrowser:
@@ -93,7 +101,7 @@ def test_idle_timeout_tears_down(tmp_path):
     assert m.status().phase == "idle"
 
 
-def test_save_success_flow(mgr, tmp_path, temp_db):
+def test_save_success_flow(app_ctx, mgr, tmp_path, temp_db):
     cfg = _cfg(tmp_path)
     mgr.start("simplecast", cfg)
     browser = mgr._created[0]
@@ -144,7 +152,7 @@ def test_on_teardown_called_on_cancel(tmp_path):
     assert calls == ["t"]
 
 
-def test_on_teardown_called_on_save(tmp_path, temp_db):
+def test_on_teardown_called_on_save(app_ctx, tmp_path, temp_db):
     calls = []
     m = remote_login.RemoteLoginManager(
         browser_launcher=lambda c: FakeBrowser(),
@@ -179,7 +187,10 @@ def test_on_teardown_not_called_without_active_session():
     assert calls == []
 
 
-def test_save_encrypts_session_into_store(tmp_path, temp_db):
+def test_save_encrypts_session_into_store(app_ctx, tmp_path, temp_db):
+    from flask import session as flask_session
+    flask_session["current_org_id"] = 1
+
     created = []
 
     def launcher(config):
@@ -194,7 +205,14 @@ def test_save_encrypts_session_into_store(tmp_path, temp_db):
 
     from core import secrets_store
     from core.playwright_session import _session_secret_name
-    blob = secrets_store.get_blob(_session_secret_name(cfg.session_file))
+    secret_name = _session_secret_name(cfg.session_file)
+
+    # After Fix 1 the blob must land in the org-scoped slot.
+    blob = secrets_store.get_blob(secret_name, org_id=1)
     assert blob == b'{"cookies": []}'
+
+    # The legacy unscoped slot must remain empty — production must not write there.
+    assert secrets_store.get_blob(secret_name) is None
+
     assert created[0].closed is True            # browser torn down after save
     assert m.status().phase == "done"

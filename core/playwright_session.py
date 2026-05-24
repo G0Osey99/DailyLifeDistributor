@@ -426,14 +426,26 @@ class PlaywrightSession:
         from core.org_context import effective_org_id
         org_id = effective_org_id()
 
-        # Per-org disk path so two orgs running the same platform
-        # in parallel don't clobber each other's session file.
+        # Per-org disk path so two orgs running the same platform in
+        # parallel don't clobber each other's session file. We mutate
+        # self.config.session_file here (not a local var) because the
+        # rest of PlaywrightSession reads self.config.session_file
+        # throughout (_handle_login, __exit__, error messages). The
+        # mutation is bounded to this PlaywrightSession instance —
+        # SessionConfig dataclasses are constructed fresh per call
+        # site (blueprints/remote_login.py:_service_configs uses
+        # dataclasses.replace() per request; uploaders construct each
+        # call). Adding a guard so a second _open() on the same
+        # instance does not double-nest the path:
         if org_id is not None:
             base = os.path.basename(self.config.session_file)
             parent = os.path.dirname(self.config.session_file)
-            per_org_dir = os.path.join(parent, ".sessions", f"org_{org_id}")
-            os.makedirs(per_org_dir, exist_ok=True)
-            self.config.session_file = os.path.join(per_org_dir, base)
+            # If we already moved this config into .sessions/org_X/,
+            # don't move it AGAIN on a second _open() call.
+            if os.path.basename(parent) != f"org_{org_id}":
+                per_org_dir = os.path.join(parent, ".sessions", f"org_{org_id}")
+                os.makedirs(per_org_dir, exist_ok=True)
+                self.config.session_file = os.path.join(per_org_dir, base)
 
         have_session = has_session(self.config.session_file, org_id=org_id)
         # Non-interactive callers can't recover from a missing session —

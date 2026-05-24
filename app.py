@@ -211,6 +211,8 @@ def create_app() -> Flask:
     # invitee can hit the signup form without an existing session).
     _PUBLIC_ENDPOINTS = {
         "auth.login", "auth.login_submit", "_health", "_health_details", "_health_alerts", "static",
+        # Public marketing landing page at /; dashboard is behind the gate at /dashboard.
+        "landing.index",
         "invitations.accept_get", "invitations.accept_post",
         # Phase γ: second-factor screens (the session isn't fully
         # authenticated until the second factor is verified, so a
@@ -263,7 +265,8 @@ def create_app() -> Flask:
     # Phase γ: enforce org-level "Require 2FA" on protected paths.
     # We deliberately exempt LEGACY_PASSWORD_ENABLED sessions (no user_id)
     # so the existing test suite + ops rollback path don't trip this gate.
-    _ENFORCE_2FA_PATHS = ("/", "/upload", "/media/", "/review", "/confirm")
+    # / is now the public landing page; the dashboard moved to /dashboard.
+    _ENFORCE_2FA_PATHS = ("/dashboard", "/upload", "/media/", "/review", "/confirm")
     _EXEMPT_2FA_PATHS = (
         "/settings/2fa", "/settings/security", "/logout", "/static",
         "/login", "/recover",
@@ -670,7 +673,9 @@ def create_app() -> Flask:
     from blueprints.upload import bp as upload_bp
     from blueprints.remote_login import bp as remote_login_bp
     from blueprints.media import bp as media_bp
+    from blueprints.landing import bp as landing_bp
 
+    app.register_blueprint(landing_bp)
     app.register_blueprint(scan_bp)
     app.register_blueprint(upload_bp)
     app.register_blueprint(settings_bp)

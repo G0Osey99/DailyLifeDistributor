@@ -44,10 +44,10 @@ def _safe_next(nxt: str) -> str:
     """
     nxt = (nxt or "").strip()
     if not nxt or nxt.startswith("//") or nxt.startswith("/\\") or "\\" in nxt:
-        return url_for("scan.index")
+        return url_for("scan.dashboard")
     parsed = urllib.parse.urlparse(nxt)
     if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
-        return url_for("scan.index")
+        return url_for("scan.dashboard")
     return nxt
 
 
@@ -73,7 +73,7 @@ _legacy_enabled = auth.legacy_enabled
 @bp.route("/login", methods=["GET"])
 def login():
     if is_authenticated():
-        return redirect(url_for("scan.index"))
+        return redirect(url_for("scan.dashboard"))
     return render_template(
         "login.html", error=None, legacy_enabled=_legacy_enabled(),
     )
@@ -416,7 +416,7 @@ def switch_org():
     except ValueError:
         new_org_id = 0
     if not new_org_id:
-        return _safe_referrer_redirect("scan.index")
+        return _safe_referrer_redirect("scan.dashboard")
     from core import org_store
     uid = auth.current_user_id()
     mem = org_store.get_membership(user_id=uid, org_id=new_org_id)
@@ -424,4 +424,4 @@ def switch_org():
         from flask import abort
         abort(403)
     session["current_org_id"] = new_org_id
-    return _safe_referrer_redirect("scan.index")
+    return _safe_referrer_redirect("scan.dashboard")

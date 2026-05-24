@@ -298,6 +298,6 @@ def accept_post():
         )
     except Exception:
         log.exception("welcome send failed for %s", inv["email"])
-    if "scan.index" in current_app.view_functions:
-        return redirect(url_for("scan.index"))
+    if "scan.dashboard" in current_app.view_functions:
+        return redirect(url_for("scan.dashboard"))
     return redirect("/")

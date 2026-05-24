@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Daily Life Distributor &mdash; One day's media, every platform</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='8' y='12' width='84' height='76' rx='16' fill='%23215fd6' opacity='.18'/><path d='M28 34h44M28 50h30M28 66h18' stroke='%23215fd6' stroke-width='8' stroke-linecap='round'/><circle cx='74' cy='66' r='9' fill='%23215fd6'/></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+      --shell-bg:            oklch(0.985 0.003 80);
+      --shell-panel:         oklch(1 0 0);
+      --shell-sunken:        oklch(0.965 0.004 80);
+      --shell-border:        oklch(0.91 0.005 80);
+      --shell-border-strong: oklch(0.83 0.006 80);
+      --shell-text:          oklch(0.22 0.012 250);
+      --shell-text-muted:    oklch(0.5 0.012 250);
+      --shell-text-dim:      oklch(0.65 0.008 250);
+
+      --accent:        oklch(0.58 0.15 245);
+      --accent-hover:  oklch(0.64 0.16 245);
+      --accent-soft:   oklch(0.58 0.15 245 / 0.12);
+      --accent-faint:  oklch(0.58 0.15 245 / 0.06);
+
+      --ok:        oklch(0.62 0.16 150);
+      --ok-soft:   oklch(0.7 0.16 150 / 0.14);
+      --warn:      oklch(0.68 0.14 80);
+      --warn-soft: oklch(0.78 0.14 80 / 0.18);
+      --err:       oklch(0.55 0.20 25);
+      --info:      oklch(0.55 0.14 245);
+      --info-soft: oklch(0.65 0.14 245 / 0.14);
+
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-xl: 16px;
+      --radius-2xl: 22px;
+      --shadow-card: 0 1px 2px rgba(15,22,35,.04), 0 4px 12px rgba(15,22,35,.04);
+      --shadow-pop:  0 8px 28px rgba(15,22,35,.10), 0 2px 6px rgba(15,22,35,.06);
+      --shadow-hero: 0 1px 2px rgba(15,22,35,.04), 0 24px 60px rgba(15,22,35,.10), 0 60px 140px rgba(15,22,35,.08);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    html { background: oklch(0.96 0.004 80); }
+    body {
+      font-family: var(--font-sans);
+      font-size: 15px;
+      line-height: 1.55;
+      color: var(--shell-text);
+      background:
+        radial-gradient(900px 500px at 88% -8%, var(--accent-soft), transparent 65%),
+        radial-gradient(700px 400px at 8% 12%, oklch(0.78 0.10 90 / 0.10), transparent 65%),
+        oklch(0.96 0.004 80);
+      background-attachment: fixed;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; cursor: pointer; }
+
+    /* Top nav */
+    .nav {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 22px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .brand-mark {
+      width: 38px; height: 38px;
+      border-radius: 11px;
+      background: var(--accent);
+      color: #fff;
+      display: grid; place-items: center;
+      box-shadow: 0 4px 14px var(--accent-soft);
+    }
+    .brand-title { font-weight: 600; font-size: 15px; line-height: 1.1; letter-spacing: -0.01em; }
+    .brand-sub {
+      font-size: 11px; color: var(--shell-text-muted);
+      letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px;
+    }
+    .nav-links { display: flex; align-items: center; gap: 4px; }
+    .nav-link {
+      padding: 8px 13px;
+      font-size: 0.88rem;
+      color: var(--shell-text-muted);
+      border-radius: var(--radius-md);
+      transition: color .15s ease, background .15s ease;
+    }
+    .nav-link:hover { color: var(--shell-text); background: var(--shell-sunken); }
+    .nav-cta {
+      margin-left: 8px;
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 9px 16px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: var(--radius-md);
+      font-size: 0.88rem;
+      font-weight: 500;
+      border: 1px solid var(--accent);
+      transition: background .18s ease, box-shadow .18s ease, transform .1s;
+    }
+    .nav-cta:hover { background: var(--accent-hover); box-shadow: 0 4px 14px var(--accent-soft); }
+    .nav-cta:active { transform: scale(0.985); }
+
+    /* Layout */
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
+
+    /* Hero */
+    .hero {
+      padding: 60px 0 80px;
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 60px;
+      align-items: center;
+    }
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 5px 11px 5px 8px;
+      background: var(--shell-panel);
+      border: 1px solid var(--shell-border);
+      border-radius: 999px;
+      font-size: 0.76rem;
+      color: var(--shell-text-muted);
+      box-shadow: var(--shadow-card);
+      margin-bottom: 22px;
+    }
+    .eyebrow-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0 3px var(--ok-soft);
+    }
+    .eyebrow strong { color: var(--shell-text); font-weight: 600; }
+    h1.hero-title {
+      font-size: clamp(2.2rem, 4.4vw, 3.4rem);
+      font-weight: 600;
+      line-height: 1.04;
+      letter-spacing: -0.022em;
+      color: var(--shell-text);
+      text-wrap: balance;
+    }
+    h1.hero-title .accent { color: var(--accent); }
+    h1.hero-title em {
+      font-style: normal;
+      background: linear-gradient(180deg, transparent 62%, var(--accent-soft) 62%);
+      padding: 0 4px;
+      margin: 0 -2px;
+    }
+    .hero-lede {
+      margin-top: 20px;
+      font-size: 1.08rem;
+      color: var(--shell-text-muted);
+      max-width: 540px;
+      line-height: 1.55;
+      text-wrap: pretty;
+    }
+    .hero-actions {
+      margin-top: 30px;
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 20px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      font-size: 0.92rem;
+      font-weight: 500;
+      transition: all .18s cubic-bezier(.2,.7,.3,1);
+      white-space: nowrap;
+    }
+    .btn:active { transform: scale(0.985); }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      box-shadow: 0 1px 0 oklch(0.42 0.16 245 / 0.4) inset, 0 4px 14px var(--accent-soft);
+    }
+    .btn-primary:hover { background: var(--accent-hover); box-shadow: 0 1px 0 oklch(0.42 0.16 245 / 0.4) inset, 0 6px 20px var(--accent-soft); }
+    .btn-secondary {
+      background: var(--shell-panel);
+      color: var(--shell-text);
+      border-color: var(--shell-border-strong);
+    }
+    .btn-secondary:hover { background: var(--shell-sunken); }
+    .hero-meta {
+      margin-top: 26px;
+      display: flex; gap: 22px; flex-wrap: wrap;
+      font-size: 0.82rem; color: var(--shell-text-dim);
+    }
+    .hero-meta-item { display: inline-flex; align-items: center; gap: 7px; }
+    .hero-meta-item svg { color: var(--accent); }
+
+    /* Hero preview card */
+    .preview {
+      position: relative;
+      background: var(--shell-panel);
+      border: 1px solid var(--shell-border);
+      border-radius: var(--radius-2xl);
+      box-shadow: var(--shadow-hero);
+      overflow: hidden;
+      transform: perspective(1400px) rotateY(-3deg) rotateX(2deg);
+      transform-origin: center;
+    }
+    .preview::before {
+      content: "";
+      position: absolute; inset: 0;
+      background: linear-gradient(180deg, transparent 0%, oklch(0.96 0.004 80 / 0.4) 100%);
+      pointer-events: none;
+    }
+    .preview-bar {
+      display: flex; align-items: center; gap: 7px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--shell-border);
+      background: var(--shell-sunken);
+    }
+    .preview-dot { width: 11px; height: 11px; border-radius: 50%; background: oklch(0.85 0.005 80); }
+    .preview-dot.r { background: oklch(0.78 0.14 25 / 0.6); }
+    .preview-dot.y { background: oklch(0.85 0.14 80 / 0.6); }
+    .preview-dot.g { background: oklch(0.78 0.14 150 / 0.6); }
+    .preview-url {
+      margin-left: 10px;
+      flex: 1;
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      color: var(--shell-text-dim);
+      padding: 4px 10px;
+      background: var(--shell-panel);
+      border: 1px solid var(--shell-border);
+      border-radius: 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .preview-runbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--shell-border);
+      background: var(--shell-panel);
+    }
+    .runbar-title {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.82rem;
+      color: var(--shell-text);
+      font-weight: 500;
+    }
+    .runbar-pulse {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--info);
+      box-shadow: 0 0 0 4px var(--info-soft);
+      animation: pulse 1.6s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 3px var(--info-soft); opacity: 1; }
+      50%      { box-shadow: 0 0 0 6px oklch(0.65 0.14 245 / 0.06); opacity: 0.85; }
+    }
+    .runbar-meta {
+      display: flex; align-items: center; gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--shell-text-muted);
+    }
+    .runbar-meta .sep { color: var(--shell-border-strong); }
+    .runbar-eta { color: var(--shell-text); font-weight: 500; }
+
+    .preview-body { padding: 10px 14px 14px; }
+    .pv-row {
+      display: grid;
+      grid-template-columns: 72px 1fr auto auto;
+      gap: 14px;
+      align-items: center;
+      padding: 12px 6px;
+      transition: background .2s;
+    }
+    .pv-row + .pv-row { border-top: 1px solid var(--shell-border); }
+    .pv-date {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      color: var(--shell-text-muted);
+      padding: 5px 8px;
+      background: var(--shell-sunken);
+      border-radius: 6px;
+      text-align: center;
+      line-height: 1.2;
+    }
+    .pv-title {
+      font-size: 0.88rem;
+      color: var(--shell-text);
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .pv-title .sub {
+      display: block;
+      font-size: 0.74rem;
+      color: var(--shell-text-dim);
+      font-weight: 400;
+      margin-top: 2px;
+    }
+    .pv-pills { display: flex; gap: 4px; }
+    .pv-pill {
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      display: grid; place-items: center;
+      font-size: 10px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .pv-pill.yt { background: oklch(0.6 0.18 25); }
+    .pv-pill.sh { background: oklch(0.55 0.18 5); }
+    .pv-pill.sc { background: oklch(0.55 0.14 280); }
+    .pv-pill.vs { background: oklch(0.55 0.18 200); }
+    .pv-pill.rk { background: oklch(0.6 0.13 145); }
+    .pv-pill.em { background: oklch(0.5 0.04 250); }
+
+    .pv-progress {
+      grid-column: 2 / 3;
+      margin-top: -6px;
+      height: 3px;
+      background: var(--shell-sunken);
+      border-radius: 3px;
+      overflow: hidden;
+      align-self: end;
+    }
+    .pv-progress > span {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width .15s linear;
+    }
+    .pv-status {
+      font-size: 0.7rem;
+      font-family: var(--font-mono);
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-weight: 500;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      min-width: 56px;
+      text-align: center;
+    }
+    .pv-status.ok { background: var(--ok-soft); color: var(--ok); }
+    .pv-status.run { background: var(--info-soft); color: var(--info); }
+    .pv-status.queue { background: var(--shell-sunken); color: var(--shell-text-dim); }
+
+    .preview-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 18px;
+      border-top: 1px solid var(--shell-border);
+      background: var(--shell-sunken);
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--shell-text-muted);
+    }
+    .preview-foot-bar {
+      flex: 1;
+      height: 4px;
+      background: var(--shell-panel);
+      border-radius: 4px;
+      border: 1px solid var(--shell-border);
+      overflow: hidden;
+    }
+    .preview-foot-bar > span {
+      display: block; height: 100%;
+      background: var(--accent);
+      transition: width .2s linear;
+    }
+    .preview-foot strong { color: var(--shell-text); font-weight: 500; }
+
+    .pv-schedule {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--ok);
+      background: var(--ok-soft);
+      padding: 2px 7px 2px 5px;
+      border-radius: 999px;
+      margin-top: 4px;
+      width: max-content;
+    }
+    .pv-schedule svg { flex-shrink: 0; }
+
+    /* Section */
+    section { padding: 60px 0; }
+    .section-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--accent);
+      margin-bottom: 12px;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .section-eyebrow::before {
+      content: "";
+      width: 18px; height: 1px; background: var(--accent);
+    }
+    .section-title {
+      font-size: clamp(1.6rem, 2.6vw, 2.1rem);
+      font-weight: 600;
+      letter-spacing: -0.018em;
+      color: var(--shell-text);
+      max-width: 720px;
+      text-wrap: balance;
+    }
+    .section-lede {
+      margin-top: 12px;
+      color: var(--shell-text-muted);
+      max-width: 640px;
+      font-size: 1rem;
+      text-wrap: pretty;
+    }
+
+    /* Platforms */
+    .platforms {
+      margin-top: 36px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+    .platform {
+      background: var(--shell-panel);
+      border: 1px solid var(--shell-border);
+      border-radius: var(--radius-lg);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+      box-shadow: var(--shadow-card);
+    }
+    .platform:hover {
+      border-color: var(--shell-border-strong);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-pop);
+    }
+    .platform-head {
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .platform-icon {
+      width: 38px; height: 38px;
+      border-radius: 10px;
+      display: grid; place-items: center;
+      color: #fff;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+    .platform-meta {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--shell-text-dim);
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: var(--shell-sunken);
+      border: 1px solid var(--shell-border);
+    }
+    .platform-name {
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--shell-text);
+      letter-spacing: -0.01em;
+    }
+    .platform-desc {
+      color: var(--shell-text-muted);
+      font-size: 0.88rem;
+      line-height: 1.5;
+    }
+    .platform-tags {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto;
+      padding-top: 4px;
+    }
+    .platform-tag {
+      font-size: 0.7rem;
+      font-family: var(--font-mono);
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--accent-faint);
+      color: var(--accent);
+    }
+
+    /* Steps */
+    .steps {
+      margin-top: 40px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      position: relative;
+    }
+    .step {
+      background: var(--shell-panel);
+      border: 1px solid var(--shell-border);
+      border-radius: var(--radius-lg);
+      padding: 22px 20px;
+      box-shadow: var(--shadow-card);
+      position: relative;
+    }
+    .step-num {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      color: var(--accent);
+      font-weight: 500;
+      letter-spacing: 0.06em;
+    }
+    .step-title {
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--shell-text);
+      margin-top: 10px;
+      letter-spacing: -0.01em;
+    }
+    .step-desc {
+      margin-top: 8px;
+      font-size: 0.86rem;
+      color: var(--shell-text-muted);
+      line-height: 1.5;
+    }
+    .step-illu {
+      margin-top: 14px;
+      height: 60px;
+      border-radius: 8px;
+      background: var(--shell-sunken);
+      border: 1px dashed var(--shell-border);
+      display: grid; place-items: center;
+      color: var(--shell-text-dim);
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Features */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 36px;
+    }
+    .feature {
+      padding: 22px;
+      background: var(--shell-panel);
+      border: 1px solid var(--shell-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
+      transition: border-color .2s ease;
+    }
+    .feature:hover { border-color: var(--shell-border-strong); }
+    .feature-icon {
+      width: 36px; height: 36px;
+      border-radius: 9px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      display: grid; place-items: center;
+      margin-bottom: 14px;
+    }
+    .feature-title {
+      font-weight: 600;
+      font-size: 0.98rem;
+      color: var(--shell-text);
+      letter-spacing: -0.01em;
+    }
+    .feature-desc {
+      margin-top: 8px;
+      font-size: 0.86rem;
+      color: var(--shell-text-muted);
+      line-height: 1.5;
+    }
+
+    /* Stats */
+    .stats {
+      margin-top: 36px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      background: var(--shell-panel);
+      border: 1px solid var(--shell-border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-card);
+    }
+    .stat {
+      padding: 24px 24px;
+      border-right: 1px solid var(--shell-border);
+    }
+    .stat:last-child { border-right: none; }
+    .stat-value {
+      font-size: 1.75rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--shell-text);
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-value .unit {
+      font-size: 0.9rem;
+      color: var(--shell-text-muted);
+      margin-left: 2px;
+    }
+    .stat-label {
+      margin-top: 6px;
+      font-size: 0.76rem;
+      color: var(--shell-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    /* CTA */
+    .cta-block {
+      margin: 40px 0 70px;
+      padding: 48px 40px;
+      background:
+        radial-gradient(800px 300px at 50% 0%, var(--accent-soft), transparent 70%),
+        var(--shell-panel);
+      border: 1px solid var(--shell-border);
+      border-radius: var(--radius-2xl);
+      text-align: center;
+      box-shadow: var(--shadow-card);
+    }
+    .cta-block h2 {
+      font-size: clamp(1.6rem, 2.6vw, 2.1rem);
+      font-weight: 600;
+      letter-spacing: -0.018em;
+      max-width: 560px;
+      margin: 0 auto;
+      text-wrap: balance;
+    }
+    .cta-block p {
+      margin-top: 12px;
+      color: var(--shell-text-muted);
+      max-width: 540px;
+      margin-left: auto; margin-right: auto;
+      font-size: 1rem;
+    }
+    .cta-actions {
+      margin-top: 22px;
+      display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+    }
+
+    /* Footer */
+    footer.foot {
+      border-top: 1px solid var(--shell-border);
+      padding: 28px 0 36px;
+    }
+    .foot-inner {
+      max-width: 1180px; margin: 0 auto; padding: 0 28px;
+      display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+      align-items: center;
+    }
+    .foot-links {
+      display: flex; gap: 18px;
+      font-size: 0.82rem; color: var(--shell-text-muted);
+    }
+    .foot-links a:hover { color: var(--shell-text); }
+    .foot-copy {
+      font-size: 0.78rem;
+      color: var(--shell-text-dim);
+      font-family: var(--font-mono);
+    }
+
+    /* Responsive */
+    @media (max-width: 960px) {
+      .hero { grid-template-columns: 1fr; gap: 50px; padding: 30px 0 50px; }
+      .preview { transform: none; }
+      .platforms, .features { grid-template-columns: repeat(2, 1fr); }
+      .steps { grid-template-columns: repeat(2, 1fr); }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .stat:nth-child(2) { border-right: none; }
+      .stat:nth-child(1), .stat:nth-child(2) { border-bottom: 1px solid var(--shell-border); }
+    }
+    @media (max-width: 580px) {
+      .nav-links .nav-link:not(.always) { display: none; }
+      .platforms, .features, .steps { grid-template-columns: 1fr; }
+      .stats { grid-template-columns: 1fr; }
+      .stat { border-right: none; border-bottom: 1px solid var(--shell-border); }
+      .stat:last-child { border-bottom: none; }
+      h1.hero-title { font-size: 2rem; }
+      .cta-block { padding: 36px 22px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .runbar-pulse { animation: none; }
+      .pv-progress > span, .preview-foot-bar > span { transition: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="nav">
+      <a href="{{ url_for('landing.index') }}" class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <rect x="2" y="3" width="20" height="18" rx="4" fill="currentColor" opacity=".25"/>
+            <path d="M7 8h10M7 12h7M7 16h4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+            <circle cx="18" cy="16" r="2.2" fill="#fff"/>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title">Daily Life</div>
+          <div class="brand-sub">Distributor</div>
+        </div>
+      </a>
+
+      <nav class="nav-links">
+        <a href="#platforms" class="nav-link">Platforms</a>
+        <a href="#how" class="nav-link">How it works</a>
+        <a href="#features" class="nav-link">Features</a>
+        <a href="https://github.com/G0Osey99/DailyLifeDistributor" class="nav-link" target="_blank" rel="noopener">Docs</a>
+        <a href="{{ url_for('scan.dashboard') }}" class="nav-link always">Sign in</a>
+        <a href="{{ url_for('scan.dashboard') }}" class="nav-cta always">
+          Open dashboard
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 5l7 7-7 7"/></svg>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="wrap hero">
+      <div class="hero-copy">
+        <div class="eyebrow">
+          <span class="eyebrow-dot" aria-hidden="true"></span>
+          <span><strong>Self-hosted</strong> &middot; Flask + Playwright &middot; MIT</span>
+        </div>
+
+        <h1 class="hero-title">
+          One day's media.<br>
+          <em>Every platform.</em><br>
+          <span class="accent">One workflow.</span>
+        </h1>
+
+        <p class="hero-lede">
+          Daily Life Distributor takes a single day's worth of video, audio and
+          metadata from your planning spreadsheet and publishes it everywhere
+          your daily devotional program needs to land &mdash; YouTube, Shorts,
+          SimpleCast, Vista Social, Rock and Rock Email &mdash; in parallel,
+          with live progress streaming to your browser.
+        </p>
+
+        <div class="hero-actions">
+          <a href="{{ url_for('scan.dashboard') }}" class="btn btn-primary">
+            Sign in to dashboard
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 5l7 7-7 7"/></svg>
+          </a>
+          <a href="#how" class="btn btn-secondary">
+            See how it works
+          </a>
+        </div>
+
+        <div class="hero-meta">
+          <span class="hero-meta-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+            6 destinations
+          </span>
+          <span class="hero-meta-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+            Parallel uploads
+          </span>
+          <span class="hero-meta-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+            Resumable runs
+          </span>
+          <span class="hero-meta-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+            Self-hosted
+          </span>
+        </div>
+      </div>
+
+      <!-- Live-feeling dashboard preview (animated via inline JS at end of body) -->
+      <div class="hero-preview" id="hero-preview">
+        <div class="preview" id="preview-card">
+          <div class="preview-bar">
+            <span class="preview-dot r"></span>
+            <span class="preview-dot y"></span>
+            <span class="preview-dot g"></span>
+            <span class="preview-url">autoalert.pro/dashboard</span>
+          </div>
+
+          <div class="preview-runbar">
+            <div class="runbar-title">
+              <span class="runbar-pulse" aria-hidden="true"></span>
+              <span>Tuesday run &middot; 4 dates</span>
+            </div>
+            <div class="runbar-meta">
+              <span id="rb-active">2 uploading</span>
+              <span class="sep">&middot;</span>
+              <span id="rb-done">1 done</span>
+              <span class="sep">&middot;</span>
+              <span class="runbar-eta" id="rb-eta">ETA 60s</span>
+            </div>
+          </div>
+
+          <div class="preview-body" id="preview-body"></div>
+
+          <div class="preview-foot">
+            <span><strong id="pf-overall">0%</strong> overall</span>
+            <div class="preview-foot-bar"><span id="pf-bar" style="width:0%"></span></div>
+            <span>4 workers &middot; parallel</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap" style="padding: 0;">
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-value">6<span class="unit">/ platforms</span></div>
+          <div class="stat-label">Destinations published in one run</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">4<span class="unit">&times; parallel</span></div>
+          <div class="stat-label">Dates uploading simultaneously</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">1<span class="unit">spreadsheet</span></div>
+          <div class="stat-label">Source of truth for metadata</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">0<span class="unit">retyping</span></div>
+          <div class="stat-label">Titles, tags, schedule pulled from the sheet</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap" id="platforms">
+      <div class="section-eyebrow">Destinations</div>
+      <h2 class="section-title">Every channel a devotional program touches &mdash; published in one pass.</h2>
+      <p class="section-lede">
+        Toggle each destination per run. Two use official APIs; four are driven
+        through real browser sessions because the platforms have no public API.
+      </p>
+
+      <div class="platforms">
+        <article class="platform">
+          <div class="platform-head">
+            <div class="platform-icon" style="background: oklch(0.6 0.18 25);">YT</div>
+            <div class="platform-meta">API</div>
+          </div>
+          <div class="platform-name">YouTube Video</div>
+          <div class="platform-desc">Horizontal video, thumbnail, title, description, tags and scheduled publish &mdash; pushed through the Data API v3.</div>
+          <div class="platform-tags">
+            <span class="platform-tag">OAuth2</span>
+            <span class="platform-tag">Scheduled</span>
+          </div>
+        </article>
+
+        <article class="platform">
+          <div class="platform-head">
+            <div class="platform-icon" style="background: oklch(0.55 0.18 5);">SH</div>
+            <div class="platform-meta">API</div>
+          </div>
+          <div class="platform-name">YouTube Shorts</div>
+          <div class="platform-desc">Vertical short with its own thumbnail and metadata, on the same OAuth session. Title suggestions from a local LLM on request.</div>
+          <div class="platform-tags">
+            <span class="platform-tag">Vertical</span>
+            <span class="platform-tag">AI titles</span>
+          </div>
+        </article>
+
+        <article class="platform">
+          <div class="platform-head">
+            <div class="platform-icon" style="background: oklch(0.55 0.14 280);">SC</div>
+            <div class="platform-meta">Browser</div>
+          </div>
+          <div class="platform-name">SimpleCast</div>
+          <div class="platform-desc">Podcast episode with audio, summary, notes and optional scheduled publish &mdash; driven through your real SimpleCast dashboard.</div>
+          <div class="platform-tags">
+            <span class="platform-tag">Podcast</span>
+            <span class="platform-tag">Playwright</span>
+          </div>
+        </article>
+
+        <article class="platform">
+          <div class="platform-head">
+            <div class="platform-icon" style="background: oklch(0.55 0.18 200);">VS</div>
+            <div class="platform-meta">Browser</div>
+          </div>
+          <div class="platform-name">Vista Social</div>
+          <div class="platform-desc">Social post bundling the video with a caption and schedule, distributed across the channels you've connected in Vista.</div>
+          <div class="platform-tags">
+            <span class="platform-tag">Multi-channel</span>
+            <span class="platform-tag">Captioned</span>
+          </div>
+        </article>
+
+        <article class="platform">
+          <div class="platform-head">
+            <div class="platform-icon" style="background: oklch(0.6 0.13 145);">RK</div>
+            <div class="platform-meta">Browser</div>
+          </div>
+          <div class="platform-name">Rock &mdash; Daily Experience</div>
+          <div class="platform-desc">Parent devotional entry plus Spotlight, Vista and Reflection children, with an Unsplash image attached automatically.</div>
+          <div class="platform-tags">
+            <span class="platform-tag">Nested</span>
+            <span class="platform-tag">Imagery</span>
+          </div>
+        </article>
+
+        <article class="platform">
+          <div class="platform-head">
+            <div class="platform-icon" style="background: oklch(0.5 0.04 250);">EM</div>
+            <div class="platform-meta">Browser</div>
+          </div>
+          <div class="platform-name">Rock Email &amp; SMS</div>
+          <div class="platform-desc">Drafts the day's email and SMS broadcast with description, play-button thumbnail, and the real YouTube watch URL once the video lands.</div>
+          <div class="platform-tags">
+            <span class="platform-tag">Auto-wait</span>
+            <span class="platform-tag">Draft</span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="wrap" id="how">
+      <div class="section-eyebrow">Workflow</div>
+      <h2 class="section-title">Pick folders, match dates, run. The rest is automatic.</h2>
+      <p class="section-lede">
+        Your media stays on your machine. The browser streams just the dates
+        being worked on, in chunks; the VPS never holds more than a few days'
+        files at once.
+      </p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">/ 01</div>
+          <div class="step-title">Pick folders &amp; sheet</div>
+          <div class="step-desc">Horizontal, vertical, podcast, thumbnails, and your planning .xlsx &mdash; chosen with the browser folder picker.</div>
+          <div class="step-illu">
+            <svg width="100%" height="100%" viewBox="0 0 240 60" preserveAspectRatio="none">
+              <rect x="14" y="14" width="40" height="30" rx="4" fill="oklch(0.96 0.005 80)" stroke="oklch(0.83 0.006 80)"/>
+              <rect x="62" y="14" width="40" height="30" rx="4" fill="oklch(0.96 0.005 80)" stroke="oklch(0.83 0.006 80)"/>
+              <rect x="110" y="14" width="40" height="30" rx="4" fill="oklch(0.96 0.005 80)" stroke="oklch(0.83 0.006 80)"/>
+              <rect x="158" y="14" width="40" height="30" rx="4" fill="oklch(0.96 0.005 80)" stroke="oklch(0.83 0.006 80)"/>
+              <path d="M14 50 L198 50" stroke="oklch(0.85 0.006 80)" stroke-dasharray="2 3"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num">/ 02</div>
+          <div class="step-title">Match dates</div>
+          <div class="step-desc">The server parses filenames in YYMMDD / DDMMYY / MMDD and aligns them against rows in your sheet.</div>
+          <div class="step-illu">
+            <svg width="100%" height="100%" viewBox="0 0 240 60" preserveAspectRatio="none">
+              <text x="20" y="32" font-family="Geist Mono" font-size="11" fill="oklch(0.5 0.012 250)">240114_ep.mp4</text>
+              <path d="M125 30 L155 30" stroke="oklch(0.58 0.15 245)" stroke-width="1.5"/>
+              <path d="M148 26 L156 30 L148 34" stroke="oklch(0.58 0.15 245)" stroke-width="1.5" fill="none"/>
+              <text x="162" y="32" font-family="Geist Mono" font-size="11" fill="oklch(0.58 0.15 245)" font-weight="600">2024-01-14</text>
+            </svg>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num">/ 03</div>
+          <div class="step-title">Choose dates &amp; toggles</div>
+          <div class="step-desc">Tick the dates and platforms for this run. Per-element defaults come from your config.</div>
+          <div class="step-illu">
+            <svg width="100%" height="100%" viewBox="0 0 240 60" preserveAspectRatio="none">
+              <rect x="14" y="14" width="22" height="12" rx="6" fill="oklch(0.58 0.15 245)"/>
+              <circle cx="30" cy="20" r="4" fill="#fff"/>
+              <rect x="46" y="14" width="22" height="12" rx="6" fill="oklch(0.58 0.15 245)"/>
+              <circle cx="62" cy="20" r="4" fill="#fff"/>
+              <rect x="78" y="14" width="22" height="12" rx="6" fill="oklch(0.93 0.006 250)" stroke="oklch(0.83 0.006 80)"/>
+              <circle cx="84" cy="20" r="4" fill="#fff"/>
+              <rect x="14" y="36" width="22" height="12" rx="6" fill="oklch(0.58 0.15 245)"/>
+              <circle cx="30" cy="42" r="4" fill="#fff"/>
+              <rect x="46" y="36" width="22" height="12" rx="6" fill="oklch(0.93 0.006 250)" stroke="oklch(0.83 0.006 80)"/>
+              <circle cx="52" cy="42" r="4" fill="#fff"/>
+              <rect x="78" y="36" width="22" height="12" rx="6" fill="oklch(0.58 0.15 245)"/>
+              <circle cx="94" cy="42" r="4" fill="#fff"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num">/ 04</div>
+          <div class="step-title">Run &amp; watch</div>
+          <div class="step-desc">Per-row progress streams over SSE. Email rows wait for their YouTube watch URL automatically.</div>
+          <div class="step-illu">
+            <svg width="100%" height="100%" viewBox="0 0 240 60" preserveAspectRatio="none">
+              <rect x="14" y="22" width="212" height="6" rx="3" fill="oklch(0.93 0.006 250)"/>
+              <rect x="14" y="22" width="140" height="6" rx="3" fill="oklch(0.58 0.15 245)"/>
+              <text x="14" y="46" font-family="Geist Mono" font-size="10" fill="oklch(0.5 0.012 250)">3 / 4 dates &middot; 68% &middot; 4m 12s remaining</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap" id="features">
+      <div class="section-eyebrow">Why teams use it</div>
+      <h2 class="section-title">Built for the operator who manages a daily devotional and never wants to think about uploads.</h2>
+
+      <div class="features">
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/></svg>
+          </div>
+          <div class="feature-title">Excel is the source of truth</div>
+          <div class="feature-desc">Map columns once. Titles, descriptions, tags, scripture, prayer and topic all come from your planning sheet &mdash; no copy/paste, no drift.</div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14.01l-3-3"/></svg>
+          </div>
+          <div class="feature-title">Resumable runs</div>
+          <div class="feature-desc">Every attempt lands in SQLite. If a batch crashes, re-run the rest &mdash; succeeded dates are skipped automatically.</div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+          <div class="feature-title">Live progress over SSE</div>
+          <div class="feature-desc">Bytes uploaded, processing phase, success / error &mdash; per row, per platform, per date. No spinners that just spin.</div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1"/></svg>
+          </div>
+          <div class="feature-title">Self-hosted &amp; encrypted</div>
+          <div class="feature-desc">Run locally with <span style="font-family:var(--font-mono);font-size:0.82em;">python app.py</span>, or behind your VPS. All platform secrets live in a Fernet-encrypted store on disk.</div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          </div>
+          <div class="feature-title">Local LLM title suggestions</div>
+          <div class="feature-desc">Feeds your transcript column into a locally-running model (llamafile or Ollama). No audio transcription, no extra upload.</div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+          </div>
+          <div class="feature-title">Calendar &amp; history view</div>
+          <div class="feature-desc">See what's scheduled and what's published across all destinations on one calendar, with the full per-platform outcome trail in History.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <div class="cta-block">
+        <h2>A week of distribution work, condensed into one screen.</h2>
+        <p>Open the dashboard, pick today's folders, and let the run finish while you do something else.</p>
+        <div class="cta-actions">
+          <a href="{{ url_for('scan.dashboard') }}" class="btn btn-primary">
+            Sign in to dashboard
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 5l7 7-7 7"/></svg>
+          </a>
+          <a href="https://github.com/G0Osey99/DailyLifeDistributor" target="_blank" rel="noopener" class="btn btn-secondary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.07 0 0 .97-.31 3.18 1.18a11.04 11.04 0 0 1 5.79 0c2.21-1.49 3.18-1.18 3.18-1.18.63 1.6.23 2.78.11 3.07.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.68.8.56C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-inner">
+      <div class="foot-copy">&copy; 2026 Daily Life Distributor</div>
+      <div class="foot-links">
+        <a href="{{ url_for('scan.dashboard') }}">Dashboard</a>
+        <a href="https://github.com/G0Osey99/DailyLifeDistributor" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/G0Osey99/DailyLifeDistributor/blob/main/README.md" target="_blank" rel="noopener">Docs</a>
+        <a href="/health">Status</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Animated dashboard preview — same shape as the design's React HeroPreview,
+    // rewritten as a few dozen lines of vanilla JS so we don't ship React on a
+    // marketing page. Respects prefers-reduced-motion via the CSS rule above
+    // (transitions removed), and pauses the JS loop when the page is hidden.
+    (function () {
+      const ROWS = [
+        { date: "Mar 14", title: "Anchored — when the storm rolls in",  sub: "Day 73 · Romans 8",      platforms: ["yt","sh","sc","vs","rk","em"], scheduled: "publishes 06:00 ET", which: "a" },
+        { date: "Mar 15", title: "The slow work of joy",                sub: "Day 74 · Philippians 4", platforms: ["yt","sh","sc","rk","em"],      which: "b" },
+        { date: "Mar 16", title: "What we carry, what we leave",        sub: "Day 75 · Hebrews 12",    platforms: ["yt","sh","sc","vs","rk"],      which: "c" },
+        { date: "Mar 17", title: "Light enough for today",              sub: "Day 76 · Matthew 6",     platforms: ["yt","sh","sc","vs","rk","em"], which: null },
+      ];
+      const LABEL = { yt: "YT", sh: "SH", sc: "SC", vs: "VS", rk: "RK", em: "EM" };
+      const STATUS_LABEL = { ok: "done", run: "uploading", queue: "queued" };
+
+      const body = document.getElementById("preview-body");
+      if (!body) return;
+
+      // Build the row DOM once, mutate values on tick.
+      const rowEls = ROWS.map((r, i) => {
+        const row = document.createElement("div");
+        row.className = "pv-row";
+
+        const date = document.createElement("div");
+        date.className = "pv-date";
+        date.textContent = r.date;
+        row.appendChild(date);
+
+        const title = document.createElement("div");
+        title.className = "pv-title";
+        title.appendChild(document.createTextNode(r.title));
+        const sub = document.createElement("span");
+        sub.className = "sub";
+        sub.textContent = r.sub;
+        title.appendChild(sub);
+        // Schedule chip only on the first row (matches the design)
+        let schedule = null;
+        if (r.scheduled) {
+          schedule = document.createElement("span");
+          schedule.className = "pv-schedule";
+          schedule.style.display = "none"; // shown when status === "ok"
+          schedule.innerHTML =
+            '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>' +
+            r.scheduled;
+          title.appendChild(schedule);
+        }
+        row.appendChild(title);
+
+        const pills = document.createElement("div");
+        pills.className = "pv-pills";
+        r.platforms.forEach(p => {
+          const pill = document.createElement("span");
+          pill.className = "pv-pill " + p;
+          pill.textContent = LABEL[p];
+          pills.appendChild(pill);
+        });
+        row.appendChild(pills);
+
+        const status = document.createElement("span");
+        status.className = "pv-status queue";
+        status.textContent = STATUS_LABEL.queue;
+        row.appendChild(status);
+
+        // Progress bar element — only shown when row is "run"
+        const progress = document.createElement("div");
+        progress.className = "pv-progress";
+        progress.style.display = "none";
+        const progressFill = document.createElement("span");
+        progressFill.style.width = "0%";
+        progress.appendChild(progressFill);
+        row.appendChild(progress);
+
+        body.appendChild(row);
+        return { row, status, progress, progressFill, schedule, which: r.which };
+      });
+
+      const rbActive = document.getElementById("rb-active");
+      const rbDone   = document.getElementById("rb-done");
+      const rbEta    = document.getElementById("rb-eta");
+      const pfOverall = document.getElementById("pf-overall");
+      const pfBar     = document.getElementById("pf-bar");
+
+      // Mirrors the React state: { a, b, c } percentages.
+      let p = { a: 0, b: 0, c: 0 };
+
+      function render() {
+        // Status per row based on the three counters; row d (the 4th) stays
+        // queued for the whole loop, like the design intent.
+        const statusOf = (which) => {
+          if (which === "a") return p.a >= 100 ? "ok" : "run";
+          if (which === "b") return p.b >= 100 ? "ok" : "run";
+          if (which === "c") return p.c >= 100 ? "ok" : (p.a > 80 ? "run" : "queue");
+          return "queue";
+        };
+        const progressOf = (which) => which === "a" ? p.a : which === "b" ? p.b : which === "c" ? p.c : 0;
+
+        let activeCount = 0, doneCount = 0;
+        rowEls.forEach(({ status, progress, progressFill, schedule, which }) => {
+          const s = statusOf(which);
+          if (s === "run") activeCount++;
+          if (s === "ok") doneCount++;
+          status.className = "pv-status " + s;
+          if (s === "run") {
+            const v = progressOf(which);
+            status.textContent = Math.round(v) + "%";
+            progress.style.display = "block";
+            progressFill.style.width = v + "%";
+          } else {
+            progress.style.display = "none";
+            status.textContent = STATUS_LABEL[s];
+          }
+          if (schedule) schedule.style.display = s === "ok" ? "inline-flex" : "none";
+        });
+
+        const overall = (p.a + p.b + p.c) / (4 * 100) * 100;
+        const etaSeconds = Math.max(0, Math.round((100 - overall) * 2.4));
+        const etaLabel = etaSeconds > 60
+          ? Math.floor(etaSeconds / 60) + "m " + (etaSeconds % 60) + "s"
+          : etaSeconds + "s";
+
+        rbActive.textContent = activeCount + " uploading";
+        rbDone.textContent   = doneCount + " done";
+        rbEta.textContent    = "ETA " + etaLabel;
+        pfOverall.textContent = Math.round(overall) + "%";
+        pfBar.style.width     = overall + "%";
+      }
+
+      function tick() {
+        p = {
+          a: Math.min(100, p.a + 2.4),
+          b: Math.min(100, p.b + 1.7),
+          c: p.a > 80 ? Math.min(100, p.c + 1.1) : p.c,
+        };
+        render();
+        if (p.a >= 100 && p.b >= 100 && p.c >= 100) {
+          // Loop the animation after a pause so the "done" state is visible.
+          setTimeout(() => { p = { a: 0, b: 0, c: 0 }; render(); }, 1400);
+        }
+      }
+
+      render();
+
+      // Honor reduced-motion: render once, no animation.
+      const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduce) {
+        // Show a believable "mid-run" snapshot for users who don't want motion.
+        p = { a: 100, b: 70, c: 20 };
+        render();
+        return;
+      }
+
+      let interval = setInterval(tick, 90);
+      // Pause when the tab isn't visible so we don't burn CPU.
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          clearInterval(interval);
+          interval = null;
+        } else if (!interval) {
+          interval = setInterval(tick, 90);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

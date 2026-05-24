@@ -17,10 +17,60 @@ acting as another org cannot grant themselves a role they don't have.
 """
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
 from functools import wraps
-from typing import Optional
+from typing import Iterator, Optional
 
 from flask import abort, has_request_context, session
+
+
+# Thread-local org override. Used by worker threads that ran originally
+# inside a Flask request context but now execute outside it — e.g. the
+# calendar refresh's ThreadPoolExecutor workers and the /upload web
+# worker (``blueprints/media._run_batch_worker``). Without this override,
+# ``effective_org_id()`` returns None in those threads, credential reads
+# fall through to the (empty post-migration) legacy unscoped slot, and
+# the refresh / upload fails with "session expired" even though the
+# sidebar's request-context-aware status shows everything green.
+#
+# Set at the worker entry point with ``with org_context.override(oid):``
+# and the rest of the call stack inside that thread sees ``oid`` as the
+# effective org. Threading-local rather than contextvars so it works
+# with vanilla ``threading.Thread.start()`` (no asyncio / no automatic
+# context copy needed).
+_local = threading.local()
+
+
+@contextmanager
+def override(org_id: int | None) -> Iterator[None]:
+    """Within the ``with`` block, ``effective_org_id()`` returns *org_id*.
+
+    Use at the entry point of a background worker that needs to honor the
+    org context the request set up. A ``None`` value enters the block
+    transparently (no-op); useful for callers that want to write
+    ``with override(maybe_oid):`` without branching.
+    """
+    if org_id is None:
+        # Don't shadow any existing thread-local value with None.
+        yield
+        return
+    prev = getattr(_local, "org_id", None)
+    _local.org_id = int(org_id)
+    try:
+        yield
+    finally:
+        if prev is None:
+            try:
+                delattr(_local, "org_id")
+            except AttributeError:
+                pass
+        else:
+            _local.org_id = prev
+
+
+def _thread_override() -> int | None:
+    return getattr(_local, "org_id", None)
 
 
 def real_user_id() -> Optional[int]:
@@ -67,10 +117,17 @@ def is_impersonating() -> bool:
 def effective_org_id() -> Optional[int]:
     """Org used for credential reads and audit org_id fill-ins.
 
-    Returns acting_as_org_id when set, else current_org_id, else None.
-    None means 'no session / no membership' — callers must treat that
-    as a hard miss (don't fall back to legacy unscoped).
+    Resolution order:
+      1. Thread-local override set by ``override(org_id)`` (worker
+         threads that captured the org from a request context).
+      2. ``acting_as_org_id`` from the Flask session (impersonation).
+      3. ``current_org_id`` from the Flask session (real membership).
+      4. None — no session / no membership. Callers must treat None as
+         a hard miss, never fall back to the legacy unscoped slot.
     """
+    o = _thread_override()
+    if o is not None:
+        return o
     acting = acting_as_org_id()
     if acting is not None:
         return acting

@@ -494,32 +494,39 @@ def run_batch(
         except Exception:
             logger.exception("batch emit failed")
 
+    # Capture the dispatching org once — the per-platform threads below
+    # each get their own ``override`` block since the thread-local
+    # doesn't propagate across executor.submit boundaries.
+    from core.org_context import effective_org_id as _eoi, override as _oc_override
+    _captured_oid = _eoi()
+
     def _upload_one(idx, item):
-        platform = item["platform"]
-        row_id = f"{item['date']}_{platform}"
-        # Cooperative cancel: check BEFORE acquiring any per-platform
-        # resources (Chrome launch, YouTube OAuth refresh, etc). Already-
-        # in-flight rows are allowed to finish — cancellation is best-effort
-        # cooperative, not a hard kill. Mirrors agent/run_batch._run_one.
-        if cancel_event is not None and cancel_event.is_set():
-            emit_safe({"type": "error", "row": idx, "date": item["date"],
-                       "platform": platform, "error_type": "cancelled",
-                       "message": "job cancelled before dispatch"})
-            return idx, item, None
-        if row_id in skip_set:
-            emit_safe({"type": "skip", "row": idx, "platform": platform, "date": item["date"]})
-            return idx, item, None
-        emit_safe({"type": "start", "row": idx, "platform": platform,
-                   "date": item["date"], "title": item.get("title", "")})
-        iso_date = item.get("iso_date", item["date"])
-        entry = entries_snapshot.get(iso_date)
-        if entry is None:
-            emit_safe({"type": "error", "row": idx, "date": item["date"],
-                       "platform": platform, "message": "Entry not found"})
-            return idx, item, None
-        result = _dispatch_upload(platform, entry, entry.elements, emit_safe,
-                                  idx, item, iso_date, yt_video_expected)
-        return idx, item, result
+        with _oc_override(_captured_oid):
+            platform = item["platform"]
+            row_id = f"{item['date']}_{platform}"
+            # Cooperative cancel: check BEFORE acquiring any per-platform
+            # resources (Chrome launch, YouTube OAuth refresh, etc). Already-
+            # in-flight rows are allowed to finish — cancellation is best-effort
+            # cooperative, not a hard kill. Mirrors agent/run_batch._run_one.
+            if cancel_event is not None and cancel_event.is_set():
+                emit_safe({"type": "error", "row": idx, "date": item["date"],
+                           "platform": platform, "error_type": "cancelled",
+                           "message": "job cancelled before dispatch"})
+                return idx, item, None
+            if row_id in skip_set:
+                emit_safe({"type": "skip", "row": idx, "platform": platform, "date": item["date"]})
+                return idx, item, None
+            emit_safe({"type": "start", "row": idx, "platform": platform,
+                       "date": item["date"], "title": item.get("title", "")})
+            iso_date = item.get("iso_date", item["date"])
+            entry = entries_snapshot.get(iso_date)
+            if entry is None:
+                emit_safe({"type": "error", "row": idx, "date": item["date"],
+                           "platform": platform, "message": "Entry not found"})
+                return idx, item, None
+            result = _dispatch_upload(platform, entry, entry.elements, emit_safe,
+                                      idx, item, iso_date, yt_video_expected)
+            return idx, item, result
 
     future_to_item: dict = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:

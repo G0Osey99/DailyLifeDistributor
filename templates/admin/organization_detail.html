@@ -28,6 +28,11 @@
 </nav>
 
 <h1>{{ org.name }}</h1>
+{% if not impersonating_org or impersonating_org.id != org.id %}
+<form method="post" action="{{ url_for('impersonation.start', org_id=org.id) }}" style="display:inline">
+  <button type="submit" class="btn btn-secondary">Act as this org</button>
+</form>
+{% endif %}
 <div class="org-meta">
   <span><span class="text-dim">slug</span> <span class="mono">{{ org.slug }}</span></span>
   <span><span class="text-dim">plan</span> <span class="badge badge-info">{{ org.plan }}</span></span>

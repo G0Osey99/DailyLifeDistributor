@@ -179,7 +179,7 @@ def _dispatch_job(monkeypatch, devices_mod, device_id: str) -> str:
     # relay's wire path; the fake agent doesn't actually upload.
     monkeypatch.setattr(
         agent_dispatch, "collect_credentials",
-        lambda *, platforms_in_use: {},
+        lambda *, platforms_in_use, org_id=None: {},
     )
 
     # record_upload doesn't FK-constrain on the sessions table, so a fresh

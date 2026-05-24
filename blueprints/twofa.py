@@ -17,6 +17,7 @@ from flask import (
 
 from blueprints.auth import login_required
 from core import audit as _audit
+from core.org_context import forbidden_during_impersonation
 from core import db as _db
 from core import email_2fa as _email_2fa
 from core import recovery as _recovery
@@ -53,6 +54,7 @@ def settings_2fa():
 
 
 @bp.post("/settings/2fa/enable-totp")
+@forbidden_during_impersonation
 @login_required
 def enable_totp():
     user = _current_user() or {}
@@ -80,6 +82,7 @@ def totp_qrcode():
 
 
 @bp.post("/settings/2fa/verify-totp")
+@forbidden_during_impersonation
 @login_required
 def verify_totp_post():
     user = _current_user() or {}
@@ -108,6 +111,7 @@ def verify_totp_post():
 
 
 @bp.post("/settings/2fa/enable-email")
+@forbidden_during_impersonation
 @login_required
 def enable_email_2fa():
     user = _current_user() or {}
@@ -124,6 +128,7 @@ def enable_email_2fa():
 
 
 @bp.post("/settings/2fa/send-email-code")
+@forbidden_during_impersonation
 @login_required
 def send_email_code():
     """Mint a fresh email 2FA code for the current user.
@@ -142,6 +147,7 @@ def send_email_code():
 
 
 @bp.post("/settings/2fa/disable")
+@forbidden_during_impersonation
 @login_required
 def disable_2fa():
     user = _current_user() or {}
@@ -200,6 +206,7 @@ def recovery_codes_view():
 
 
 @bp.post("/settings/2fa/recovery-codes/regenerate")
+@forbidden_during_impersonation
 @login_required
 def recovery_codes_regenerate():
     user = _current_user() or {}

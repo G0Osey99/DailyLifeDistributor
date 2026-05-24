@@ -58,14 +58,18 @@ def test_run_migration_backfills_existing_devices_secrets_history(monkeypatch):
         (d_user,) = c.execute(
             "SELECT user_id FROM agent_devices WHERE id='legacy-d1'"
         ).fetchone()
-        (s_org,) = c.execute(
-            "SELECT org_id FROM secrets WHERE name='legacy.k'"
+        # After the storage-name migration the row is renamed to
+        # org:<id>:<name>; the unscoped 'legacy.k' row is deleted.
+        scoped_name = f"org:{org['id']}:legacy.k"
+        s_row = c.execute(
+            "SELECT org_id FROM secrets WHERE name=?", (scoped_name,)
         ).fetchone()
         h_row = c.execute(
             "SELECT org_id, user_id FROM upload_history WHERE session_id='s'"
         ).fetchone()
     assert d_user == user["id"]
-    assert s_org == org["id"]
+    assert s_row is not None, f"scoped secret row '{scoped_name}' missing"
+    assert s_row["org_id"] == org["id"]
     assert h_row["org_id"] == org["id"]
     assert h_row["user_id"] == user["id"]
 

@@ -12,6 +12,7 @@ from flask import (
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from core import auth
+from core.org_context import forbidden_during_impersonation
 
 log = logging.getLogger(__name__)
 bp = Blueprint("auth", __name__)
@@ -359,6 +360,7 @@ def first_password_set_get():
 
 
 @bp.route("/login/first-password-set", methods=["POST"])
+@forbidden_during_impersonation
 def first_password_set_post():
     tok = request.form.get("tok", "")
     uid = _consume_partial_token(tok)

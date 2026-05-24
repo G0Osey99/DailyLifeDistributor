@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from core.org_context import effective_org_id
 from core.playwright_session import SessionConfig, _persist_session_blob
 
 _log = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ class RemoteLoginManager:
         # the save don't block on storage_state()/encryption.
         try:
             browser.storage_state(config.session_file)
-            _persist_session_blob(config.session_file)
+            _persist_session_blob(config.session_file, org_id=effective_org_id())
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self._phase = "error"

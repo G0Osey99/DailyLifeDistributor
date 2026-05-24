@@ -21,6 +21,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from blueprints.auth import login_required
 from core import audit as _audit
+from core.org_context import forbidden_during_impersonation
 from core import db as _db
 from core import email as _email
 from core import recovery_request as _rreq
@@ -58,6 +59,7 @@ def recover_submit():
 
 
 @bp.get("/admin-actions/recovery/<int:request_id>/approve")
+@forbidden_during_impersonation
 @login_required
 def approve(request_id: int):
     rrow = _db.get_recovery_request(request_id)

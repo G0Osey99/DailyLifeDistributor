@@ -202,19 +202,6 @@ def create_app() -> Flask:
             "Secret auto-import failed; continuing (run python -m scripts.migrate_secrets manually)."
         )
 
-    # Restore browser sessions from the encrypted store. A container rebuild
-    # wipes the materialized *_session.json files under /app, so without this
-    # the box reads as logged-out after every redeploy even though the blobs
-    # persist on the dld-data volume.
-    try:
-        from core.playwright_session import materialize_known_sessions
-        _restored = materialize_known_sessions()
-        if _restored:
-            logging.getLogger(__name__).info(
-                "Restored %d browser session(s) from the encrypted store.", _restored
-            )
-    except Exception:
-        logging.getLogger(__name__).exception("Session restore at startup failed")
 
     from blueprints.auth import bp as auth_bp, is_authenticated
     app.register_blueprint(auth_bp)
@@ -442,6 +429,14 @@ def create_app() -> Flask:
                     current_role = m.get("role")
         except Exception:
             current_role = None
+        impersonating_org = None
+        try:
+            from flask import session as _flask_sess
+            acting_id = _flask_sess.get("acting_as_org_id")
+            if acting_id is not None:
+                impersonating_org = _os.get_org_by_id(acting_id)
+        except Exception:
+            impersonating_org = None
         return {
             "current_memberships": mems,
             "current_org_id": _auth.current_org_id(),
@@ -449,6 +444,7 @@ def create_app() -> Flask:
             "is_signed_in": signed_in,
             "is_program_owner": is_program_owner,
             "current_role": current_role,
+            "impersonating_org": impersonating_org,
         }
 
     @app.route("/health")
@@ -686,6 +682,10 @@ def create_app() -> Flask:
     # Multi-tenant phase α: program-owner admin pages.
     from blueprints.admin import bp as admin_bp
     app.register_blueprint(admin_bp)
+
+    # Per-org credentials phase 4.1: program-owner impersonation.
+    from blueprints.impersonation import bp as impersonation_bp
+    app.register_blueprint(impersonation_bp)
 
     # Multi-tenant phase β: invitations + member-management routes.
     from blueprints.invitations import bp as invitations_bp

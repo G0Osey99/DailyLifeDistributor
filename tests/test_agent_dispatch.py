@@ -68,8 +68,9 @@ def test_collect_credentials_pulls_needed_keys_only():
     from core import agent_dispatch, secrets_store
     # YouTube keys stored as kv secrets; session keys stored as blobs
     # (playwright_session stores them under "playwright.<basename_no_ext>").
+    # youtube.client_secrets is platform-shared; store it via set_platform_secret.
     secrets_store.set_secret("youtube.token", '{"t":1}')
-    secrets_store.set_secret("youtube.client_secrets", '{"c":1}')
+    secrets_store.set_platform_secret("youtube.client_secrets", '{"c":1}')
     secrets_store.set_blob("playwright.rock_session", b'{"r":1}')
     secrets_store.set_blob("playwright.simplecast_session", b'{"s":1}')
     secrets_store.set_blob("playwright.vista_social_session", b'{"v":1}')

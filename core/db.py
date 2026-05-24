@@ -293,6 +293,19 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_audit_actor_time "
             "ON audit_log(actor_user_id, created_at)"
         )
+        # Phase per-org-creds: every audit row carries the impersonated org
+        # (NULL when the actor was acting as themselves) so an investigator
+        # can answer "what did the program owner do while acting as org N?"
+        # in one query.
+        for _t in ("audit_log", "audit_log_archive"):
+            cols = {r[1] for r in conn.execute(
+                f"PRAGMA table_info('{_t}')"
+            ).fetchall()}
+            if "acting_as_org_id" not in cols:
+                conn.execute(
+                    f"ALTER TABLE {_t} "
+                    f"ADD COLUMN acting_as_org_id INTEGER"
+                )
         # Phase γ: 2FA + audit log additions.
         # users.totp_enabled — boolean flag separate from totp_secret_encrypted
         # so we can disable without dropping the secret (and vice versa).
@@ -821,14 +834,15 @@ def mark_email_2fa_code_used(code_id: int) -> None:
 
 
 def insert_audit_event(*, org_id, actor_user_id, action, target_type, target_id,
-                       metadata, ip, user_agent, created_at) -> int:
+                       metadata, ip, user_agent, created_at,
+                       acting_as_org_id=None) -> int:
     with _get_conn() as c:
         cur = c.execute(
             "INSERT INTO audit_log (org_id, actor_user_id, action, target_type, "
-            "target_id, metadata, ip, user_agent, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "target_id, metadata, ip, user_agent, created_at, acting_as_org_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (org_id, actor_user_id, action, target_type, target_id,
-             metadata, ip, user_agent, created_at),
+             metadata, ip, user_agent, created_at, acting_as_org_id),
         )
         c.commit()
         return cur.lastrowid

@@ -41,6 +41,13 @@ def _backfill_devices(user_id: int) -> int:
 
 
 def _backfill_secrets(org_id: int) -> int:
+    """Legacy: stamp org_id column on rows that have a NULL value.
+
+    Predates the storage-name migration; left in place for the
+    handful of rows that may have an unscoped storage name AND a
+    NULL org_id column. The new _migrate_legacy_secret_names below
+    is the real per-org isolation step.
+    """
     with db._get_conn() as c:
         cur = c.execute(
             "UPDATE secrets SET org_id=? WHERE org_id IS NULL",
@@ -48,6 +55,49 @@ def _backfill_secrets(org_id: int) -> int:
         )
         c.commit()
         return cur.rowcount
+
+
+def _migrate_legacy_secret_names(org_id: int) -> dict[str, int]:
+    """Rewrite legacy unscoped storage names into org: + platform: scopes.
+
+    Idempotent: any row that already lives under org:<id>:... or
+    platform:... is left alone. The legacy password-hash row
+    (core.auth._HASH_SECRET) stays unscoped — it's not a tenant secret.
+
+    Returns a counter dict {"moved_to_org": N, "moved_to_platform": M}.
+    """
+    from core.auth import _HASH_SECRET
+    from uploaders.youtube_uploader import _YT_CLIENT_SECRETS_NAME
+    moved_to_org = 0
+    moved_to_platform = 0
+    with db._get_conn() as c:
+        rows = c.execute(
+            "SELECT name, kind, value, updated_at FROM secrets"
+        ).fetchall()
+        for row in rows:
+            name = row["name"]
+            if name.startswith("org:") or name.startswith("platform:"):
+                continue
+            if name == _HASH_SECRET:
+                continue
+            if name == _YT_CLIENT_SECRETS_NAME:
+                new_name = f"platform:{name}"
+                moved_to_platform += 1
+            else:
+                new_name = f"org:{org_id}:{name}"
+                moved_to_org += 1
+            # Use the original encrypted value verbatim — we don't decrypt
+            # and re-encrypt, that's an unnecessary key-rotation surface.
+            c.execute(
+                "INSERT OR REPLACE INTO secrets "
+                "(name, kind, value, updated_at, org_id) "
+                "VALUES (?,?,?,?,?)",
+                (new_name, row["kind"], row["value"], row["updated_at"],
+                 None if new_name.startswith("platform:") else org_id),
+            )
+            c.execute("DELETE FROM secrets WHERE name=?", (name,))
+        c.commit()
+    return {"moved_to_org": moved_to_org, "moved_to_platform": moved_to_platform}
 
 
 def _backfill_upload_history(org_id: int, user_id: int) -> int:
@@ -127,7 +177,17 @@ def run_migration() -> None:
     d = _backfill_devices(user_id)
     s = _backfill_secrets(org["id"])
     h = _backfill_upload_history(org["id"], user_id)
+    legacy = _migrate_legacy_secret_names(org["id"])
     log.info(
-        "Migration: backfilled %d device rows, %d secret rows, %d history rows.",
-        d, s, h,
+        "Migration: backfilled %d device rows, %d secret rows, %d history rows; "
+        "moved %d legacy secrets to org scope and %d to platform scope.",
+        d, s, h, legacy["moved_to_org"], legacy["moved_to_platform"],
     )
+    if legacy["moved_to_org"] or legacy["moved_to_platform"]:
+        from core import audit
+        audit.write_event(
+            action="system.legacy_secret_migration",
+            actor_user_id=None,
+            org_id=org["id"],
+            metadata=legacy,
+        )

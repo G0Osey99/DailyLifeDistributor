@@ -47,19 +47,22 @@ _YT_TOKEN_NAME = "youtube.token"
 
 
 def _load_token_json() -> str | None:
-    """Return the stored token JSON, or None if not yet authorized."""
+    """Return the stored token JSON for the current org, or None."""
     from core import secrets_store
-    return secrets_store.get_secret(_YT_TOKEN_NAME)
+    from core.org_context import effective_org_id
+    return secrets_store.get_secret(_YT_TOKEN_NAME, org_id=effective_org_id())
 
 
 def _save_token_json(data: str) -> None:
     from core import secrets_store
-    secrets_store.set_secret(_YT_TOKEN_NAME, data)
+    from core.org_context import effective_org_id
+    secrets_store.set_secret(_YT_TOKEN_NAME, data, org_id=effective_org_id())
 
 
 def _clear_token() -> None:
     from core import secrets_store
-    secrets_store.delete_secret(_YT_TOKEN_NAME)
+    from core.org_context import effective_org_id
+    secrets_store.delete_secret(_YT_TOKEN_NAME, org_id=effective_org_id())
 
 
 def _resolve_secrets_path() -> str:
@@ -244,18 +247,9 @@ def get_authenticated_service():
                     "background upload thread. Open Settings and click "
                     "'Connect YouTube' to authenticate, then retry the upload."
                 )
-            from core import secrets_store as _ss
-            with _ss.materialize_blob_to_tempfile(
-                _YT_CLIENT_SECRETS_NAME, suffix=".json"
-            ) as stored_path:
-                secrets_path = stored_path or _resolve_secrets_path()
-                if not os.path.exists(secrets_path):
-                    raise FileNotFoundError(
-                        f"Client secrets file not found: {secrets_path}. "
-                        "Download it from Google Cloud Console."
-                    )
-                flow = InstalledAppFlow.from_client_secrets_file(secrets_path, SCOPES)
-                creds = flow.run_local_server(port=0)
+            client_config = _load_client_config()
+            flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+            creds = flow.run_local_server(port=0)
 
         _save_token_json(creds.to_json())
 
@@ -287,17 +281,22 @@ def get_authenticated_service():
 
 
 def _load_client_config() -> dict:
-    """Return the OAuth client config dict from the encrypted store, falling
-    back to the on-disk client_secrets.json."""
+    """Return the platform-shared OAuth client config dict.
+
+    The GCP OAuth client is provisioned once by the program owner and
+    used by every tenant for YouTube auth — only the resulting refresh
+    token is per-org. Disk fallback (legacy single-tenant path) reads
+    client_secrets.json from the project root.
+    """
     from core import secrets_store
-    raw = secrets_store.get_secret(_YT_CLIENT_SECRETS_NAME)
+    raw = secrets_store.get_platform_secret(_YT_CLIENT_SECRETS_NAME)
     if raw:
         return json.loads(raw)
     path = _resolve_secrets_path()
     if not os.path.exists(path):
         raise FileNotFoundError(
-            f"Client secrets file not found: {path}. Download it from Google "
-            "Cloud Console."
+            f"Client secrets file not found: {path}. Program owner: "
+            "upload it via Settings (admin-only)."
         )
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)

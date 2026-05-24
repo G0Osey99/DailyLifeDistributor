@@ -69,6 +69,7 @@
                 <button type="submit" form="form-yt-clear" class="btn btn-sm btn-destructive">Clear Token</button>
             </div>
         </div>
+        {% if is_program_owner %}
         <div class="form-group">
             <label>YouTube Client Secrets</label>
             {% if client_secrets_found %}
@@ -77,10 +78,11 @@
             <span class="badge badge-error">✗ Not found</span>
             {% endif %}
             <div style="margin-top:6px;">
-                <input type="file" name="client_secrets_file" accept=".json">
+                <input type="file" name="youtube_client_secrets" accept=".json">
                 <div class="hint">Upload a new client_secrets.json</div>
             </div>
         </div>
+        {% endif %}
         <div class="form-group">
             <label>YouTube API Quota</label>
             <div id="yt-quota-display"><span class="text-dim text-sm">Loading…</span></div>

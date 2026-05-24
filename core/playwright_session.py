@@ -68,10 +68,15 @@ def _session_secret_name(session_file: str) -> str:
     return f"playwright.{base}"
 
 
-def _load_session_blob_to(session_file: str) -> bool:
-    """Write the stored encrypted session to session_file. Returns True if found."""
+def _load_session_blob_to(session_file: str, *, org_id: int | None = None) -> bool:
+    """Write the stored encrypted session to session_file.
+
+    *org_id* selects which tenant's blob to materialize. None falls
+    back to the legacy unscoped slot (used only by the migration
+    bootstrap; production callers must pass it).
+    """
     from core import secrets_store
-    data = secrets_store.get_blob(_session_secret_name(session_file))
+    data = secrets_store.get_blob(_session_secret_name(session_file), org_id=org_id)
     if data is None:
         return False
     with open(session_file, "wb") as f:
@@ -81,13 +86,15 @@ def _load_session_blob_to(session_file: str) -> bool:
     return True
 
 
-def _persist_session_blob(session_file: str) -> None:
-    """Read session_file back into the encrypted store after a save."""
+def _persist_session_blob(session_file: str, *, org_id: int | None = None) -> None:
+    """Read session_file back into the encrypted store under *org_id*."""
     if not os.path.exists(session_file):
         return
     from core import secrets_store
     with open(session_file, "rb") as f:
-        secrets_store.set_blob(_session_secret_name(session_file), f.read())
+        secrets_store.set_blob(
+            _session_secret_name(session_file), f.read(), org_id=org_id,
+        )
 
 
 # Session files the hosted instance restores from the encrypted store on boot.
@@ -120,23 +127,21 @@ def materialize_known_sessions() -> int:
     return restored
 
 
-def has_session(session_file: str) -> bool:
-    """True if a saved session exists in the store or on disk."""
+def has_session(session_file: str, *, org_id: int | None = None) -> bool:
+    """True if a saved session exists in the store for *org_id* or on disk."""
     from core import secrets_store
-    return secrets_store.has_secret(_session_secret_name(session_file)) or os.path.exists(session_file)
+    return (
+        secrets_store.has_secret(_session_secret_name(session_file), org_id=org_id)
+        or os.path.exists(session_file)
+    )
 
 
-def clear_session(session_file: str) -> None:
-    """Clear a saved session (disk first, then store).
-
-    Removes the on-disk file first so a locked file (e.g. Chrome still open)
-    raises before we delete the store copy — avoiding a split state where the
-    store is cleared but a stale file remains that _open would still use.
-    """
+def clear_session(session_file: str, *, org_id: int | None = None) -> None:
+    """Clear a saved session (disk first, then store) at *org_id* scope."""
     if os.path.exists(session_file):
-        os.remove(session_file)  # may raise OSError if locked — let it propagate
+        os.remove(session_file)
     from core import secrets_store
-    secrets_store.delete_secret(_session_secret_name(session_file))
+    secrets_store.delete_secret(_session_secret_name(session_file), org_id=org_id)
 
 
 @dataclass
@@ -298,8 +303,9 @@ class PlaywrightSession:
             # disk. Skip when Chrome is already torn down.
             if self.context is not None:
                 try:
+                    from core.org_context import effective_org_id
                     _atomic_save_storage_state(self.context, self.config.session_file)
-                    _persist_session_blob(self.config.session_file)
+                    _persist_session_blob(self.config.session_file, org_id=effective_org_id())
                     # Store now holds the latest session; don't leave plaintext on disk.
                     try:
                         if os.path.exists(self.config.session_file):
@@ -369,9 +375,11 @@ class PlaywrightSession:
 
     def _new_context(self, *, with_session: bool) -> "BrowserContext":
         assert self.browser is not None
+        from core.org_context import effective_org_id
+        org_id = effective_org_id()
         ctx_kwargs: dict = {}
         if with_session:
-            _load_session_blob_to(self.config.session_file)
+            _load_session_blob_to(self.config.session_file, org_id=org_id)
         if with_session and os.path.isfile(self.config.session_file):
             ctx_kwargs["storage_state"] = self.config.session_file
         if self.config.viewport is not None:
@@ -415,7 +423,31 @@ class PlaywrightSession:
         """Land on a logged-in page, prompting the user if needed."""
         self._emit(PHASE_LAUNCHING)
 
-        have_session = has_session(self.config.session_file)
+        from core.org_context import effective_org_id
+        org_id = effective_org_id()
+
+        # Per-org disk path so two orgs running the same platform in
+        # parallel don't clobber each other's session file. We mutate
+        # self.config.session_file here (not a local var) because the
+        # rest of PlaywrightSession reads self.config.session_file
+        # throughout (_handle_login, __exit__, error messages). The
+        # mutation is bounded to this PlaywrightSession instance —
+        # SessionConfig dataclasses are constructed fresh per call
+        # site (blueprints/remote_login.py:_service_configs uses
+        # dataclasses.replace() per request; uploaders construct each
+        # call). Adding a guard so a second _open() on the same
+        # instance does not double-nest the path:
+        if org_id is not None:
+            base = os.path.basename(self.config.session_file)
+            parent = os.path.dirname(self.config.session_file)
+            # If we already moved this config into .sessions/org_X/,
+            # don't move it AGAIN on a second _open() call.
+            if os.path.basename(parent) != f"org_{org_id}":
+                per_org_dir = os.path.join(parent, ".sessions", f"org_{org_id}")
+                os.makedirs(per_org_dir, exist_ok=True)
+                self.config.session_file = os.path.join(per_org_dir, base)
+
+        have_session = has_session(self.config.session_file, org_id=org_id)
         # Non-interactive callers can't recover from a missing session —
         # bail out cleanly so the orchestrator surfaces a re-login prompt
         # instead of the user staring at a never-completing browser launch.
@@ -503,8 +535,9 @@ class PlaywrightSession:
         # the user to log in again.
         if self.context is not None:
             try:
+                from core.org_context import effective_org_id
                 _atomic_save_storage_state(self.context, self.config.session_file)
-                _persist_session_blob(self.config.session_file)
+                _persist_session_blob(self.config.session_file, org_id=effective_org_id())
                 log.info(
                     "%s: session saved to %s",
                     self.config.name, self.config.session_file,

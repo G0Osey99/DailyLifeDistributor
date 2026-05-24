@@ -464,8 +464,10 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
             if shutdown_event.is_set():
                 break
             log.debug("Network error: %s", exc, exc_info=True)
+            # Backoff is computed at the bottom of the loop from
+            # consecutive_connect_failures; capped at _RECONNECT_MAX_DELAY.
             print(f"Couldn't reach {server_url}. Check your internet connection. "
-                  f"Retrying in {_RECONNECT_DELAY}s...")
+                  f"Retrying shortly (up to {_RECONNECT_MAX_DELAY:.0f}s)...")
         except Exception as exc:  # noqa: BLE001
             if shutdown_event.is_set():
                 break

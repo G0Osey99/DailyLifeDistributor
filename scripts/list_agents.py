@@ -59,7 +59,6 @@ def main():
             print("No active (non-revoked) agent devices. Use --show-revoked to include them.")
             return
 
-    headers = ("id", "name", "hostname", "hwid", "last_seen", "revoked", "online")
     print(f"{'id':<10}  {'name':<20}  {'hostname':<24}  {'hwid':<10}  "
           f"{'last_seen':<25}  {'revoked':<7}  {'online':<6}")
     print("-" * 110)

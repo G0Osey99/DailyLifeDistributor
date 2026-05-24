@@ -187,7 +187,9 @@ def test_install_exposes_all_blob_and_has_methods_on_synthetic_module():
     """install_as_core_secrets_store wires has_secret/get_blob/set_blob onto
     the synthetic core.secrets_store module so Playwright uploaders work."""
     emitted = []
-    shim = secrets_shim.install_as_core_secrets_store(
+    # Side-effect install: we exercise the synthetic core.secrets_store
+    # module below, not the returned shim instance.
+    secrets_shim.install_as_core_secrets_store(
         initial={"playwright.vista_social_session": '{"v":1}'},
         emit=emitted.append,
     )

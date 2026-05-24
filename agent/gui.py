@@ -15,13 +15,9 @@ Drop in over the previous file — public API is identical:
 from __future__ import annotations
 
 import logging
-import math
 import threading
 import tkinter as tk
 import tkinter.font
-import urllib.request
-import urllib.parse
-import json as _json
 import webbrowser
 
 import customtkinter as ctk
@@ -33,7 +29,6 @@ from agent.state import (
     CONN_DISCONNECTED,
     CONN_ONLINE,
     CONN_STARTING,
-    CONN_STOPPED,
     ACT_IDLE,
     ACT_UPLOADING,
 )

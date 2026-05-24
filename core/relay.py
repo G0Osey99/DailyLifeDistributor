@@ -186,6 +186,18 @@ def set_default_relay(relay: "Relay", account: str = "default") -> None:
     _default_account = account
 
 
+def online_agent_count() -> int:
+    """Number of agents currently connected to the process-wide relay.
+
+    Reads the default relay set by ``set_default_relay()`` at blueprint
+    registration time. Returns 0 if the relay hasn't been wired (e.g.
+    during certain tests that skip blueprint registration).
+    """
+    if _default_relay is None:
+        return 0
+    return len(_default_relay.online_agents(_default_account))
+
+
 def send_to_device(device_name: str, envelope: dict) -> None:
     """Send *envelope* (serialised to JSON) to every agent socket whose
     device_id matches *device_name*.

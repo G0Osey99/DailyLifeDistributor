@@ -524,10 +524,14 @@ def sessions_status():
         "label_on": "Rock session",
         "label_off": "Rock needs login",
     }
-    # Agent online — count via the relay's account-keyed room.
+    # Agent online — read from the process-wide relay registered by
+    # blueprints.agent at startup. core.relay.online_agent_count() walks
+    # the default relay set via set_default_relay(), so we don't have to
+    # reach across to blueprints.agent (which would mean a circular
+    # import) and don't have to use module-private state.
     try:
-        from core.relay import RELAY, _ACCOUNT
-        agent_count = len(RELAY.online_agents(_ACCOUNT))
+        from core.relay import online_agent_count
+        agent_count = online_agent_count()
     except Exception:
         agent_count = 0
     out["agent"] = {

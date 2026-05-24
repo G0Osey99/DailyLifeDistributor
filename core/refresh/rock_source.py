@@ -189,7 +189,12 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
     # on enter, so a prior run leaves no file even though the session is fine.
     # Post-migrate_secrets the plaintext rock_session.json is shredded — only
     # the encrypted blob in the store exists. has_session() checks both.
-    if not has_session(str(_SESSION_FILE)):
+    # Pass org_id so the check reads the active tenant's slot, not the
+    # (empty post-wipe) legacy unscoped slot. Inside a refresh worker
+    # thread effective_org_id() reads the thread-local override set by
+    # core.calendar_refresh._fetch_one.
+    from core.org_context import effective_org_id
+    if not has_session(str(_SESSION_FILE), org_id=effective_org_id()):
         raise SessionExpiredError("rock_session.json missing")
 
     guids = _channel_guids()

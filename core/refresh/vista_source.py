@@ -319,7 +319,9 @@ def fetch(window_start: date, window_end: date) -> list[ExternalItem]:
     # Guard on the encrypted store, not the on-disk file: PlaywrightSession
     # removes the materialized file on exit and re-creates it from the store
     # on enter, so a prior run leaves no file even though the session is fine.
-    if not has_session(str(_SESSION_FILE)):
+    # org_id picks the active tenant's slot (refresh worker's thread-local).
+    from core.org_context import effective_org_id
+    if not has_session(str(_SESSION_FILE), org_id=effective_org_id()):
         raise SessionExpiredError("vista_social_session.json missing")
 
     out: list[ExternalItem] = []

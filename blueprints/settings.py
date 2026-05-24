@@ -283,14 +283,16 @@ def settings():
 
 @bp.route("/settings/clear-simplecast-session", methods=["POST"])
 def clear_simplecast_session():
-    """Clear the saved SimpleCast session (store + disk)."""
+    """Clear the saved SimpleCast session (store + disk) for the active org."""
     from core.playwright_session import has_session, clear_session
+    from core.org_context import effective_org_id
+    oid = effective_org_id()
     sess_path = os.path.join(PROJECT_ROOT, "simplecast_session.json")
-    if not has_session(sess_path):
+    if not has_session(sess_path, org_id=oid):
         flash("No SimpleCast session found.", "warning")
         return redirect(url_for("settings.settings"))
     try:
-        clear_session(sess_path)
+        clear_session(sess_path, org_id=oid)
         flash("SimpleCast session cleared.", "success")
     except OSError as e:
         flash(f"Could not clear SimpleCast session ({e}). Close any open Chrome windows and try again.", "danger")
@@ -299,14 +301,16 @@ def clear_simplecast_session():
 
 @bp.route("/settings/clear-vista-social-session", methods=["POST"])
 def clear_vista_social_session():
-    """Clear the saved Vista Social session (store + disk)."""
+    """Clear the saved Vista Social session (store + disk) for the active org."""
     from core.playwright_session import has_session, clear_session
+    from core.org_context import effective_org_id
+    oid = effective_org_id()
     sess_path = os.path.join(PROJECT_ROOT, "vista_social_session.json")
-    if not has_session(sess_path):
+    if not has_session(sess_path, org_id=oid):
         flash("No Vista Social session found.", "warning")
         return redirect(url_for("settings.settings"))
     try:
-        clear_session(sess_path)
+        clear_session(sess_path, org_id=oid)
         flash("Vista Social session cleared.", "success")
     except OSError as e:
         flash(f"Could not clear Vista Social session ({e}). Close any open Chrome windows and try again.", "danger")
@@ -391,14 +395,16 @@ def login_rock():
 
 @bp.route("/settings/clear-rock-session", methods=["POST"])
 def clear_rock_session():
-    """Clear the saved Rock session (store + disk)."""
+    """Clear the saved Rock session (store + disk) for the active org."""
     from core.playwright_session import has_session, clear_session
+    from core.org_context import effective_org_id
+    oid = effective_org_id()
     sess_path = os.path.join(PROJECT_ROOT, "rock_session.json")
-    if not has_session(sess_path):
+    if not has_session(sess_path, org_id=oid):
         flash("No Rock session found.", "warning")
         return redirect(url_for("settings.settings"))
     try:
-        clear_session(sess_path)
+        clear_session(sess_path, org_id=oid)
         flash("Rock session cleared.", "success")
     except OSError as e:
         flash(f"Could not clear Rock session ({e}). Close any open Chrome windows and try again.", "danger")

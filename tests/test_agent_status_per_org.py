@@ -82,3 +82,33 @@ def test_agent_status_falls_back_to_membership_when_not_impersonating(app):
     client = app.test_client()
     body = client.get(f"/sessions/status?token={token}").get_json()
     assert body["rock"]["ok"] is True
+
+
+def test_agent_status_youtube_reads_resolved_org(app, monkeypatch):
+    """The agent's YT check must respect the resolved org from the
+    token-auth fallback, not the (empty) Flask session. Before this
+    fix _cached_yt_authenticated() always saw effective_org_id()==None
+    for agent polls and reported 'needs auth' even when the token sat
+    in the owner's org scope."""
+    import app as app_module
+    org = org_store.create_org(name="A", slug="a")
+    user = user_store.create_user(username="u", email="u@x", password="pw1234567")
+    org_store.add_membership(user_id=user["id"], org_id=org["id"], role="owner")
+
+    # Switch on the underlying YT-authenticated check by effective org:
+    # only org A is authed. The fix wraps the call in an org override
+    # under token auth; without the override the check sees no org and
+    # returns False.
+    from core.org_context import effective_org_id
+    def fake_is_authed():
+        return effective_org_id() == org["id"]
+    monkeypatch.setattr(app_module, "yt_is_authenticated", fake_is_authed)
+    app_module._YT_AUTH_CACHE.clear()
+
+    token = _pair_and_get_token(user["id"])
+    client = app.test_client()
+    body = client.get(f"/sessions/status?token={token}").get_json()
+    assert body["youtube"]["ok"] is True, (
+        "agent's YT check must use the token-auth-resolved org, not "
+        "the empty Flask session"
+    )

@@ -123,8 +123,12 @@ def test_unsplash_breaker_allows_after_recovery(monkeypatch):
         ig._UNSPLASH_BREAKER.record_failure()
     assert ig._UNSPLASH_BREAKER.state == _cb.CircuitState.OPEN
 
-    # Force the cool-down to zero so allow() advances to HALF_OPEN.
-    ig._UNSPLASH_BREAKER._opened_at = 0.0  # type: ignore[attr-defined]
+    # Force the cool-down to elapse so allow() advances to HALF_OPEN.
+    # Setting _opened_at = 0.0 is fragile: allow() does
+    # (time.monotonic() - _opened_at) >= recovery_timeout, and on a freshly
+    # booted CI runner time.monotonic() can be < 120s, leaving the breaker
+    # OPEN. Drop the timeout instead — the intent is "cool-down elapsed".
+    ig._UNSPLASH_BREAKER.recovery_timeout = 0.0
 
     # First call after recovery: stub a 200 response.
     class _FakeResp:

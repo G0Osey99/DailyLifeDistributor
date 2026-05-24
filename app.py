@@ -429,6 +429,14 @@ def create_app() -> Flask:
                     current_role = m.get("role")
         except Exception:
             current_role = None
+        impersonating_org = None
+        try:
+            from flask import session as _flask_sess
+            acting_id = _flask_sess.get("acting_as_org_id")
+            if acting_id is not None:
+                impersonating_org = _os.get_org_by_id(acting_id)
+        except Exception:
+            impersonating_org = None
         return {
             "current_memberships": mems,
             "current_org_id": _auth.current_org_id(),
@@ -436,6 +444,7 @@ def create_app() -> Flask:
             "is_signed_in": signed_in,
             "is_program_owner": is_program_owner,
             "current_role": current_role,
+            "impersonating_org": impersonating_org,
         }
 
     @app.route("/health")

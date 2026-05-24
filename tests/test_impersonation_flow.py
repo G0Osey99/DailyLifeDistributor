@@ -80,3 +80,16 @@ def test_impersonation_writes_audit_events(app):
     starts = [r for r in rows if r["action"] == "impersonation.start"]
     assert starts and starts[0]["actor_user_id"] == po["id"]
     assert starts[0]["acting_as_org_id"] == target["id"]
+
+
+def test_banner_appears_in_response_while_impersonating(app):
+    """After entering impersonation, every page response should contain the
+    'Acting as' banner string injected by the context processor + base template."""
+    po, po_org, target = _po(app)
+    client = app.test_client()
+    _login(client, po["id"], po_org["id"])
+    client.post(f"/admin/organizations/{target['id']}/impersonate",
+                follow_redirects=False)
+    # GET any auth-gated page that extends base.html; /history is a stable choice.
+    res = client.get("/history", follow_redirects=True)
+    assert b"Acting as" in res.data

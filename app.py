@@ -674,6 +674,10 @@ def create_app() -> Flask:
     from blueprints.admin import bp as admin_bp
     app.register_blueprint(admin_bp)
 
+    # Per-org credentials phase 4.1: program-owner impersonation.
+    from blueprints.impersonation import bp as impersonation_bp
+    app.register_blueprint(impersonation_bp)
+
     # Multi-tenant phase β: invitations + member-management routes.
     from blueprints.invitations import bp as invitations_bp
     from blueprints.members import bp as members_bp

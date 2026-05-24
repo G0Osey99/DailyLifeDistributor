@@ -417,7 +417,7 @@ def oauth_youtube():
         flash(str(e), "danger")
     except Exception as e:
         flash(f"YouTube authentication failed: {str(e)}", "danger")
-    return redirect(url_for("scan.index"))
+    return redirect(url_for("scan.dashboard"))
 
 
 @bp.route("/oauth/youtube/settings", methods=["POST"])

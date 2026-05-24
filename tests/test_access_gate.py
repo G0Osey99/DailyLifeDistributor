@@ -22,20 +22,27 @@ def test_health_is_public(client):
     assert resp.status_code in (200, 503)
 
 
-def test_unauthenticated_redirects_to_login(client):
-    resp = client.get("/")
-    assert resp.status_code in (301, 302)
-    assert "/login" in resp.headers["Location"]
-
-
-def test_authenticated_reaches_index(client):
-    client.post("/login", data={"password": "pw"})
+def test_unauthenticated_landing_is_public(client):
+    # / is the public marketing landing page; auth-gate must skip it.
     resp = client.get("/")
     assert resp.status_code == 200
 
 
-def test_unauthenticated_xhr_gets_401(client):
-    resp = client.get("/", headers={"X-Requested-With": "XMLHttpRequest"})
+def test_unauthenticated_dashboard_redirects_to_login(client):
+    # The dashboard moved from / to /dashboard; the gate still applies there.
+    resp = client.get("/dashboard")
+    assert resp.status_code in (301, 302)
+    assert "/login" in resp.headers["Location"]
+
+
+def test_authenticated_reaches_dashboard(client):
+    client.post("/login", data={"password": "pw"})
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+
+
+def test_unauthenticated_xhr_gets_401_on_dashboard(client):
+    resp = client.get("/dashboard", headers={"X-Requested-With": "XMLHttpRequest"})
     assert resp.status_code == 401
 
 

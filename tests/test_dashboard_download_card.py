@@ -76,7 +76,7 @@ def test_count_user_devices_skips_revoked(app):
 
 def test_dashboard_renders_download_card_for_user_with_no_devices(app):
     client, _ = _make_user(app)
-    r = client.get("/")
+    r = client.get("/dashboard")
     assert r.status_code == 200
     body = r.data.lower()
     # Card markup is identified by the data-test-id attribute.
@@ -86,6 +86,6 @@ def test_dashboard_renders_download_card_for_user_with_no_devices(app):
 def test_dashboard_hides_download_card_when_user_has_devices(app):
     client, uid = _make_user(app)
     _create_device(uid)
-    r = client.get("/")
+    r = client.get("/dashboard")
     assert r.status_code == 200
     assert b'data-test-id="empty-state-download-card"' not in r.data

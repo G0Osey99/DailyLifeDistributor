@@ -37,7 +37,7 @@ def test_user_without_2fa_redirected_when_org_requires_it(client, db):
     )
     add_membership(db, user["id"], org["id"], role="user")
     login_as(client, user, current_org_id=org["id"])
-    resp = client.get("/")
+    resp = client.get("/dashboard")
     assert resp.status_code == 302
     assert "/settings/2fa" in resp.headers["Location"]
 
@@ -47,5 +47,5 @@ def test_user_with_totp_passes_enforcement(client, db):
     user = make_user(db, username="u", totp_enabled=True)
     add_membership(db, user["id"], org["id"], role="user")
     login_as(client, user, current_org_id=org["id"])
-    resp = client.get("/")
+    resp = client.get("/dashboard")
     assert resp.status_code == 200

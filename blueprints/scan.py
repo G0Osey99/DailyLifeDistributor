@@ -1,9 +1,12 @@
-"""Index (Setup) page.
+"""Dashboard (Setup) page, served at ``/dashboard``.
 
 The browser-streaming pipeline drives everything else from the dashboard via
 the /media/* endpoints (folder pickers, spreadsheet upload, scan, chunked
 batch upload). The old server-side directory browse/validate/scan routes were
 removed — media lives on the user's machine now.
+
+The public ``/`` is the marketing landing page (``blueprints/landing.py``);
+this route is auth-gated.
 """
 from __future__ import annotations
 
@@ -15,8 +18,8 @@ from uploaders.youtube_uploader import is_authenticated as yt_is_authenticated
 bp = Blueprint("scan", __name__)
 
 
-@bp.route("/")
-def index():
+@bp.route("/dashboard")
+def dashboard():
     config = load_config()
     # Phase δ: empty-state agent-download card shows when the current
     # user has zero (non-revoked) paired devices. New tenants land on

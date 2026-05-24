@@ -387,7 +387,9 @@ when `HOSTED` is unset — `app.py` refuses to boot the combination).
 | `blueprints/calendar.py` | Calendar view + per-platform schedule refresh endpoints |
 | `blueprints/remote_login.py` | VNC-driven Playwright login flow for SimpleCast/Vista/Rock on the hosted deploy |
 | `blueprints/history.py` | `/history` rendering from `upload_history` |
-| `blueprints/scan.py` | Root dashboard route (`/`) — index + scan UI |
+| `blueprints/scan.py` | Dashboard route (`/dashboard`) — folder pickers + scan UI; auth-gated |
+| `blueprints/landing.py` | Public marketing landing page at `/`; exempt from the auth gate |
+| `templates/landing.html` | Standalone landing-page markup (Geist + LCBC accent), animated dashboard preview via inline JS |
 | `blueprints/settings.py` | Settings page, OAuth, llamafile status, env-file editing, devices-management entry |
 | `blueprints/upload.py` | `/upload/stream` SSE consumer + `POST /upload/<job_id>/cancel` for agent-path jobs |
 | `core/calendar_refresh.py` | Orchestrator that pulls each platform source + reconciles `upload_history` with what's actually scheduled |

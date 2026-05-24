@@ -114,9 +114,6 @@ _EXEMPT = {
     # wide gate, not a tenant credential. The unscoped reads/writes in
     # auth.py are intentional and stay unscoped by design.
     "core/auth.py",
-    # TEMPORARY: Phase 5.1 plumbs effective_org_id() through the agent
-    # dispatch path. Remove this entry as part of that task.
-    "core/agent_dispatch.py",
 }
 
 

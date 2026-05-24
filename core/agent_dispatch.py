@@ -33,31 +33,41 @@ _PLATFORM_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _fetch_credential(key: str) -> str | None:
-    """Return the credential string for *key*, regardless of storage kind.
+def _fetch_credential(key: str, *, org_id: int | None) -> str | None:
+    """Return the credential string for *key* at the right scope.
 
-    kv secrets  → get_secret (str).
-    blob secrets → get_blob (bytes, decoded UTF-8).
-    Tries kv first; falls back to blob.  Returns None when neither is stored.
+    youtube.client_secrets is platform-shared; everything else is per-org.
+    kv first; blob fallback.
     """
-    val = _ss.get_secret(key)
+    if key == "youtube.client_secrets":
+        val = _ss.get_platform_secret(key)
+        if val is not None:
+            return val
+        raw = _ss.get_platform_blob(key)
+        return None if raw is None else raw.decode("utf-8")
+    val = _ss.get_secret(key, org_id=org_id)
     if val is not None:
         return val
-    raw = _ss.get_blob(key)
-    if raw is not None:
-        return raw.decode("utf-8")
-    return None
+    raw = _ss.get_blob(key, org_id=org_id)
+    return None if raw is None else raw.decode("utf-8")
 
 
-def collect_credentials(*, platforms_in_use: set[str]) -> dict[str, str]:
+def collect_credentials(*, platforms_in_use: set[str],
+                        org_id: int | None = None) -> dict[str, str]:
     """Return only the secrets_store entries needed for the given platforms.
-    Missing keys are silently omitted."""
+
+    *org_id* defaults to ``effective_org_id()`` so request-context callers
+    can omit it. Missing keys are silently omitted.
+    """
+    if org_id is None:
+        from core.org_context import effective_org_id
+        org_id = effective_org_id()
     needed: set[str] = set()
     for p in platforms_in_use:
         needed.update(_PLATFORM_KEYS.get(p, ()))
     out: dict[str, str] = {}
     for key in sorted(needed):
-        val = _fetch_credential(key)
+        val = _fetch_credential(key, org_id=org_id)
         if val is not None:
             out[key] = val
     return out
@@ -163,11 +173,15 @@ def on_frame(frame: dict) -> None:
         if not isinstance(key, str) or not isinstance(value, str):
             _logger.warning("credentials_updated: bad shape %r", frame)
             return
+        raw_oid = frame.get("org_id")
+        cred_org_id: int | None = int(raw_oid) if raw_oid is not None else None
         try:
-            if key.startswith("playwright."):
-                _ss.set_blob(key, value.encode("utf-8"))
+            if key == "youtube.client_secrets":
+                _ss.set_platform_blob(key, value.encode("utf-8"))
+            elif key.startswith("playwright."):
+                _ss.set_blob(key, value.encode("utf-8"), org_id=cred_org_id)
             else:
-                _ss.set_secret(key, value)
+                _ss.set_secret(key, value, org_id=cred_org_id)
         except Exception as e:
             _logger.warning("credentials_updated: write failed for %s: %s", key, e)
         return
@@ -208,8 +222,12 @@ def build_envelope(
     entries: dict,        # iso_date -> ReviewEntry
     credentials: dict,    # secrets_store key -> blob string
     config: dict,
+    org_id: int | None = None,
 ) -> dict:
-    """Compose the job_plan envelope. Pure function; no I/O."""
+    """Compose the job_plan envelope. Pure function (except org_id default)."""
+    if org_id is None:
+        from core.org_context import effective_org_id
+        org_id = effective_org_id()
     out_rows = []
     for r in rows:
         iso = r["iso_date"]
@@ -222,13 +240,19 @@ def build_envelope(
             "entry": _strip_paths(entry.to_dict()),
         })
     return {
-        "v": 1,
+        "v": _PROTOCOL_VERSION,
         "type": "job_plan",
         "job_id": job_id,
         "protocol_version": _PROTOCOL_VERSION,
         "config": config,
         "rows": out_rows,
         "credentials": dict(credentials),
+        "payload": {
+            "org_id": org_id,
+            "rows": out_rows,
+            "credentials": dict(credentials),
+            "config": config,
+        },
     }
 
 
@@ -370,6 +394,8 @@ def start(
     *browser_ip* (optional) — the dashboard's _client_ip() at request
     time, used by _pick_device to compute same-network matches.
     """
+    from core.org_context import effective_org_id
+    org_id = effective_org_id()
     job_id = _uuid.uuid4().hex
     rows = filter_done_rows(session_id=session_id, summary=summary)
     if not rows:
@@ -380,13 +406,14 @@ def start(
     platforms_in_use: set[str] = set()
     for r in rows:
         platforms_in_use.update(r["platforms"])
-    creds = collect_credentials(platforms_in_use=platforms_in_use)
+    creds = collect_credentials(platforms_in_use=platforms_in_use, org_id=org_id)
     envelope = build_envelope(
         job_id=job_id,
         rows=rows,
         entries=entries,
         credentials=creds,
         config=config,
+        org_id=org_id,
     )
     device = _pick_device(device_id=device_id, browser_ip=browser_ip)
     # Route by device_id, not device_name: the relay rooms in core/relay.py

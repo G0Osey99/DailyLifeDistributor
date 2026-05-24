@@ -500,7 +500,27 @@ def sessions_status():
     Returns a flat dict {name: {ok, label}} for every connection the
     sidebar needs to render. One round-trip beats 4–5 separate fetches
     on every page load.
+
+    Auth: session cookie OR a valid agent pair token (?token=<...>).
+    The agent's hero-status GUI polls this so its session-rows panel
+    mirrors what the website's sidebar shows; without the token path
+    the agent (which has no cookie) would always see 'unknown'.
     """
+    # Inline auth: this endpoint is listed in _PUBLIC_ENDPOINTS so the
+    # global before_request hook doesn't redirect to /login — we
+    # enforce here so both browser cookies and agent tokens work.
+    from flask import abort, request as _req, session as _sess
+    has_session_auth = bool(_sess.get("user_id") or _sess.get("authenticated"))
+    if not has_session_auth:
+        tok = (_req.args.get("token") or "").strip()
+        if not tok:
+            abort(401)
+        try:
+            from core.devices import verify_device_token
+            if not verify_device_token(tok):
+                abort(401)
+        except Exception:
+            abort(401)
     from core.playwright_session import has_session
     from core.llm_title_gen import is_llamafile_running
     out: dict = {}

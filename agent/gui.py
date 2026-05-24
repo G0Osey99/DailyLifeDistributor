@@ -423,10 +423,28 @@ class AgentGUI:
     def _section_rail(self, parent, text: str) -> ctk.CTkFrame:
         """Renders the website's section-header treatment: a 3px accent
         bar on the left, then an uppercase label. Returns the container
-        frame so the caller decides how it packs."""
-        wrap = ctk.CTkFrame(parent, fg_color="transparent")
-        bar = ctk.CTkFrame(wrap, fg_color=PAL["accent"], width=3, corner_radius=2)
-        bar.pack(side="left", fill="y", pady=2)
+        frame so the caller decides how it packs.
+
+        CTkFrame defaults to height=200 when not specified — using
+        ``fill="y"`` on the bar made it absorb that 200px and pushed the
+        footer ~400px off-screen (two section headers, ~200px each of
+        phantom vertical space). Fix is to clamp the wrap to label
+        height, disable propagation, and give the bar an explicit
+        height that matches.
+        """
+        # Match the label's natural height for a 10pt bold font (≈14-16px
+        # depending on the system DPI). A bit of inset on top + bottom
+        # makes the bar read as a section rail, not a divider.
+        rail_h = 16
+        wrap = ctk.CTkFrame(parent, fg_color="transparent",
+                            height=rail_h, width=120)
+        wrap.pack_propagate(False)
+        bar = ctk.CTkFrame(
+            wrap, fg_color=PAL["accent"],
+            width=3, height=rail_h - 2, corner_radius=2,
+        )
+        bar.pack_propagate(False)
+        bar.pack(side="left", pady=1)
         ctk.CTkLabel(
             wrap, text=text.upper(),
             text_color=PAL["text_muted"],
@@ -485,8 +503,19 @@ class AgentGUI:
             # Nothing to poll until pairing finishes and a server URL is set.
             return
         # Normalize wss/ws/etc. → https/http for the GET. The HTTP endpoint
-        # lives at the same host the WebSocket connects to.
+        # lives at the same host the WebSocket connects to. Append the
+        # agent's pair token as ?token= so the inline auth check on
+        # /sessions/status admits us — without it the endpoint redirects
+        # to /login (no cookie) and every row stays "unknown".
+        token = ""
+        try:
+            from agent import config as _agent_config
+            token = (_agent_config.get_token() or "").strip()
+        except Exception:
+            pass
         url = _to_http(server.rstrip("/")) + "/sessions/status"
+        if token:
+            url = url + "?" + urllib.parse.urlencode({"token": token})
         self._sessions_inflight = True
 
         def worker() -> None:
@@ -716,13 +745,26 @@ class AgentGUI:
             w.destroy()
         self._chip_widgets.clear()
 
+        # Queue depth — the agent's single-job invariant means this is
+        # 0 or 1 in practice. AgentState doesn't expose it yet; until it
+        # does, render "Queue 0" idle and "Queue 1" while uploading so
+        # the chip pair matches the design mockup. Wire to a real
+        # counter when AgentState.queue_depth lands.
+        queue_chip_text = "Queue 1" if snap["activity"] == ACT_UPLOADING else "Queue 0"
+
         if snap["activity"] == ACT_UPLOADING:
             self._chip_widgets.append(
                 self._make_chip(self.chips_row, "Uploading", dot_color=view["color"])
             )
+            self._chip_widgets.append(
+                self._make_chip(self.chips_row, queue_chip_text)
+            )
         elif snap["connection"] == CONN_ONLINE:
             self._chip_widgets.append(
                 self._make_chip(self.chips_row, "Idle", dot_color=PAL["ok"])
+            )
+            self._chip_widgets.append(
+                self._make_chip(self.chips_row, queue_chip_text)
             )
         elif snap["connection"] in (CONN_CONNECTING, CONN_STARTING, CONN_DISCONNECTED):
             self._chip_widgets.append(

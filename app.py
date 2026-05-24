@@ -232,6 +232,12 @@ def create_app() -> Flask:
         "auth.login_email_2fa_get", "auth.login_email_2fa_post",
         # First-login forced password change — partial-token-gated, no session yet.
         "auth.first_password_set_get", "auth.first_password_set_post",
+        # Session-status feed. Public at the routing layer; the route
+        # itself does an inline auth check that accepts either a
+        # session cookie OR a valid agent pair token via ?token=.
+        # Without that path the agent GUI can't poll it (no cookie),
+        # and its Sessions panel stays stuck on "unknown".
+        "settings.sessions_status",
     }
 
     _ALLOWED_HOSTS = {

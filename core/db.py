@@ -319,6 +319,28 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE users ADD COLUMN notify_new_device INTEGER NOT NULL DEFAULT 1"
             )
+        # Per-org-creds follow-up: mirror the session's acting_as_org_id into
+        # the user row so the paired agent (which authenticates with a device
+        # token, not a session cookie) can resolve "which org is this user
+        # currently acting as?" when polling /sessions/status. Updated by
+        # blueprints/impersonation.py on start/end. NULL = not impersonating
+        # (the agent should fall back to one of the user's own memberships).
+        if "acting_as_org_id" not in ucols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN acting_as_org_id INTEGER"
+            )
+        # Per-org calendar/history: scope past upload sessions by tenant.
+        # NULL on pre-migration rows is acceptable — the per-org filter falls
+        # back to "all rows" when the active org has no scoped rows yet (so
+        # an admin viewing the migration period sees their existing data).
+        scols = {r[1] for r in conn.execute(
+            "PRAGMA table_info('sessions')").fetchall()}
+        if "org_id" not in scols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN org_id INTEGER")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_org "
+                "ON sessions(org_id)"
+            )
         # recovery_requests.note — free-text "what happened" context from the user.
         rrcols = {r[1] for r in conn.execute(
             "PRAGMA table_info('recovery_requests')").fetchall()}
@@ -439,21 +461,28 @@ def init_db() -> None:
         conn.commit()
 
 
-def save_session(session_id: str, label: str, state_json: str, status: str) -> None:
-    """Upsert a session row atomically."""
+def save_session(session_id: str, label: str, state_json: str, status: str,
+                 org_id: int | None = None) -> None:
+    """Upsert a session row atomically.
+
+    *org_id* stamps the tenant the session belongs to. Existing rows keep
+    their org_id on update (we don't overwrite to NULL when the caller
+    forgets to pass it); a fresh INSERT writes the supplied value.
+    """
     now = datetime.now(timezone.utc).isoformat()
     with _get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO sessions (id, created_at, updated_at, label, state_json, status)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (id, created_at, updated_at, label, state_json, status, org_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 updated_at = excluded.updated_at,
                 label      = excluded.label,
                 state_json = excluded.state_json,
-                status     = excluded.status
+                status     = excluded.status,
+                org_id     = COALESCE(excluded.org_id, sessions.org_id)
             """,
-            (session_id, now, now, label, state_json, status),
+            (session_id, now, now, label, state_json, status, org_id),
         )
         conn.commit()
 
@@ -476,12 +505,26 @@ def get_latest_in_progress() -> dict | None:
         return dict(row) if row else None
 
 
-def list_sessions(limit: int = 50) -> list[dict]:
-    """Return up to *limit* sessions ordered by most recent first."""
+def list_sessions(limit: int = 50, *, org_id: int | None = None) -> list[dict]:
+    """Return up to *limit* sessions ordered by most recent first.
+
+    *org_id* scopes to one tenant when supplied. Includes pre-migration
+    rows with NULL org_id so an org seeing the migration cutover still
+    sees their old runs alongside the new ones. ``None`` returns every
+    row (legacy single-tenant / admin paths).
+    """
     with _get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        if org_id is None:
+            rows = conn.execute(
+                "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM sessions "
+                "WHERE org_id = ? OR org_id IS NULL "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (int(org_id), limit),
+            ).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -716,19 +759,28 @@ def record_image_use(
         conn.commit()
 
 
-def get_history(session_id: str | None = None, limit: int = 100) -> list[dict]:
-    """Fetch upload_history rows, optionally filtered by session_id."""
+def get_history(session_id: str | None = None, limit: int = 100,
+                *, org_id: int | None = None) -> list[dict]:
+    """Fetch upload_history rows, optionally filtered by session_id and org_id.
+
+    *org_id* scopes to one tenant. Includes pre-migration rows with NULL
+    org_id (same rationale as ``list_sessions``).
+    """
+    clauses = ["1=1"]
+    args: list = []
+    if session_id:
+        clauses.append("session_id = ?")
+        args.append(session_id)
+    if org_id is not None:
+        clauses.append("(org_id = ? OR org_id IS NULL)")
+        args.append(int(org_id))
+    sql = (
+        "SELECT * FROM upload_history WHERE " + " AND ".join(clauses)
+        + " ORDER BY uploaded_at DESC LIMIT ?"
+    )
+    args.append(limit)
     with _get_conn() as conn:
-        if session_id:
-            rows = conn.execute(
-                "SELECT * FROM upload_history WHERE session_id=? ORDER BY uploaded_at DESC LIMIT ?",
-                (session_id, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM upload_history ORDER BY uploaded_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        rows = conn.execute(sql, args).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -1057,18 +1109,32 @@ def set_org_require_2fa(org_id: int, enabled: bool) -> None:
         c.commit()
 
 
-def get_history_for_window(iso_start: str, iso_end: str) -> list[dict]:
+def get_history_for_window(iso_start: str, iso_end: str,
+                           *, org_id: int | None = None) -> list[dict]:
     """Fetch upload_history rows whose iso_date falls in [iso_start, iso_end].
 
     Used by the calendar view, which needs every record in the visible month
     regardless of how deep it sits in history. The previous LIMIT-based query
     silently dropped older months once the table grew past the cap.
+
+    *org_id* scopes to one tenant; ``None`` returns every row (legacy /
+    admin paths). Pre-migration rows with NULL org_id are included so a
+    tenant viewing the migration cutover sees their historical data.
     """
     with _get_conn() as conn:
-        rows = conn.execute(
-            """SELECT * FROM upload_history
-               WHERE iso_date BETWEEN ? AND ?
-               ORDER BY iso_date, scheduled_time, platform""",
-            (iso_start, iso_end),
-        ).fetchall()
+        if org_id is None:
+            rows = conn.execute(
+                """SELECT * FROM upload_history
+                   WHERE iso_date BETWEEN ? AND ?
+                   ORDER BY iso_date, scheduled_time, platform""",
+                (iso_start, iso_end),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM upload_history
+                   WHERE iso_date BETWEEN ? AND ?
+                     AND (org_id = ? OR org_id IS NULL)
+                   ORDER BY iso_date, scheduled_time, platform""",
+                (iso_start, iso_end, int(org_id)),
+            ).fetchall()
         return [dict(r) for r in rows]

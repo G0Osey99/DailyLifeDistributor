@@ -677,7 +677,15 @@ class SessionState:
         state_json = json.dumps(self._to_state_dict())
         existing = db.load_session(self.session_id)
         status = "completed" if existing and existing.get("status") == "completed" else "in_progress"
-        db.save_session(self.session_id, label, state_json, status=status)
+        # Stamp the active org so /history and /calendar can scope by tenant.
+        # Outside a request context this returns None and an existing row's
+        # org_id is preserved via COALESCE in save_session.
+        try:
+            from core.org_context import effective_org_id
+            _oid = effective_org_id()
+        except Exception:
+            _oid = None
+        db.save_session(self.session_id, label, state_json, status=status, org_id=_oid)
         self._last_save_at = time.monotonic()
 
     @classmethod

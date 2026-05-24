@@ -545,20 +545,52 @@ def sessions_status():
     # enforce here so both browser cookies and agent tokens work.
     from flask import abort, request as _req, session as _sess
     has_session_auth = bool(_sess.get("user_id") or _sess.get("authenticated"))
+    # Track which device authenticated us via token — needed below to
+    # resolve which org the agent's user is currently acting as. None
+    # means "this is a browser request, not the agent."
+    auth_device_id: str | None = None
     if not has_session_auth:
         tok = (_req.args.get("token") or "").strip()
         if not tok:
             abort(401)
         try:
             from core.devices import verify_device_token
-            if not verify_device_token(tok):
+            auth_device_id = verify_device_token(tok)
+            if not auth_device_id:
                 abort(401)
         except Exception:
             abort(401)
     from core.playwright_session import has_session
     from core.llm_title_gen import is_llamafile_running
     from core.org_context import effective_org_id
-    org_id = effective_org_id()
+    # Resolve the effective org. Browser path: use the session overlay
+    # (effective_org_id). Agent path: read the device owner's
+    # users.acting_as_org_id (mirrored by impersonation.start/end) so the
+    # agent's status panel reflects the user's current impersonation;
+    # fall back to one of the user's memberships when not impersonating.
+    if has_session_auth:
+        org_id = effective_org_id()
+    else:
+        org_id = None
+        try:
+            from core import devices as _devs, db as _db_mod
+            from core import org_store as _ostore
+            owner_uid = _devs.get_device_owner(auth_device_id) if auth_device_id else None
+            if owner_uid is not None:
+                with _db_mod._get_conn() as _c:
+                    row = _c.execute(
+                        "SELECT acting_as_org_id FROM users WHERE id = ?",
+                        (int(owner_uid),),
+                    ).fetchone()
+                acting = row["acting_as_org_id"] if row else None
+                if acting is not None:
+                    org_id = int(acting)
+                else:
+                    mems = _ostore.list_memberships_for_user(int(owner_uid))
+                    if mems:
+                        org_id = int(mems[0]["org_id"])
+        except Exception:
+            org_id = None
     out: dict = {}
     out["youtube"] = {
         "ok": bool(_cached_yt_authenticated()),
@@ -586,10 +618,22 @@ def sessions_status():
     # sidebar reports "Agent online" when the only online agent belongs
     # to a different tenant — misleading, since clicking Upload would
     # refuse to dispatch to it.
+    #
+    # Browser path: _eligible_device_ids reads from the Flask session
+    # (effective_org_id + impersonation). Agent path: the session is
+    # empty, so we compute eligibility from the resolved owner-side
+    # org_id above (matches what a dispatch from the impersonating
+    # browser would pick).
     try:
         from core.relay import _default_relay, _default_account
-        from core import agent_dispatch as _ad
-        eligible = _ad._eligible_device_ids()
+        if has_session_auth:
+            from core import agent_dispatch as _ad
+            eligible = _ad._eligible_device_ids()
+        else:
+            from core import devices as _devs
+            eligible = (
+                _devs.list_device_ids_in_org(org_id) if org_id is not None else None
+            )
         if _default_relay is None:
             agent_count = 0
         else:

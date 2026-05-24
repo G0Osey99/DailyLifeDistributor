@@ -64,9 +64,14 @@ log = logging.getLogger(__name__)
 
 
 def _resolve_key(name: str) -> str:
-    """Prefer the encrypted store; fall back to env during migration."""
+    """Get API key from per-org secrets store, falling back to env."""
     from core import secrets_store
-    return (secrets_store.get_secret(name) or os.environ.get(name, "") or "").strip()
+    from core.org_context import effective_org_id
+    return (
+        secrets_store.get_secret(name, org_id=effective_org_id())
+        or os.environ.get(name, "")
+        or ""
+    ).strip()
 
 
 _UNSPLASH_SEARCH = "https://api.unsplash.com/search/photos"

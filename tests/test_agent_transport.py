@@ -42,3 +42,84 @@ def test_run_handles_ping_with_handler(monkeypatch):
     seen = []
     conn.run_once(lambda msg: seen.append(msg))
     assert seen == [{"v": 1, "type": "ping", "payload": {"x": 7}}]
+
+
+# ── certifi / TLS context (v0.7.1) ──────────────────────────────────
+
+
+def test_build_ssl_context_uses_certifi_bundle():
+    """The wss SSL context must load certifi's cacert.pem, not whatever
+    the host system OpenSSL was built against. PyInstaller .app bundles
+    that fall through to the system trust store end up with no trust
+    anchors, every wss handshake hangs forever, and the GUI sits at
+    "Connecting…" with no log evidence (the bug surfaced in v0.7.0)."""
+    import certifi
+    ctx = transport._build_ssl_context()
+    # Smoke check: the context can resolve real CA chains. The cheapest
+    # proof is "the context has trust anchors loaded" — get_ca_certs()
+    # returns an empty list when the cafile was missing or unreadable.
+    assert ctx.get_ca_certs(), "SSL context loaded zero CAs from certifi"
+    # And the cert file we asked for actually exists.
+    import os
+    assert os.path.isfile(certifi.where()), \
+        "certifi.where() returned a non-existent path"
+
+
+def test_connect_passes_certifi_ssl_context_for_wss(monkeypatch):
+    """_connect must forward an ssl_context to simple_websocket.Client
+    for wss URLs so the bundled certifi CAs are used."""
+    captured = {}
+
+    def _fake_client(url, ssl_context=None):
+        captured["url"] = url
+        captured["ssl_context"] = ssl_context
+        return _FakeWS([])
+
+    import simple_websocket
+    monkeypatch.setattr(simple_websocket, "Client", _fake_client)
+    transport._connect("wss://autoalert.pro/agent/socket?token=tok-9")
+    assert captured["ssl_context"] is not None, \
+        "wss connect must build an explicit SSL context"
+    # Sanity: same CAs as the certifi bundle.
+    assert captured["ssl_context"].get_ca_certs(), \
+        "forwarded SSL context had no trust anchors"
+
+
+def test_connect_skips_ssl_context_for_ws(monkeypatch):
+    """Plain ws:// (used in tests / local dev) must NOT build an SSL
+    context — wrapping a plain TCP socket in TLS would just fail."""
+    captured = {}
+
+    def _fake_client(url, ssl_context=None):
+        captured["ssl_context"] = ssl_context
+        return _FakeWS([])
+
+    import simple_websocket
+    monkeypatch.setattr(simple_websocket, "Client", _fake_client)
+    transport._connect("ws://localhost:5000/agent/socket?token=x")
+    assert captured["ssl_context"] is None
+
+
+def test_connect_bounds_handshake_with_socket_default_timeout(monkeypatch):
+    """If simple_websocket's Client() hangs (e.g. TLS handshake stalls),
+    a bounded socket.setdefaulttimeout prevents an infinite hang. The
+    previous behavior had no timeout and the GUI sat at "Connecting…"
+    forever with no log."""
+    import socket as _socket
+    seen = {}
+
+    def _fake_client(url, ssl_context=None):
+        seen["timeout_during_call"] = _socket.getdefaulttimeout()
+        return _FakeWS([])
+
+    import simple_websocket
+    monkeypatch.setattr(simple_websocket, "Client", _fake_client)
+    before = _socket.getdefaulttimeout()
+    transport._connect("wss://autoalert.pro/agent/socket?token=x")
+    after = _socket.getdefaulttimeout()
+    assert seen["timeout_during_call"] == transport._CONNECT_TIMEOUT_S, \
+        "_connect must arm a socket default timeout for the Client() call"
+    # Restored on the way out so other sockets (e.g. the sessions poll)
+    # aren't affected.
+    assert before == after, \
+        "_connect must restore the previous socket default timeout"

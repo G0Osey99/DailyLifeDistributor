@@ -447,7 +447,9 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
             _state.set_connection(_st.CONN_CONNECTING)
         conn = AgentConnection(server_url, token, shutdown_event=shutdown_event)
         try:
+            log.info("agent: opening WebSocket to %s", server_url)
             conn.connect()
+            log.info("agent: WebSocket connected as %s", _device_name())
             print(f"✓ Connected ({_device_name()})")
             if _state is not None:
                 _state.set_connection(_st.CONN_ONLINE)
@@ -463,7 +465,27 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
         except OSError as exc:
             if shutdown_event.is_set():
                 break
-            log.debug("Network error: %s", exc, exc_info=True)
+            # WARNING (not DEBUG) so the log file captures evidence of a
+            # failing connect — at DEBUG the user saw zero log output and
+            # the GUI sat at "Connecting…" forever (the symptom that
+            # surfaced the certifi/TLS bug in v0.7.0). Include the
+            # exception type explicitly because the message alone can be
+            # cryptic ("[Errno 60] Operation timed out" doesn't tell you
+            # whether it's TCP, TLS handshake, or read).
+            log.warning(
+                "agent connect failed (%s): %s — will retry with backoff",
+                type(exc).__name__, exc,
+            )
+            # Update the GUI state too — the OSError branch used to leave
+            # the state stuck at CONN_CONNECTING, which the user reads as
+            # "the agent is still trying" when really it's bounced and is
+            # waiting to retry. CONN_DISCONNECTED renders as "Reconnecting…"
+            # in the GUI, which matches the actual behavior.
+            if _state is not None:
+                _state.set_connection(
+                    _st.CONN_DISCONNECTED,
+                    message=f"Couldn't reach {server_url} — retrying",
+                )
             # Backoff is computed at the bottom of the loop from
             # consecutive_connect_failures; capped at _RECONNECT_MAX_DELAY.
             print(f"Couldn't reach {server_url}. Check your internet connection. "

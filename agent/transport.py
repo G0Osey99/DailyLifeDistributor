@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+import ssl
 import threading
 from typing import Callable, Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
+import certifi
 import simple_websocket
 
 PROTOCOL_VERSION = 1
@@ -22,10 +25,53 @@ PROTOCOL_VERSION = 1
 # shutdown event.  Small enough to feel responsive; large enough to be cheap.
 _RECV_POLL_INTERVAL = 1.0
 
+# Connect timeout for ``socket.create_connection`` + TLS handshake. Set
+# via ``socket.setdefaulttimeout()`` around the Client() call because
+# simple-websocket doesn't expose a connect_timeout kwarg on Client. If
+# the WebSocket connect hangs (DNS resolves but TCP/TLS stalls — e.g.
+# Cloudflare edge being weird, or a captive-portal DNS poisoning the
+# response), we'd otherwise sit in the call forever and the GUI would
+# show "Connecting…" with no timeout, no log, no recourse.
+_CONNECT_TIMEOUT_S = 20.0
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """Build an SSLContext that trusts the same CAs ``requests`` does.
+
+    PyInstaller bundles certifi as a transitive dep of ``requests``, so
+    the cert bundle ships inside the .app/.exe and works regardless of
+    where the binary ends up on disk. Using
+    ``ssl.create_default_context()`` without a ``cafile`` argument falls
+    back to whatever Python was built against — on a python.org macOS
+    installer that's certifi too, but on a PyInstaller .app bundle the
+    trust-store lookup is fragile (the post-install
+    ``Install Certificates.command`` script never ran, so OpenSSL's
+    default cert path may point at a non-existent file). Result:
+    ``ssl.create_default_context()`` returns a context with no trust
+    anchors, every wss:// handshake fails verification, and the
+    reconnect loop hangs forever with no visible error.
+    """
+    return ssl.create_default_context(cafile=certifi.where())
+
 
 def _connect(url: str):
-    """Seam for tests: real WebSocket client."""
-    return simple_websocket.Client(url)
+    """Seam for tests: real WebSocket client.
+
+    Forces the SSL context to use the bundled certifi CA file (see
+    ``_build_ssl_context``) so wss:// works in a PyInstaller .app, and
+    bounds the connect+handshake at ``_CONNECT_TIMEOUT_S`` so a stalled
+    handshake surfaces as ``OSError`` instead of hanging forever.
+    """
+    parts = urlsplit(url)
+    ssl_context: Optional[ssl.SSLContext] = (
+        _build_ssl_context() if parts.scheme == "wss" else None
+    )
+    prev_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(_CONNECT_TIMEOUT_S)
+    try:
+        return simple_websocket.Client(url, ssl_context=ssl_context)
+    finally:
+        socket.setdefaulttimeout(prev_timeout)
 
 
 def _to_ws_url(server_url: str, token: str) -> str:

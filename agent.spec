@@ -24,12 +24,21 @@ block_cipher = None
 # functional GUI binary.
 from PyInstaller.utils.hooks import collect_data_files
 _ctk_data = collect_data_files('customtkinter')
+# certifi ships cacert.pem next to its __init__.py. PyInstaller's auto-
+# discovery picks it up via the `requests` import chain on most builds,
+# but agent/transport.py imports certifi DIRECTLY now (to build the SSL
+# context for simple-websocket — `requests` defaults to certifi, but
+# simple-websocket uses ssl.create_default_context() which on a
+# PyInstaller .app bundle returns a context with no trust anchors). Add
+# the data file explicitly so the bundle stays correct even if the
+# requests/certifi version pair drops the auto-hook in the future.
+_certifi_data = collect_data_files('certifi')
 
 a = Analysis(
     ['agent/main.py'],
     pathex=['.'],
     binaries=[],
-    datas=[('agent/release_pubkey.pem', 'agent')] + _ctk_data,
+    datas=[('agent/release_pubkey.pem', 'agent')] + _ctk_data + _certifi_data,
     hiddenimports=[
         'core.file_scanner',
         'keyring.backends.Windows',
@@ -40,6 +49,9 @@ a = Analysis(
         'tkinter',
         'tkinter.font',
         'tkinter.ttk',
+        # certifi is imported directly from agent/transport.py for the
+        # wss SSL context (see comment by collect_data_files above).
+        'certifi',
     ],
     hookspath=[],
     runtime_hooks=[],

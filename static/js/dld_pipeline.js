@@ -511,44 +511,204 @@
         return $all(".platform-toggle").filter((cb) => cb.checked).map((cb) => cb.dataset.platform);
     }
 
-    // ── Review & customize step (reuses the Review look in-page so the
-    //    picked File objects stay in memory for the chunked upload) ───────
-    function selById(iso, cls) {
-        return $(`.${cls}[data-iso="${CSS.escape(iso)}"]`);
+    // ── Review & customize step ─────────────────────────────────────────
+    // One tab per enabled platform. Each tab lists the selected dates and
+    // exposes only the fields that platform actually consumes. Edits flow
+    // through a single overrideState keyed by (iso, field) — shared fields
+    // (description) cross-sync across tabs so editing once is enough.
+    //
+    // Field shapes correspond to the keys accepted by blueprints/media.py
+    // `_OVERRIDE_FIELDS`; adding a new field server-side just means
+    // adding the same key here.
+    const PLATFORM_TABS = [
+        {
+            key: "youtube_video", label: "YouTube Video",
+            color: "--p-yt-video",
+            fields: [
+                { field: "youtube_title", label: "Title", type: "text",
+                  metaKey: "youtube_title" },
+                { field: "description",  label: "Description", type: "textarea",
+                  metaKey: "description", shared: true },
+            ],
+        },
+        {
+            key: "youtube_shorts", label: "YouTube Shorts",
+            color: "--p-yt-shorts",
+            fields: [
+                { field: "youtube_shorts_title", label: "Title",
+                  type: "text", metaKey: "shorts_title", autofillShorts: true },
+                { field: "description", label: "Description", type: "textarea",
+                  metaKey: "description", shared: true },
+            ],
+        },
+        {
+            key: "simplecast", label: "SimpleCast",
+            color: "--p-podcast",
+            fields: [
+                { field: "episode_title", label: "Episode title",
+                  type: "text", metaKey: "episode_title" },
+                { field: "description", label: "Show notes", type: "textarea",
+                  metaKey: "description", shared: true },
+            ],
+        },
+        {
+            key: "rock", label: "Rock",
+            color: "--p-rock",
+            fields: [
+                { field: "description", label: "Description", type: "textarea",
+                  metaKey: "description", shared: true },
+            ],
+        },
+        {
+            key: "rock_email", label: "Rock Email",
+            color: "--p-rock-email",
+            fields: [
+                { field: "description",
+                  label: "Email body (prepended to the standing footer)",
+                  type: "textarea", metaKey: "description", shared: true },
+            ],
+        },
+        {
+            key: "vista_social", label: "Vista Social",
+            color: "--p-vista",
+            fields: [
+                { field: "vista_caption", label: "Caption", type: "textarea",
+                  metaKey: "vista_caption" },
+            ],
+        },
+    ];
+
+    // Central state — overrideState[iso][field] = userValue. Inputs
+    // read/write here so a shared field stays in sync across tabs.
+    let overrideState = {};
+
+    function _initialValueFor(iso, field) {
+        if (overrideState[iso] && Object.prototype.hasOwnProperty.call(
+                overrideState[iso], field)) {
+            return overrideState[iso][field];
+        }
+        const meta = (scanResults[iso] && scanResults[iso].metadata) || {};
+        const spec = PLATFORM_TABS
+            .flatMap((t) => t.fields)
+            .find((f) => f.field === field);
+        const metaKey = spec && spec.metaKey;
+        return (metaKey && meta[metaKey]) || "";
     }
 
-    function buildCustomizeCards(dates) {
-        const list = $("#customize-list");
-        list.innerHTML = "";
-        for (const iso of dates) {
-            const meta = (scanResults[iso] && scanResults[iso].metadata) || {};
-            const title = meta.shorts_title || meta.youtube_title || "";
-            const desc = meta.description || "";
-            const card = document.createElement("div");
-            card.className = "card";
-            card.style.marginBottom = "0";
-            card.innerHTML =
-                `<div style="font-weight:600;margin-bottom:8px;">${esc(iso)}</div>` +
-                `<div class="mapping-field"><label>Title</label>` +
-                `<input type="text" class="cust-title" data-iso="${esc(iso)}"></div>` +
-                `<div class="cust-suggestions" data-iso="${esc(iso)}" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;"></div>` +
-                `<div class="mapping-field"><label>Description</label>` +
-                `<textarea class="cust-desc" data-iso="${esc(iso)}" rows="2"></textarea></div>`;
-            list.appendChild(card);
-            // Set values via .value (not innerHTML) so user content can't inject markup.
-            selById(iso, "cust-title").value = title;
-            selById(iso, "cust-desc").value = desc;
+    function _writeOverride(iso, field, value) {
+        overrideState[iso] = overrideState[iso] || {};
+        overrideState[iso][field] = value;
+        // Mirror shared fields into any other open tab's input so the
+        // user sees the same value after switching.
+        const spec = PLATFORM_TABS
+            .flatMap((t) => t.fields)
+            .find((f) => f.field === field);
+        if (spec && spec.shared) {
+            $all(`[data-cust-iso="${CSS.escape(iso)}"][data-cust-field="${field}"]`)
+                .forEach((el) => { if (el.value !== value) el.value = value; });
         }
     }
 
-    async function autofillTitles(dates, platforms) {
-        if (!platforms.includes("youtube_shorts")) return;  // only Shorts dates
+    function _renderTabPanel(tab, dates) {
+        const wrap = document.createElement("div");
+        wrap.className = "rev-tab-panel";
+        wrap.dataset.tab = tab.key;
+        wrap.style.setProperty("--tab-accent", `var(${tab.color})`);
         for (const iso of dates) {
-            const input = selById(iso, "cust-title");
-            if (!input || input.value.trim()) continue;       // only-if-blank
+            const card = document.createElement("div");
+            card.className = "rev-card";
+            const head = document.createElement("div");
+            head.className = "rev-card-head";
+            head.textContent = iso;
+            card.appendChild(head);
+
+            for (const spec of tab.fields) {
+                const row = document.createElement("div");
+                row.className = "rev-field";
+                const label = document.createElement("label");
+                label.textContent = spec.label;
+                if (spec.shared) {
+                    const tag = document.createElement("span");
+                    tag.className = "rev-shared-tag";
+                    tag.textContent = "shared across tabs";
+                    label.appendChild(tag);
+                }
+                row.appendChild(label);
+                const input = spec.type === "textarea"
+                    ? document.createElement("textarea")
+                    : document.createElement("input");
+                if (spec.type !== "textarea") input.type = "text";
+                if (spec.type === "textarea") input.rows = 3;
+                input.dataset.custIso = iso;
+                input.dataset.custField = spec.field;
+                input.value = _initialValueFor(iso, spec.field);
+                input.addEventListener("input", () => {
+                    _writeOverride(iso, spec.field, input.value);
+                });
+                row.appendChild(input);
+
+                // Shorts-only: suggestion chips drop in beneath the title.
+                if (spec.autofillShorts) {
+                    const sug = document.createElement("div");
+                    sug.className = "rev-suggestions";
+                    sug.dataset.custIso = iso;
+                    sug.dataset.custField = spec.field;
+                    row.appendChild(sug);
+                }
+                card.appendChild(row);
+            }
+            wrap.appendChild(card);
+        }
+        return wrap;
+    }
+
+    function _activateTab(key) {
+        $all(".rev-tab").forEach((b) => {
+            b.classList.toggle("active", b.dataset.tab === key);
+        });
+        $all(".rev-tab-panel").forEach((p) => {
+            p.classList.toggle("active", p.dataset.tab === key);
+        });
+    }
+
+    function buildCustomizeTabs(dates, platforms) {
+        overrideState = {};  // fresh on each Review click
+        const tabs = $("#rev-tabs");
+        const body = $("#rev-tab-body");
+        tabs.innerHTML = "";
+        body.innerHTML = "";
+        const active = PLATFORM_TABS.filter((t) => platforms.includes(t.key));
+        if (!active.length) {
+            body.innerHTML = '<div class="text-muted text-sm" style="padding:24px;text-align:center;">No platforms enabled. Toggle at least one in the Platforms card above.</div>';
+            return;
+        }
+        for (const tab of active) {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "rev-tab";
+            btn.dataset.tab = tab.key;
+            btn.textContent = tab.label;
+            btn.style.setProperty("--tab-accent", `var(${tab.color})`);
+            btn.addEventListener("click", () => _activateTab(tab.key));
+            tabs.appendChild(btn);
+            body.appendChild(_renderTabPanel(tab, dates));
+        }
+        _activateTab(active[0].key);
+    }
+
+    async function autofillShortsTitles(dates) {
+        // Only the YouTube Shorts tab carries the autofill chip. If Shorts
+        // isn't in the run, there's nothing to suggest into.
+        const shortsTab = PLATFORM_TABS.find((t) => t.key === "youtube_shorts");
+        if (!shortsTab) return;
+        const spec = shortsTab.fields.find((f) => f.autofillShorts);
+        if (!spec) return;
+        for (const iso of dates) {
+            const input = $(`[data-cust-iso="${CSS.escape(iso)}"][data-cust-field="${spec.field}"]`);
+            if (!input || input.value.trim()) continue;
             const meta = (scanResults[iso] && scanResults[iso].metadata) || {};
             const transcript = (meta.transcript || "").trim();
-            const box = selById(iso, "cust-suggestions");
+            const box = $(`.rev-suggestions[data-cust-iso="${CSS.escape(iso)}"][data-cust-field="${spec.field}"]`);
             if (!transcript) continue;
             if (box) box.textContent = "suggesting title…";
             try {
@@ -556,13 +716,19 @@
                 const sug = (r.ok && r.data.suggestions) || [];
                 if (box) box.innerHTML = "";
                 if (!sug.length) { if (box) box.textContent = "no suggestions"; continue; }
-                if (!input.value.trim()) input.value = sug[0];   // fill the blank
+                if (!input.value.trim()) {
+                    input.value = sug[0];
+                    _writeOverride(iso, spec.field, sug[0]);
+                }
                 sug.forEach((s) => {
                     const chip = document.createElement("button");
                     chip.type = "button";
                     chip.className = "btn btn-sm btn-secondary";
-                    chip.textContent = s;                         // textContent = safe
-                    chip.addEventListener("click", () => { input.value = s; });
+                    chip.textContent = s;
+                    chip.addEventListener("click", () => {
+                        input.value = s;
+                        _writeOverride(iso, spec.field, s);
+                    });
                     if (box) box.appendChild(chip);
                 });
             } catch (_) {
@@ -571,24 +737,20 @@
         }
     }
 
-    function collectOverrides(platforms) {
-        const ov = {};
-        $all(".cust-title").forEach((inp) => {
-            const v = inp.value.trim();
-            if (!v) return;
-            const iso = inp.dataset.iso;
-            ov[iso] = ov[iso] || {};
-            if (platforms.includes("youtube_shorts")) ov[iso].youtube_shorts_title = v;
-            if (platforms.includes("youtube_video")) ov[iso].youtube_title = v;
-        });
-        $all(".cust-desc").forEach((t) => {
-            const v = t.value.trim();
-            if (!v) return;
-            const iso = t.dataset.iso;
-            ov[iso] = ov[iso] || {};
-            ov[iso].description = v;
-        });
-        return ov;
+    function collectOverrides(_platforms) {
+        // overrideState is the source of truth — inputs write into it on
+        // every keystroke. Strip empty strings so the server keeps using
+        // the spreadsheet's value instead of clobbering it with "".
+        const out = {};
+        for (const iso of Object.keys(overrideState)) {
+            const row = {};
+            for (const k of Object.keys(overrideState[iso])) {
+                const v = (overrideState[iso][k] || "").toString().trim();
+                if (v) row[k] = v;
+            }
+            if (Object.keys(row).length) out[iso] = row;
+        }
+        return out;
     }
 
     $("#review-btn")?.addEventListener("click", () => {
@@ -596,12 +758,12 @@
         const platforms = enabledPlatforms();
         if (!dates.length) { alert("Select at least one date."); return; }
         if (!platforms.length) { alert("Enable at least one platform."); return; }
-        buildCustomizeCards(dates);
+        buildCustomizeTabs(dates, platforms);
         $("#select-area").style.display = "none";
         $("#customize-area").style.display = "block";
         // Fire-and-forget; fills blanks as suggestions return. Guard the
         // rejection so an unawaited failure can't become an unhandled rejection.
-        autofillTitles(dates, platforms).catch((e) => console.error("autofill titles failed:", e));
+        autofillShortsTitles(dates).catch((e) => console.error("autofill titles failed:", e));
     });
 
     // ── Upload orchestration (batched, chunked, SSE) ─────────────────────

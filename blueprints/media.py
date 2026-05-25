@@ -497,10 +497,18 @@ def batch_run():
 
 
 # Override keys the customize step may send, mapped to ReviewEntry fields.
+# The set widened in the platform-tabs review refactor: each tab exposes
+# its platform-unique field (episode_title for SimpleCast, vista_caption
+# for Vista Social), and edits flow through here so the upload uses the
+# user's text instead of the spreadsheet's value. Shared fields
+# (description, podcast_title) are still single-keyed — multiple tabs
+# can write the same key, last-write-wins per (date, key).
 _OVERRIDE_FIELDS = {
     "youtube_title": "youtube_title",
     "youtube_shorts_title": "youtube_shorts_title",
     "podcast_title": "podcast_title",
+    "episode_title": "episode_title",
+    "vista_caption": "vista_caption",
     "description": "description",
 }
 

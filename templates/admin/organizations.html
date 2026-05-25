@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tip %}
 {% block title %}Organizations · Admin — DLD{% endblock %}
 
 {% block extra_css %}
@@ -44,7 +45,10 @@
       <input id="org-name" type="text" name="name" placeholder="Acme Church" required>
     </div>
     <div class="form-group">
-      <label for="org-slug">Slug <span class="text-dim text-xs">(optional — auto from name)</span></label>
+      <label for="org-slug">
+        Slug <span class="text-dim text-xs">(optional — auto from name)</span>
+        {{ tip("URL-safe identifier — lowercase letters, digits, and dashes only. Used in invite links and the audit log. Can't be changed later, so pick something stable.") }}
+      </label>
       <input id="org-slug" type="text" name="slug" placeholder="acme-church">
     </div>
     <button type="submit" class="btn btn-primary">Create</button>

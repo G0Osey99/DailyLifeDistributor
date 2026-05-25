@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tip %}
 {% block title %}Setup — Daily Life Distributor{% endblock %}
 {% block topbar_title %}Setup{% endblock %}
 {% block topbar_sub %}<div class="topbar-sub">Pick your media folders and spreadsheet, match dates, then upload.</div>{% endblock %}
@@ -104,24 +105,34 @@
     <!-- Media folders (left) -->
     <div class="card" style="margin-bottom:0;">
         <div style="margin-bottom:14px;">
-            <div style="font-size:13.5px; font-weight:600;">Media folders</div>
+            <div style="font-size:13.5px; font-weight:600;">
+                Media folders
+                {{ tip("Pick the folder on your computer for each media type. Files never leave your machine until you click Upload — the browser streams them directly to YouTube/SimpleCast/Rock in batches.") }}
+            </div>
             <div style="font-size:12px; color:var(--shell-text-muted); margin-top:2px;">Pick the folder on your computer for each media type. Files stay on your machine until you upload.</div>
         </div>
         <div class="picker-list">
             {% set _pickers = [
-                ('youtube_video', 'Horizontal Video'),
-                ('youtube_shorts', 'Vertical Video (Shorts)'),
-                ('podcast', 'Podcast Audio'),
-                ('thumbnails', 'Thumbnails'),
-                ('email_thumbnails', 'Email Thumbnails'),
+                ('youtube_video', 'Horizontal Video',
+                    'Landscape (16:9) videos that go to YouTube Video. The filename must contain the date (YYMMDD or YYYY-MM-DD) so it can be matched to the right row in your spreadsheet.'),
+                ('youtube_shorts', 'Vertical Video (Shorts)',
+                    'Portrait (9:16) videos under 60s. Same filename-date rule as horizontal video. Leave the shorts title blank in your sheet and the LLM will suggest one from the transcript.'),
+                ('podcast', 'Podcast Audio',
+                    'MP3 or WAV episodes for SimpleCast. The agent uses Playwright to drive the SimpleCast dashboard (no REST API), so first run pops up a Chrome window for login.'),
+                ('thumbnails', 'Thumbnails',
+                    'JPG / PNG thumbnails for YouTube (the plain version without the play-button overlay).'),
+                ('email_thumbnails', 'Email Thumbnails',
+                    'The play-button-overlay variant used in the Daily Life email content channel. Distinct from the YouTube thumbnails folder so you can keep two versions of each image.'),
             ] %}
-            {% for cat, label in _pickers %}
+            {% for cat, label, hint_text in _pickers %}
             <div class="picker-row">
                 <div class="picker-row-icon" aria-hidden="true">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
                 </div>
                 <div style="min-width:0;">
-                    <label class="picker-row-label" for="picker-{{ cat }}">{{ label }}</label>
+                    <label class="picker-row-label" for="picker-{{ cat }}">
+                        {{ label }}{{ tip(hint_text) }}
+                    </label>
                     <input id="picker-{{ cat }}" type="file" class="folder-picker" data-category="{{ cat }}" webkitdirectory directory multiple>
                 </div>
                 <div class="picker-count" data-count="{{ cat }}">—</div>
@@ -134,7 +145,10 @@
     <div class="setup-right">
         <div class="card" style="margin-bottom:0;">
             <div style="margin-bottom:14px;">
-                <div style="font-size:13.5px; font-weight:600;">Planning spreadsheet</div>
+                <div style="font-size:13.5px; font-weight:600;">
+                    Planning spreadsheet
+                    {{ tip("Your .xlsx with one row per date. Titles, descriptions, and scheduling times all come from here. The mapping below tells DLD which column means what — pick once and we'll remember the mapping for this browser.") }}
+                </div>
                 <div style="font-size:12px; color:var(--shell-text-muted); margin-top:2px;">Upload your .xlsx, then map its columns.</div>
             </div>
             <input type="file" id="spreadsheet-picker" accept=".xlsx">
@@ -142,7 +156,10 @@
 
             <div id="mapping-section" style="margin-top:14px;">
                 <div class="mapping-field" style="margin-bottom:12px;">
-                    <label for="map-sheet">Sheet</label>
+                    <label for="map-sheet">
+                        Sheet
+                        {{ tip("Workbooks with multiple tabs let you pick which sheet holds the publishing plan.") }}
+                    </label>
                     <select id="map-sheet"></select>
                 </div>
                 <div id="sheet-preview-wrap" style="display:none; margin-bottom:12px;">
@@ -150,24 +167,37 @@
                     <div id="sheet-preview" class="sheet-preview"></div>
                 </div>
                 <div class="mapping-grid">
+                    {# Each tuple is (key, label, hint_text). Pass an empty
+                       string for hint_text to skip a hint on rarely-confusing
+                       columns. #}
                     {% set _cols = [
-                        ('date_column', 'Date'),
-                        ('youtube_title_column', 'YouTube Title'),
-                        ('shorts_title_column', 'Shorts Title'),
-                        ('podcast_title_column', 'Podcast Title'),
-                        ('episode_title_column', 'Episode Title'),
-                        ('description_column', 'Description'),
-                        ('vista_caption_column', 'Vista Caption'),
-                        ('tags_column', 'Tags'),
-                        ('passage_column', 'Passage'),
-                        ('scripture_column', 'Scripture'),
-                        ('prayer_column', 'Prayer'),
-                        ('topic_column', 'Topic'),
-                        ('transcript_column', 'Transcript'),
+                        ('date_column', 'Date',
+                            'The column whose values match the date in your media filenames (YYMMDD, DDMMYY, etc.). This is the join key — without it, nothing matches.'),
+                        ('youtube_title_column', 'YouTube Title',
+                            'Title for the horizontal YouTube upload. Leave the cell blank in your sheet to upload without a title set.'),
+                        ('shorts_title_column', 'Shorts Title',
+                            'Title for the vertical Shorts upload. Blank cells trigger the LLM title suggester — you can pick from suggestions on the review screen.'),
+                        ('podcast_title_column', 'Podcast Title', ''),
+                        ('episode_title_column', 'Episode Title',
+                            'Episode title for the SimpleCast upload. Falls back to the podcast title if blank.'),
+                        ('description_column', 'Description',
+                            'Body text used for YouTube, Rock, and the Rock Email channel. Per-platform footers (from config.yaml) are appended automatically.'),
+                        ('vista_caption_column', 'Vista Caption',
+                            'Social caption used for the Vista Social broadcast. Vista has tighter per-network length rules than YouTube — keep it shorter.'),
+                        ('tags_column', 'Tags', ''),
+                        ('passage_column', 'Passage', ''),
+                        ('scripture_column', 'Scripture', ''),
+                        ('prayer_column', 'Prayer', ''),
+                        ('topic_column', 'Topic',
+                            'Drives the free-stock image search for Rock Spotlight / Vista / Reflection slots — broad topical keywords work best.'),
+                        ('transcript_column', 'Transcript',
+                            'Plain transcript text. Fed to the LLM to suggest titles when the title column is blank. Leave this unmapped to disable LLM suggestions.'),
                     ] %}
-                    {% for key, label in _cols %}
+                    {% for key, label, hint_text in _cols %}
                     <div class="mapping-field">
-                        <label for="map-{{ key }}">{{ label }}</label>
+                        <label for="map-{{ key }}">
+                            {{ label }}{% if hint_text %}{{ tip(hint_text) }}{% endif %}
+                        </label>
                         <select id="map-{{ key }}" class="mapping-column" data-key="{{ key }}">
                             <option value="">—</option>
                         </select>
@@ -181,7 +211,10 @@
 
         <div class="card" style="margin-bottom:0;">
             <div style="margin-bottom:10px;">
-                <div style="font-size:13.5px; font-weight:600;">Platforms</div>
+                <div style="font-size:13.5px; font-weight:600;">
+                    Platforms
+                    {{ tip("Untick a platform to skip it for this run. Already-uploaded (date, platform) pairs are skipped automatically — re-running an upload only sends what's missing.") }}
+                </div>
                 <div style="font-size:12px; color:var(--shell-text-muted); margin-top:2px;">Which platforms to upload to.</div>
             </div>
             <div class="platform-toggles">

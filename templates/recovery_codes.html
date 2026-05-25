@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tip %}
 {% block title %}Recovery codes — DLD{% endblock %}
 
 {% block extra_css %}
@@ -37,7 +38,10 @@
 </div>
 
 {% else %}
-<h1>Recovery codes</h1>
+<h1>
+  Recovery codes
+  {{ tip("Each code works exactly once and bypasses your 2FA factor. Useful when your phone is lost, dead, or wiped. Regenerating creates a fresh batch of 10 and invalidates the prior set in the same DB write.") }}
+</h1>
 <p class="subtitle">Single-use codes you can sign in with if you lose your authenticator device. Generated 10 at a time.</p>
 
 <div class="card">

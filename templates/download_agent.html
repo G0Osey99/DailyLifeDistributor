@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tip %}
 {% block title %}Download agent — DLD{% endblock %}
 
 {% block extra_css %}
@@ -74,7 +75,10 @@
 
   {% if pairing_code %}
   <div class="pair-code-box">
-    <strong>One-time pairing code <span class="text-dim text-sm">(valid 30 minutes)</span></strong>
+    <strong>
+      One-time pairing code <span class="text-dim text-sm">(valid 30 minutes)</span>
+      {{ tip("Single-use code that links this agent install to your account. Expires after 30 minutes or first redemption. If you don't pair in time, just reload this page for a fresh one.") }}
+    </strong>
     <p class="text-muted text-sm" style="margin:6px 0 10px;">After installing the agent, paste this code into its pair-up screen to link it to your account.</p>
     <span class="pair-code" id="pair-code">{{ pairing_code }}</span>
     <button type="button" class="btn btn-sm btn-ghost"

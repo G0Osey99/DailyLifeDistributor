@@ -1,7 +1,8 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tip %}
 {% block title %}Upload History — Daily Life Distributor{% endblock %}
 {% block topbar_title %}History{% endblock %}
-{% block topbar_sub %}<div class="topbar-sub">{{ sessions|length }} session{{ '' if sessions|length == 1 else 's' }}</div>{% endblock %}
+{% block topbar_sub %}<div class="topbar-sub">{{ sessions|length }} session{{ '' if sessions|length == 1 else 's' }} {{ tip("One row per upload session. Click a session on the left to see its per-date / per-platform breakdown — green = uploaded, red = failed, dim = skipped (already uploaded in a prior run).", direction="down") }}</div>{% endblock %}
 {% block nav_breadcrumb %}{% endblock %}
 
 {% block topbar_actions %}

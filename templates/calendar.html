@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tip %}
 {% block title %}Calendar — Daily Life Distributor{% endblock %}
 {% block topbar_title %}Content Calendar{% endblock %}
 {% block topbar_sub %}<div class="topbar-sub">{{ month_label }} · {{ total_visible }} post{{ '' if total_visible == 1 else 's' }}</div>{% endblock %}
@@ -8,7 +9,7 @@
 <button id="cal-refresh-btn" class="btn btn-secondary btn-sm" type="button">
     <span class="cal-refresh-label">Refresh sources</span>
     <span class="cal-refresh-spinner" hidden aria-hidden="true">…</span>
-</button>
+</button>{{ tip("Reconciles the calendar with what's actually scheduled on each platform — pulls YouTube's planned schedule, SimpleCast's draft queue, Vista's outbox, etc. Runs once when the page loads; click to force a fresh pull.", direction="down") }}
 <a href="{{ url_for('calendar.calendar_view', ym=today_ym) }}" class="btn btn-secondary btn-sm">Today</a>
 <div class="cal-monthnav">
     <a href="{{ url_for('calendar.calendar_view', ym=prev_ym) }}" class="cal-monthnav-btn" aria-label="Previous month">

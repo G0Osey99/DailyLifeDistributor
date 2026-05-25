@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tip %}
 {% block title %}Users · Admin — DLD{% endblock %}
 
 {% block extra_css %}
@@ -35,8 +36,11 @@
   <table>
     <thead>
       <tr>
-        <th>Username</th><th>Email</th><th>Flags</th>
-        <th>Created</th><th>Last login</th><th>Pwd changed</th><th></th>
+        <th>Username</th><th>Email</th>
+        <th>Flags{{ tip("program-owner = full cross-org admin (this list, /admin/organizations, force-reset). Only program-owners can promote or demote other program-owners.", direction="down") }}</th>
+        <th>Created</th><th>Last login</th>
+        <th>Pwd changed{{ tip("When the user last set a new password. A 'never' here means the bootstrap password is still in place — that account hasn't completed first-login yet.", direction="down") }}</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>

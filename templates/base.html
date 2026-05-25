@@ -527,6 +527,131 @@
         @keyframes toastIn  { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
         @keyframes toastOut { from { opacity: 1; transform: translateX(0); }   to { opacity: 0; transform: translateX(40px); } }
 
+        /* ─── Tip chips (hover-able help icons) ────────────────────────
+           Small circular "?" icon that reveals a popover on hover or
+           keyboard focus. Use via the `tip(text)` macro in
+           templates/_macros.html. Pure CSS — no JS dependency.
+           Named `.tip` rather than `.hint` because several existing
+           templates already use `.hint` as a descriptive-caption class
+           under form inputs; the two would collide. */
+        .tip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 15px; height: 15px;
+            margin-left: 6px;
+            border-radius: 50%;
+            background: var(--shell-sunken);
+            color: var(--shell-text-muted);
+            font-size: 9.5px;
+            font-weight: 700;
+            font-family: var(--font-sans);
+            line-height: 1;
+            border: 1px solid var(--shell-border-strong);
+            cursor: help;
+            position: relative;
+            vertical-align: middle;
+            transition: background var(--transition-fast), color var(--transition-fast),
+                        border-color var(--transition-fast);
+            padding: 0;
+            user-select: none;
+        }
+        .tip:hover,
+        .tip:focus-visible {
+            background: var(--accent);
+            color: var(--accent-fg);
+            border-color: var(--accent);
+            outline: none;
+        }
+        .tip__bubble {
+            position: absolute;
+            bottom: calc(100% + 9px);
+            left: 50%;
+            transform: translateX(-50%) translateY(4px);
+            min-width: 180px;
+            max-width: 280px;
+            width: max-content;
+            padding: 10px 12px;
+            background: var(--shell-text);
+            color: oklch(0.97 0.003 80);
+            border-radius: var(--radius-md);
+            font-size: 0.78rem;
+            font-weight: 400;
+            font-family: var(--font-sans);
+            line-height: 1.5;
+            letter-spacing: 0.005em;
+            text-align: left;
+            text-transform: none;
+            white-space: normal;
+            box-shadow: var(--shadow-pop);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity var(--transition-fast),
+                        transform var(--transition-fast);
+            z-index: 100;
+        }
+        .tip__bubble::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: var(--shell-text);
+        }
+        .tip:hover .tip__bubble,
+        .tip:focus-visible .tip__bubble {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        /* Variant: popover drops BELOW the icon — use when the tip sits
+           in a tight header or near the top of the viewport. */
+        .tip--down .tip__bubble {
+            bottom: auto;
+            top: calc(100% + 9px);
+            transform: translateX(-50%) translateY(-4px);
+        }
+        .tip--down .tip__bubble::after {
+            top: auto;
+            bottom: 100%;
+            border-top-color: transparent;
+            border-bottom-color: var(--shell-text);
+        }
+        .tip--down:hover .tip__bubble,
+        .tip--down:focus-visible .tip__bubble {
+            transform: translateX(-50%) translateY(0);
+        }
+        /* Variant: popover hugs the LEFT edge of the icon — use near
+           the right margin where a centered bubble would overflow. */
+        .tip--left .tip__bubble {
+            left: auto;
+            right: -6px;
+            transform: translateX(0) translateY(4px);
+        }
+        .tip--left .tip__bubble::after {
+            left: auto;
+            right: 8px;
+            transform: none;
+        }
+        .tip--left:hover .tip__bubble,
+        .tip--left:focus-visible .tip__bubble {
+            transform: translateX(0) translateY(0);
+        }
+        /* Table headers + section headers use uppercase + 0.05em
+           letter-spacing; the bubble must opt out so its body reads
+           in plain sentence case. */
+        th .tip,
+        label .tip,
+        .section-header .tip {
+            text-transform: none;
+            letter-spacing: 0;
+        }
+        /* Mobile: hover doesn't exist on touch; the macro defaults to
+           tabindex=0 so a tap focuses the icon and shows the bubble. */
+        @media (max-width: 900px) {
+            .tip__bubble { max-width: min(260px, 80vw); }
+        }
+
         /* ─── Utility ─── */
         .flex { display: flex; }
         .flex-col { flex-direction: column; }

@@ -172,6 +172,46 @@ def test_batch_overrides_win_over_spreadsheet(client, monkeypatch):
     assert captured["entries"]["2025-05-21"].youtube_title == "Edited Title"
 
 
+def test_batch_overrides_apply_episode_title_and_vista_caption(client, monkeypatch):
+    """The platform-tabs review widened the override schema to include
+    episode_title (SimpleCast) and vista_caption (Vista Social). Both
+    must round-trip through ``/media/batch/run`` so per-platform edits
+    in the new tabbed review actually reach ``ReviewEntry`` and end
+    up in the upload payload."""
+    import io
+    import openpyxl
+    captured = {}
+    monkeypatch.setattr(upload_jobs, "run_batch",
+                        lambda **k: (captured.update(entries=k["entries_snapshot"]) or
+                                     set(k["file_paths"].values())))
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Plan"
+    ws.append(["Date"]); ws.append(["2025-05-21"])
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    client.post("/media/spreadsheet", data={"file": (buf, "p.xlsx")},
+                content_type="multipart/form-data")
+    client.post("/media/mapping", json={"sheet_name": "Plan", "date_column": "Date"})
+    run_id = _init(client)
+    file_id = _new_file(client, run_id)
+    _complete_file(client, run_id, file_id)
+    resp = client.post("/media/batch/run", json={
+        "run_id": run_id, "dates": ["2025-05-21"],
+        "platforms": ["simplecast", "vista_social"],
+        "files": {file_id: {"category": "podcast", "date": "2025-05-21"}},
+        "overrides": {"2025-05-21": {
+            "episode_title": "Pilot Episode",
+            "vista_caption": "Custom caption ✨",
+        }},
+    })
+    assert resp.status_code == 200
+    job_id = resp.get_json()["job_id"]
+    deadline = time.time() + 10
+    while time.time() < deadline and not (upload_jobs.get_job(job_id) or {}).get("done"):
+        time.sleep(0.05)
+    entry = captured["entries"]["2025-05-21"]
+    assert entry.episode_title == "Pilot Episode"
+    assert entry.vista_caption == "Custom caption ✨"
+
+
 def test_run_finish_releases_lock(client):
     run_id = _init(client)
     # Busy while active.

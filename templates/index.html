@@ -56,6 +56,129 @@
     }
     .auth-banner-text { flex: 1; min-width: 200px; }
 
+    /* ── Platform palette ─────────────────────────────────────────────
+       Mirrors calendar.html's palette so the review tabs visually match
+       the calendar's per-platform colors. `--p-vista` is new — calendar
+       splits Vista into Instagram + Facebook pills, but the review tab
+       represents Vista Social as a single integration, so it gets its
+       own token. */
+    :root {
+        --p-yt-video:   oklch(0.62 0.20 25);
+        --p-yt-shorts:  oklch(0.65 0.21 0);
+        --p-podcast:    oklch(0.72 0.16 70);
+        --p-rock-email: oklch(0.58 0.18 305);
+        --p-rock:       oklch(0.62 0.13 195);
+        --p-vista:      oklch(0.60 0.18 260);
+    }
+
+    /* ── Review tabs ──────────────────────────────────────────────────
+       Each tab carries `--tab-accent` (set inline from PLATFORM_TABS in
+       dld_pipeline.js). The active tab paints its accent as a 3px
+       underline + a soft tinted background. */
+    .rev-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        border-bottom: 1px solid var(--shell-border);
+        margin-bottom: 16px;
+    }
+    .rev-tab {
+        position: relative;
+        padding: 10px 16px;
+        background: transparent;
+        border: 1px solid transparent;
+        border-bottom: none;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--shell-text-muted);
+        cursor: pointer;
+        transition: background var(--transition-fast), color var(--transition-fast);
+        --tab-accent: var(--accent);  /* fallback if JS forgets to set it */
+    }
+    .rev-tab:hover {
+        background: var(--shell-sunken);
+        color: var(--shell-text);
+    }
+    .rev-tab.active {
+        background: color-mix(in oklch, var(--tab-accent) 10%, var(--shell-panel));
+        color: var(--tab-accent);
+        border-color: var(--shell-border);
+        border-bottom-color: var(--shell-panel);
+    }
+    .rev-tab.active::after {
+        content: "";
+        position: absolute;
+        left: 8px; right: 8px; bottom: -1px;
+        height: 3px;
+        background: var(--tab-accent);
+        border-radius: 3px 3px 0 0;
+    }
+    .rev-tab-body {
+        position: relative;
+        min-height: 80px;
+    }
+    .rev-tab-panel {
+        display: none;
+        flex-direction: column;
+        gap: 12px;
+        --tab-accent: var(--accent);
+    }
+    .rev-tab-panel.active {
+        display: flex;
+    }
+    .rev-card {
+        background: var(--shell-panel);
+        border: 1px solid var(--shell-border);
+        border-left: 3px solid var(--tab-accent);
+        border-radius: var(--radius-md);
+        padding: 14px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .rev-card-head {
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--tab-accent);
+        letter-spacing: 0.02em;
+    }
+    .rev-field { display: flex; flex-direction: column; gap: 4px; }
+    .rev-field label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--shell-text-dim);
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .rev-shared-tag {
+        font-size: 10px;
+        font-weight: 500;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--shell-text-muted);
+        background: var(--shell-sunken);
+        padding: 2px 7px;
+        border-radius: 999px;
+    }
+    .rev-field input[type="text"],
+    .rev-field textarea {
+        font-size: 0.85rem;
+    }
+    .rev-suggestions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+        font-size: 11.5px;
+        color: var(--shell-text-muted);
+    }
+
     /* ── Agent chip ─────────────────────────────────────────────────── */
     .agent-chip { display: inline-flex; gap: .5em; padding: .25em .5em;
                   border-radius: 999px; background: #e8f4ff; font-size: .85em;
@@ -256,8 +379,13 @@
 <div id="customize-area" style="margin-top:20px; display:none;">
     <div class="card">
         <h3 class="section-header">Review &amp; customize</h3>
-        <p class="text-muted text-sm mb-md">Edit titles and descriptions before uploading. Blank Shorts titles are auto-suggested from the transcript — click a suggestion to use it.</p>
-        <div id="customize-list" style="display:flex; flex-direction:column; gap:14px;"></div>
+        <p class="text-muted text-sm mb-md">
+            One tab per enabled platform — click a tab to edit just that platform's fields across every selected date.
+            Blank Shorts titles are auto-suggested from the transcript; click a suggestion to use it. Shared fields
+            (like Description) sync across tabs automatically.
+        </p>
+        <div id="rev-tabs" class="rev-tabs" role="tablist"></div>
+        <div id="rev-tab-body" class="rev-tab-body"></div>
     </div>
     <button type="button" id="upload-btn" class="btn btn-primary btn-lg btn-full">⬆ Upload selected dates</button>
     <span id="agent-chip" class="agent-chip" hidden>

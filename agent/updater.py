@@ -3,10 +3,13 @@
 Flow (frozen / PyInstaller bundle only):
   1. Fetch manifest from <server>/agent/releases/manifest.json
   2. Compare manifest.version to agent._version.__version__
-  3. If newer: download the platform's binary, verify sha256 + ed25519 signature
-     against the baked public key (agent/release_pubkey.pem), then apply.
-  4. Apply: write the new binary in place of the running one (Windows uses
-     a rename pattern), spawn it, exit.
+  3. If newer: download the platform's payload (.exe on Windows, .zip
+     containing a .app bundle on macOS), verify sha256 + ed25519
+     signature against the baked public key (agent/release_pubkey.pem),
+     then apply.
+  4. Apply: write the new binary in place of the running one (Windows
+     uses a rename pattern; macOS unzips and atomically swaps the .app
+     directory), spawn it, exit.
 
 From-source runs (`sys.frozen` unset) skip updates entirely so developers
 aren't surprised.
@@ -22,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from importlib import resources
 
 import requests
@@ -147,10 +151,100 @@ def download_and_verify(build: dict, dest_dir: str | None = None) -> str | None:
         log.warning("update: signature verification failed")
         return None
     dest = dest_dir or tempfile.mkdtemp(prefix="dld-agent-update-")
-    out_path = os.path.join(dest, "new-binary")
+    # Preserve a .zip suffix on the saved file so apply_update can route
+    # macOS .app-bundle payloads through the unzip path. Non-zip URLs
+    # (e.g. Windows .exe) land in the original `new-binary` slot and the
+    # bare-binary swap path handles them as before.
+    suffix = ".zip" if url.lower().split("?", 1)[0].endswith(".zip") else ""
+    out_path = os.path.join(dest, "new-binary" + suffix)
     with open(out_path, "wb") as f:
         f.write(data)
     return out_path
+
+
+def _find_app_bundle_root(exe_path: str) -> str | None:
+    """Return the .app directory containing ``exe_path``, or None.
+
+    macOS PyInstaller bundles put the binary at
+    ``<app>/Contents/MacOS/dld-agent``; walk up until we hit a path that
+    ends with ``.app``. Returns None when running from a legacy bare
+    binary (no .app ancestor) or on non-macOS.
+    """
+    p = os.path.abspath(exe_path)
+    while p and p != os.path.dirname(p):
+        if p.endswith(".app"):
+            return p
+        p = os.path.dirname(p)
+    return None
+
+
+def _extract_app_from_zip(zip_path: str, dest_dir: str) -> str | None:
+    """Extract ``zip_path`` into ``dest_dir`` and return the path to the
+    first ``*.app`` directory at its root, or None if the zip's shape is
+    wrong.
+
+    Preserves the executable bit + symlinks (PyInstaller .app bundles
+    use both inside Contents/Frameworks). Without symlink preservation
+    the relaunched .app would crash on framework load.
+    """
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            # Path-traversal guard: refuse any entry that resolves
+            # outside dest_dir. A malicious zip with ../etc/passwd would
+            # otherwise let an MITM scribble files anywhere the agent
+            # can write; signature verification upstream is the primary
+            # defense but this is a defense-in-depth.
+            target = os.path.realpath(os.path.join(dest_dir, member.filename))
+            if not target.startswith(os.path.realpath(dest_dir) + os.sep):
+                log.warning("update: zip member escapes dest dir: %r",
+                            member.filename)
+                return None
+            mode = (member.external_attr >> 16) & 0xFFFF
+            is_symlink = (mode & 0o170000) == 0o120000
+            if is_symlink:
+                link_target = zf.read(member).decode("utf-8")
+                # Ensure parent exists, then create the symlink.
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                try:
+                    os.symlink(link_target, target)
+                except FileExistsError:
+                    os.remove(target)
+                    os.symlink(link_target, target)
+            else:
+                zf.extract(member, dest_dir)
+                # zipfile.extract() ignores the unix mode bits — reapply
+                # the executable bit explicitly so Contents/MacOS/dld-agent
+                # can actually run.
+                if mode & 0o111:
+                    os.chmod(target, mode & 0o7777)
+    for name in os.listdir(dest_dir):
+        if name.endswith(".app"):
+            return os.path.join(dest_dir, name)
+    return None
+
+
+def _swap_macos_app(new_app: str, current_app: str) -> str:
+    """Replace ``current_app`` with ``new_app`` atomically and return
+    the path that the relaunch should ``open``.
+
+    The swap is two ``os.rename`` calls: current → .old, new → current.
+    A subsequent run can clean up the .old (we delete it best-effort
+    here too). Returns the path the caller should pass to ``open``.
+    """
+    old = current_app + ".old"
+    if os.path.exists(old):
+        shutil.rmtree(old, ignore_errors=True)
+    os.rename(current_app, old)
+    try:
+        shutil.move(new_app, current_app)
+    except Exception:
+        # Roll the .old back into place so we don't leave the install
+        # half-removed if the move blows up mid-flight.
+        os.rename(old, current_app)
+        raise
+    # Best-effort cleanup of the prior .old left by an earlier update.
+    shutil.rmtree(old, ignore_errors=True)
+    return current_app
 
 
 def apply_update(new_binary_path: str) -> None:
@@ -172,11 +266,66 @@ def apply_update(new_binary_path: str) -> None:
         log.info("update: applied; relaunching as %s", current)
         os._exit(0)
     elif plat == "macos":
+        is_zip = new_binary_path.lower().endswith(".zip")
+        app_root = _find_app_bundle_root(current)
+        if is_zip and app_root:
+            # New-style install: swap the whole .app bundle and relaunch
+            # via `open`, which preserves Launch Services context and the
+            # dock icon.
+            extract_dir = tempfile.mkdtemp(prefix="dld-agent-extract-")
+            try:
+                new_app = _extract_app_from_zip(new_binary_path, extract_dir)
+                if not new_app:
+                    log.warning("update: zip did not contain a .app bundle; skipping")
+                    return
+                swapped = _swap_macos_app(new_app, app_root)
+            finally:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            # Strip quarantine off the swapped bundle so the relaunched
+            # .app isn't Gatekeeper-prompted on the next launch.
+            subprocess.run(
+                ["xattr", "-dr", "com.apple.quarantine", swapped],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            subprocess.Popen(["open", swapped], close_fds=True)
+            log.info("update: applied (.app swap); relaunching %s", swapped)
+            os._exit(0)
+        if is_zip and not app_root:
+            # Legacy bare-binary install. Extract the .app, dig out the
+            # inner binary, and swap it in place so the user still gets
+            # the upgrade without having to re-download manually. They
+            # won't get the .app niceties until they re-download from
+            # the dashboard, but the agent stays current.
+            extract_dir = tempfile.mkdtemp(prefix="dld-agent-extract-")
+            try:
+                new_app = _extract_app_from_zip(new_binary_path, extract_dir)
+                if not new_app:
+                    log.warning("update: zip did not contain a .app bundle; skipping")
+                    return
+                inner = os.path.join(new_app, "Contents", "MacOS", "dld-agent")
+                if not os.path.isfile(inner):
+                    log.warning("update: .app missing Contents/MacOS/dld-agent; skipping")
+                    return
+                shutil.copyfile(inner, current)
+            finally:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            os.chmod(current, 0o755)
+            subprocess.run(
+                ["xattr", "-d", "com.apple.quarantine", current],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            subprocess.Popen([current], close_fds=True)
+            log.info("update: applied (legacy binary swap); relaunching %s", current)
+            os._exit(0)
+        # Old-style payload (bare binary, no .zip suffix). Path stays
+        # identical to pre-v0.7 behavior so a server that's still
+        # serving raw binaries continues to work.
         shutil.copyfile(new_binary_path, current)
         os.chmod(current, 0o755)
-        # Strip the quarantine bit so the relaunched binary isn't Gatekeeper-prompted.
-        subprocess.run(["xattr", "-d", "com.apple.quarantine", current],
-                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["xattr", "-d", "com.apple.quarantine", current],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
         subprocess.Popen([current], close_fds=True)
         log.info("update: applied; relaunching as %s", current)
         os._exit(0)

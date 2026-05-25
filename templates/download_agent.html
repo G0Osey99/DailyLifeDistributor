@@ -60,7 +60,13 @@
     {% if detected_os == "windows" %}
       Detected: Windows.
     {% elif detected_os == "macos" %}
-      Detected: macOS. The same binary works on both Apple Silicon and Intel Macs.
+      Detected: macOS. The same app works on both Apple Silicon and Intel Macs.
+      <br>
+      <span class="text-dim text-sm">
+        After unzipping, drag <strong>DLD Agent</strong> to Applications. The first time you launch it,
+        right-click the app and choose <strong>Open</strong> to bypass Gatekeeper (we're not Apple-notarized yet).
+        After that, double-clicking works normally.
+      </span>
     {% else %}
       We couldn't auto-detect your OS — pick the matching binary.
     {% endif %}

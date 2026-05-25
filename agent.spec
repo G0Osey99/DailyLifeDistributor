@@ -1,12 +1,19 @@
 # PyInstaller spec for the agent. Run via: pyinstaller agent.spec
-# Produces dist/dld-agent (or dld-agent.exe on Windows).
+# Produces dist/dld-agent (or dld-agent.exe on Windows). On macOS we ALSO
+# emit dist/dld-agent.app — a proper .app bundle so Finder treats the
+# download as an application instead of a generic "Unix executable"
+# document. scripts/build_agent.py then zips the .app for distribution
+# (zip preserves the executable bit, which browsers strip on a raw
+# binary download).
 #
 # `target_arch` is read from the env var `DLD_AGENT_TARGET_ARCH` so the CI
 # build script can switch between native (None) and universal2 without
 # editing this file per release. macOS-only — PyInstaller ignores it on
 # Windows + Linux.
 import os
+import sys
 _TARGET_ARCH = os.environ.get("DLD_AGENT_TARGET_ARCH") or None
+_IS_MACOS = sys.platform == "darwin"
 
 block_cipher = None
 
@@ -60,3 +67,37 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
+# macOS: wrap the EXE in an .app bundle. Without this, the downloaded
+# binary is a bare Mach-O that Finder shows as a generic Unix executable
+# document — browsers also strip the executable bit, so the user has to
+# `chmod +x` from a terminal. A .app:
+#   * has a real application icon in Finder
+#   * is double-clickable
+#   * survives zip round-tripping with the executable bit intact
+#
+# We're not Apple-notarized, so first launch still requires a single
+# right-click → Open to bypass Gatekeeper. After that the OS remembers
+# the user's approval and double-click works forever.
+if _IS_MACOS:
+    app = BUNDLE(
+        exe,
+        name='dld-agent.app',
+        # Reverse-DNS bundle id under autoalert.pro so future signing /
+        # notarization can register against an Apple Developer team
+        # without renaming. NOT under com.* because we don't own that
+        # tree; pro.autoalert.* is what the website is published under.
+        bundle_identifier='pro.autoalert.dld-agent',
+        info_plist={
+            # LSUIElement=1 would hide the dock icon (background daemon
+            # style). We DO want the dock icon — the GUI is a primary
+            # surface — so leave it 0/unset.
+            'CFBundleName': 'DLD Agent',
+            'CFBundleDisplayName': 'DLD Agent',
+            # NSHighResolutionCapable so Tk widgets aren't pixel-doubled
+            # on Retina. PyInstaller defaults this to True for .app
+            # bundles but be explicit so a PyInstaller default flip
+            # doesn't surprise users.
+            'NSHighResolutionCapable': True,
+        },
+    )

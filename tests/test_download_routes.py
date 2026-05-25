@@ -58,6 +58,17 @@ def test_macos_redirect(app):
     assert "/agent/releases/" in r.headers.get("Location", "")
 
 
+def test_macos_fallback_serves_zip(app):
+    """Without a manifest.json the fallback filename must end in .zip —
+    the .app-in-.zip is the only macOS deliverable now, and pointing
+    macOS users at a raw binary URL gives them a Finder doc they can't
+    run."""
+    client = _login(app)
+    r = client.get("/download/agent/macos", follow_redirects=False)
+    loc = r.headers.get("Location", "")
+    assert loc.endswith(".zip"), f"macOS fallback must be .zip, got {loc!r}"
+
+
 def test_landing_highlights_windows_for_windows_ua(app):
     client = _login(app)
     r = client.get(

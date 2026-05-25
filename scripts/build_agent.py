@@ -19,8 +19,10 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
+import zipfile
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -45,8 +47,61 @@ def _full_label(arch: str | None) -> str:
 
 
 def _binary_name(version: str, arch: str | None) -> str:
-    ext = ".exe" if _platform_label() == "windows" else ""
+    """Distribution filename. On macOS this is a .zip of the .app bundle
+    (browsers strip the executable bit on raw binary downloads, and a
+    bare Mach-O shows as a generic Unix-executable document in Finder);
+    Windows keeps the .exe; other platforms get the bare binary.
+    """
+    plat = _platform_label()
+    if plat == "windows":
+        ext = ".exe"
+    elif plat == "macos":
+        ext = ".zip"
+    else:
+        ext = ""
     return f"dld-agent-{_full_label(arch)}-{version}{ext}"
+
+
+def _zip_app_bundle(app_path: str, out_zip: str) -> None:
+    """Zip dist/dld-agent.app → out_zip preserving symlinks + the
+    executable bit on Contents/MacOS/dld-agent.
+
+    Using shutil.make_archive("zip") would lose the executable bit (the
+    stdlib zipfile defaults to 0644 file mode), so the user would end
+    up with an .app whose inner binary is non-executable. We build the
+    archive by hand with explicit external_attr so unzip restores +x.
+    """
+    if os.path.exists(out_zip):
+        os.remove(out_zip)
+    app_root = os.path.dirname(app_path.rstrip(os.sep))
+    base = os.path.basename(app_path.rstrip(os.sep))
+    with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        for dirpath, _dirnames, filenames in os.walk(app_path, followlinks=False):
+            # Add the directory itself so empty directories survive.
+            arc_dir = os.path.relpath(dirpath, app_root) + "/"
+            zi_dir = zipfile.ZipInfo(arc_dir)
+            zi_dir.external_attr = (0o755 << 16) | 0x10  # dir + 755
+            zf.writestr(zi_dir, b"")
+            for name in filenames:
+                src = os.path.join(dirpath, name)
+                arc = os.path.relpath(src, app_root)
+                # Preserve symlinks verbatim — PyInstaller's .app uses a
+                # few inside Contents/Frameworks. Writing the link
+                # target as the file body + flagging mode 0o120000
+                # tells unzip "this is a symlink".
+                if os.path.islink(src):
+                    link_target = os.readlink(src)
+                    zi = zipfile.ZipInfo(arc)
+                    zi.create_system = 3  # unix
+                    zi.external_attr = (0o120777 << 16)  # symlink + 0777
+                    zf.writestr(zi, link_target)
+                else:
+                    st = os.stat(src)
+                    zi = zipfile.ZipInfo(arc)
+                    zi.create_system = 3  # unix
+                    zi.external_attr = (st.st_mode & 0o7777) << 16
+                    with open(src, "rb") as fh:
+                        zf.writestr(zi, fh.read())
 
 
 def _detect_mac_arch() -> str | None:
@@ -87,10 +142,39 @@ def main() -> None:
         [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "agent.spec"],
         env=build_env,
     )
-    built = os.path.join("dist", "dld-agent.exe" if _platform_label() == "windows" else "dld-agent")
+    plat = _platform_label()
     final_name = _binary_name(args.version, arch)
     final_path = os.path.join("dist", final_name)
-    os.replace(built, final_path)
+
+    if plat == "macos":
+        # PyInstaller's BUNDLE() target emits dist/dld-agent.app alongside
+        # dist/dld-agent (the bare binary, which we don't ship). Zip the
+        # .app so the executable bit survives a browser download and
+        # Finder treats the asset as an application.
+        app_path = os.path.join("dist", "dld-agent.app")
+        if not os.path.isdir(app_path):
+            sys.exit(
+                f"Expected {app_path} after PyInstaller run — agent.spec "
+                "must have a BUNDLE() block on macOS."
+            )
+        _zip_app_bundle(app_path, final_path)
+        # Drop the bare binary so the upload-artifact glob doesn't pick
+        # up an unsigned duplicate. The .app inside our zip is the only
+        # macOS deliverable.
+        bare = os.path.join("dist", "dld-agent")
+        if os.path.exists(bare):
+            try:
+                os.remove(bare)
+            except OSError:
+                pass
+        # The .app directory has done its job — clean up so the artifact
+        # upload doesn't try to traverse it.
+        shutil.rmtree(app_path, ignore_errors=True)
+    else:
+        built = os.path.join(
+            "dist", "dld-agent.exe" if plat == "windows" else "dld-agent",
+        )
+        os.replace(built, final_path)
 
     # Sign.
     if args.key_file:

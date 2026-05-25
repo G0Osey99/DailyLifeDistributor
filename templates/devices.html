@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tip %}
 {% block title %}Devices — DLD{% endblock %}
 
 {% block extra_css %}
@@ -61,11 +62,11 @@
 <table class="devices-table" id="devices-table">
     <thead>
         <tr>
-            <th>Name</th>
-            <th>Hostname</th>
-            <th>HWID</th>
+            <th>Name{{ tip("Your friendly label for this machine — shows up in the device picker when running an upload. Editable anytime.", direction="down") }}</th>
+            <th>Hostname{{ tip("The computer's network name (reported by the agent at pair time). Read-only.", direction="down") }}</th>
+            <th>HWID{{ tip("Salted SHA-256 of the machine's hardware fingerprint. Used to detect re-pairs from the same hardware — if you reinstall the agent on this machine, it'll replace this row instead of creating a duplicate.", direction="down") }}</th>
             <th>Last seen</th>
-            <th>Status</th>
+            <th>Status{{ tip("Active = paired and ready to run uploads (online status flips in real time, not on page load). Revoked = the token is dead — the agent can't connect even if it tries.", direction="down") }}</th>
             <th>Actions</th>
         </tr>
     </thead>

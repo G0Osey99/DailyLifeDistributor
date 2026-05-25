@@ -1,0 +1,30 @@
+{# ─── Shared Jinja UI macros ─────────────────────────────────────────
+   Import with:
+     {% from "_macros.html" import tip %}
+
+   Add new macros here when a snippet is used in 3+ templates. Keep
+   them lean — anything bigger than ~30 lines deserves its own
+   _<thing>.html include. ────────────────────────────────────────── #}
+
+{# Hover-able help icon. Pure HTML/CSS — no JS. Styling lives in
+   base.html under "Tip chips". Named `tip` (not `hint`) because a few
+   templates already define `.hint` as a descriptive-caption class
+   under form inputs; the two would collide on selector.
+
+   Usage:
+       <label for="x">Email {{ tip("We never share your email.") }}</label>
+       <label for="x">Date {{ tip("YYYY-MM-DD", direction="down") }}</label>
+
+   Parameters:
+     * text       — the popover body. Plain text; HTML is escaped.
+     * direction  — "up" (default), "down", or "left". Use "down" when
+                    the icon is near the top of the viewport, "left"
+                    when it sits at the right edge of a tight column.
+     * label      — accessible name announced by screen readers.
+                    Defaults to "More info"; override when the context
+                    is ambiguous (e.g. "Role descriptions"). #}
+{% macro tip(text, direction="up", label="More info") -%}
+<span class="tip{% if direction == 'down' %} tip--down{% elif direction == 'left' %} tip--left{% endif %}"
+      tabindex="0" role="img" aria-label="{{ label }}: {{ text }}"
+><span aria-hidden="true">?</span><span class="tip__bubble" role="tooltip">{{ text }}</span></span>
+{%- endmacro %}

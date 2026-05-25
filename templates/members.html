@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tip %}
 {% block title %}Members — DLD{% endblock %}
 
 {% block extra_css %}
@@ -39,7 +40,10 @@
       <input id="invite-email" type="email" name="email" placeholder="invitee@example.com" required>
     </div>
     <div class="form-group">
-      <label for="invite-role">Role</label>
+      <label for="invite-role">
+        Role
+        {{ tip("Owner = full control (members, billing, role changes, can delete the org). Manager = run uploads + invite Users, but can't change roles or remove Owners. User = run uploads only. You can change a member's role later from the Members table below.", direction="down", label="Role descriptions") }}
+      </label>
       <select id="invite-role" name="role">
         <option value="user">User</option>
         {% if actor_role == 'owner' %}
@@ -94,7 +98,10 @@
 </div>
 
 <div class="card">
-  <h3>Pending invitations <span class="text-dim text-sm">({{ pending|length }})</span></h3>
+  <h3>
+    Pending invitations <span class="text-dim text-sm">({{ pending|length }})</span>
+    {{ tip("Invitations are valid for 7 days and one-time-use. Revoking before the user accepts invalidates the link immediately. After acceptance, manage them in the Members table above instead.") }}
+  </h3>
   <table>
     <thead>
       <tr><th>Email</th><th>Role</th><th>Sent</th><th>Expires</th><th></th></tr>

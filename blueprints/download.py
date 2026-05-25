@@ -34,14 +34,17 @@ bp = Blueprint("download", __name__)
 # clean 404 from release_binary rather than a 500 from this blueprint.
 _FALLBACK_BINARY = {
     "windows": "dld-agent-windows.exe",
-    # We ship a single universal2 macOS binary that runs on both Apple
-    # Silicon and Intel — see .github/workflows/release-agent.yml for the
-    # build recipe. The -arm64 / -intel keys are kept for the legacy
-    # routes (so an old email or bookmark still works); both point at the
-    # same universal binary.
-    "macos": "dld-agent-macos",
-    "macos-arm64": "dld-agent-macos",
-    "macos-intel": "dld-agent-macos",
+    # We ship a single universal2 macOS payload (a .zip of a .app bundle)
+    # that runs on both Apple Silicon and Intel — see
+    # .github/workflows/release-agent.yml for the build recipe. The .zip
+    # wrapper preserves the executable bit (browsers strip it on raw
+    # downloads) and the .app makes Finder treat the asset as an
+    # application instead of a generic document. The -arm64 / -intel
+    # keys are kept for the legacy routes (so an old email or bookmark
+    # still works); both point at the same universal payload.
+    "macos": "dld-agent-macos.zip",
+    "macos-arm64": "dld-agent-macos.zip",
+    "macos-intel": "dld-agent-macos.zip",
 }
 
 

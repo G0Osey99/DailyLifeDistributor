@@ -60,6 +60,24 @@ def _check_hosted_requirements() -> None:
             "restart). Generate one with: python -c \"import secrets; "
             "print(secrets.token_hex(32))\" and set FLASK_SECRET_KEY."
         )
+    # Defense-in-depth for session cookies. ``app.py`` defaults
+    # SESSION_COOKIE_SECURE to "true" when unset, so an absent var is
+    # safe. The risk is an EXPLICIT misconfiguration: someone editing
+    # the deploy .env and writing ``SESSION_COOKIE_SECURE=false``
+    # accidentally. On a hosted deploy that would make Flask drop the
+    # ``Secure`` flag from the session cookie, so any user tricked into
+    # hitting ``http://<host>`` (typo, downgraded link, captive-portal
+    # rewrite) would send their session cookie in cleartext. Fail
+    # closed at boot rather than silently weakening sessions for the
+    # lifetime of the misconfigured process.
+    secure = (os.environ.get("SESSION_COOKIE_SECURE", "true") or "").strip().lower()
+    if secure not in ("1", "true", "yes"):
+        raise RuntimeError(
+            "HOSTED=true but SESSION_COOKIE_SECURE is set to "
+            f"{secure!r}. Public deploys must keep the Secure flag on the "
+            "session cookie. Either remove the override (app.py defaults "
+            "to true) or set SESSION_COOKIE_SECURE=true."
+        )
     if not (os.environ.get("ALLOWED_HOSTS") or "").strip():
         log.warning(
             "HOSTED=true but ALLOWED_HOSTS is empty; the DNS-rebind / Host-"

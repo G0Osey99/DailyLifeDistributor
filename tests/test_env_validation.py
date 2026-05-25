@@ -39,6 +39,43 @@ def test_hosted_passes_with_secret(monkeypatch):
     ev._check_hosted_requirements()  # no raise
 
 
+def test_hosted_rejects_session_cookie_secure_false(monkeypatch):
+    """A hosted deploy must keep Secure on the session cookie. An
+    explicit ``SESSION_COOKIE_SECURE=false`` is the realistic mistake
+    — someone editing ``deploy/.env`` and flipping it for "testing
+    locally"; the guard prevents that misconfig from booting."""
+    monkeypatch.setenv("HOSTED", "true")
+    monkeypatch.setenv("FLASK_SECRET_KEY", "x" * 64)
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
+    with pytest.raises(RuntimeError) as exc:
+        ev._check_hosted_requirements()
+    assert "SESSION_COOKIE_SECURE" in str(exc.value)
+
+
+def test_hosted_passes_when_session_cookie_secure_unset(monkeypatch):
+    """Unset is fine — ``app.py`` defaults the value to "true"."""
+    monkeypatch.setenv("HOSTED", "true")
+    monkeypatch.setenv("FLASK_SECRET_KEY", "x" * 64)
+    monkeypatch.delenv("SESSION_COOKIE_SECURE", raising=False)
+    ev._check_hosted_requirements()  # no raise
+
+
+def test_hosted_passes_when_session_cookie_secure_true(monkeypatch):
+    monkeypatch.setenv("HOSTED", "true")
+    monkeypatch.setenv("FLASK_SECRET_KEY", "x" * 64)
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "true")
+    ev._check_hosted_requirements()  # no raise
+
+
+def test_non_hosted_allows_session_cookie_secure_false(monkeypatch):
+    """The guard only fires under HOSTED=true. Local dev / tests need
+    the loopback opt-out (set in tests/conftest.py and per-test fixtures
+    that talk to a real http://127.0.0.1 server)."""
+    monkeypatch.delenv("HOSTED", raising=False)
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
+    ev._check_hosted_requirements()  # no raise
+
+
 def test_non_hosted_does_not_require_secret(monkeypatch):
     monkeypatch.delenv("HOSTED", raising=False)
     monkeypatch.delenv("FLASK_SECRET_KEY", raising=False)

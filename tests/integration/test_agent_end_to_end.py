@@ -15,6 +15,15 @@ def live(tmp_path, monkeypatch):
     # Multi-tenant phase α: integration test logs in via the shared-password
     # form, which is now opt-in behind LEGACY_PASSWORD_ENABLED.
     monkeypatch.setenv("LEGACY_PASSWORD_ENABLED", "true")
+    # Without this the session cookie is set with `Secure` (app.py defaults
+    # SESSION_COOKIE_SECURE to true), and `requests` correctly refuses to
+    # send it over plain http://127.0.0.1 → the dashboard / WS auth gate
+    # sees an empty session and 302s to /login. The test partially worked
+    # before because it bypassed requests' cookie jar by stuffing the
+    # value into a manual `Cookie` header on the WS upgrade — but that
+    # workaround races on CI and produced the "no presence frame within
+    # 5s" flake. Mirroring the other tests' opt-out is the real fix.
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
     import importlib
     import core.db as db, core.devices as devices
     importlib.reload(db); importlib.reload(devices); db.init_db()

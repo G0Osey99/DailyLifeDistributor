@@ -77,6 +77,21 @@ def test_agent_main_pong(live, monkeypatch):
             if raw is None:
                 pytest.fail("relay sent no presence frame within 5s")
             first = json.loads(raw)
+            # If the legacy login POST didn't authenticate the session,
+            # the relay's /agent/ws handler answers with an "error" frame
+            # then closes — so the subsequent receive() returns None and
+            # the test would otherwise fail 5s later with the misleading
+            # "no presence frame" message. Surface the auth rejection
+            # directly so future flakes are instantly diagnosable.
+            if first.get("type") == "error":
+                reason = (first.get("payload") or {}).get("reason", "?")
+                pytest.fail(
+                    f"relay rejected the browser WebSocket with reason="
+                    f"{reason!r} — POST /login likely didn't set the "
+                    f"`authenticated` session marker (or LEGACY_PASSWORD_"
+                    f"ENABLED wasn't read at request time). Cookies in "
+                    f"jar at WS open: {s.cookies.get_dict()}"
+                )
             if first.get("type") == "presence" and first["payload"]["online"] is True:
                 break
         else:

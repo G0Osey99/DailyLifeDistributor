@@ -202,6 +202,40 @@
         color: var(--shell-text-muted);
     }
 
+    /* ── Review-as-its-own-page ─────────────────────────────────────
+       The browser holds the picked File objects in JS memory; we can't
+       navigate away or they'd be lost. Instead we toggle an
+       `in-review` class on <body> to swap the visible view in place,
+       which feels like a separate page without losing state. The
+       Back button (rendered inside #customize-area) clears the class
+       and restores the setup view. */
+    body.in-review .setup-grid,
+    body.in-review #date-results,
+    body.in-review #select-area,
+    body.in-review .keep-open-warn,
+    body.in-review .auth-banner,
+    body.in-review > #scan-btn,
+    body.in-review > .scan-spinner,
+    body.in-review #scan-row { display: none !important; }
+    body:not(.in-review) #customize-area { display: none !important; }
+    body.in-review #customize-area { display: block; margin-top: 0; }
+    .review-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+    }
+    .review-header h2 {
+        margin: 0;
+        font-size: 1.2rem;
+        letter-spacing: -0.012em;
+    }
+    .review-header .review-back {
+        font-size: 0.86rem;
+    }
+
     /* ── Agent chip ─────────────────────────────────────────────────── */
     .agent-chip { display: inline-flex; gap: .5em; padding: .25em .5em;
                   border-radius: 999px; background: #e8f4ff; font-size: .85em;
@@ -383,7 +417,7 @@
     </div>
 </div>
 
-<div style="margin-top:20px;">
+<div id="scan-row" style="margin-top:20px;">
     <button type="button" id="scan-btn" class="btn btn-primary btn-lg btn-full">🔍 Match dates from folders</button>
     <div class="scan-spinner" id="scan-spinner"><span class="spinner"></span> Matching...</div>
 </div>
@@ -399,9 +433,15 @@
     <button type="button" id="review-btn" class="btn btn-primary btn-lg btn-full">✎ Review &amp; customize →</button>
 </div>
 
-<div id="customize-area" style="margin-top:20px; display:none;">
+<div id="customize-area">
+    <div class="review-header">
+        <button type="button" id="review-back-btn" class="btn btn-ghost btn-sm review-back">
+            ← Back to setup
+        </button>
+        <h2>Review &amp; customize</h2>
+        <span class="text-muted text-sm" id="review-counts"></span>
+    </div>
     <div class="card">
-        <h3 class="section-header">Review &amp; customize</h3>
         <p class="text-muted text-sm mb-md">
             One tab per enabled platform — click a tab to edit just that platform's fields across every selected date.
             Blank Shorts titles are auto-suggested from the transcript; click a suggestion to use it. Shared fields

@@ -470,12 +470,15 @@
     });
 
     function renderDates() {
+        // Re-scan always returns us to the setup view (we can't be in
+        // review without picked dates — and the user just changed
+        // them anyway).
+        document.body.classList.remove("in-review");
         const container = $("#date-results");
         const dates = Object.keys(scanResults).sort();
         if (!dates.length) {
             container.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>No dated media matched. Check your folders and filenames.</p></div>';
             $("#select-area").style.display = "none";
-            $("#customize-area").style.display = "none";
             return;
         }
         let html = '<div class="card"><h3 class="section-header">Matched dates</h3>';
@@ -500,7 +503,9 @@
             $all(".date-cb").forEach((cb) => { cb.checked = this.checked; });
         });
         $("#select-area").style.display = "block";
-        $("#customize-area").style.display = "none";  // re-scan resets the step
+        // The CSS rule `body:not(.in-review) #customize-area { display: none }`
+        // handles hiding the review area when we're back in setup view, so
+        // no inline display reset needed here.
     }
 
     function selectedDates() {
@@ -535,8 +540,15 @@
             key: "youtube_shorts", label: "YouTube Shorts",
             color: "--p-yt-shorts",
             fields: [
+                // Mirror the server's `shorts_title or youtube_title`
+                // fallback in build_entry so the Shorts tab pre-fills
+                // sensibly when only a single title column is mapped.
+                // The LLM-suggestion path still fires only when the
+                // resolved value is blank, so autofill behavior is
+                // unchanged for users who haven't mapped either column.
                 { field: "youtube_shorts_title", label: "Title",
-                  type: "text", metaKey: "shorts_title", autofillShorts: true },
+                  type: "text", metaKey: "shorts_title",
+                  fallbackMetaKeys: ["youtube_title"], autofillShorts: true },
                 { field: "description", label: "Description", type: "textarea",
                   metaKey: "description", shared: true },
             ],
@@ -545,8 +557,17 @@
             key: "simplecast", label: "SimpleCast",
             color: "--p-podcast",
             fields: [
-                { field: "episode_title", label: "Episode title",
-                  type: "text", metaKey: "episode_title" },
+                // SimpleCast's actual upload reads `entry.podcast_title`,
+                // not episode_title. (`episode_title` is the Rock
+                // Spotlight section's title, separate field.) Mapping
+                // the SimpleCast tab to `podcast_title` here makes the
+                // user's Podcast-title column flow through to both the
+                // review UI AND the upload — and the metaKey fallback
+                // below resolves blank cells to youtube_title, matching
+                // the server's build_entry behavior.
+                { field: "podcast_title", label: "Episode title",
+                  type: "text", metaKey: "podcast_title",
+                  fallbackMetaKeys: ["youtube_title"] },
                 { field: "description", label: "Show notes", type: "textarea",
                   metaKey: "description", shared: true },
             ],
@@ -591,8 +612,17 @@
         const spec = PLATFORM_TABS
             .flatMap((t) => t.fields)
             .find((f) => f.field === field);
-        const metaKey = spec && spec.metaKey;
-        return (metaKey && meta[metaKey]) || "";
+        if (!spec) return "";
+        // Primary metaKey first; if blank, walk the fallback chain. Mirrors
+        // server-side ReviewEntry build (e.g. podcast_title falls back to
+        // youtube_title when the user only mapped a single title column).
+        const primary = spec.metaKey && (meta[spec.metaKey] || "").toString().trim();
+        if (primary) return primary;
+        for (const fb of (spec.fallbackMetaKeys || [])) {
+            const v = (meta[fb] || "").toString().trim();
+            if (v) return v;
+        }
+        return "";
     }
 
     function _writeOverride(iso, field, value) {
@@ -712,7 +742,10 @@
             if (!transcript) continue;
             if (box) box.textContent = "suggesting title…";
             try {
-                const r = await postJSON("/media/suggest-titles", { transcript, count: 5 });
+                // Omit `count` so the server falls through to the
+                // config's `llm.num_title_suggestions`. Hardcoding 5
+                // here was overriding the user's config value.
+                const r = await postJSON("/media/suggest-titles", { transcript });
                 const sug = (r.ok && r.data.suggestions) || [];
                 if (box) box.innerHTML = "";
                 if (!sug.length) { if (box) box.textContent = "no suggestions"; continue; }
@@ -753,17 +786,42 @@
         return out;
     }
 
+    function _enterReviewView(dates, platforms) {
+        document.body.classList.add("in-review");
+        // Lightweight breadcrumb for the user — how many dates and
+        // platforms they're about to act on.
+        const counts = $("#review-counts");
+        if (counts) {
+            const dn = dates.length, pn = platforms.length;
+            counts.textContent =
+                `${dn} date${dn === 1 ? "" : "s"} · ` +
+                `${pn} platform${pn === 1 ? "" : "s"}`;
+        }
+        // Scroll the new view into focus so the user lands at the top
+        // of the tabs, not somewhere down the page from where they
+        // clicked Review.
+        window.scrollTo({ top: 0, behavior: "instant" });
+    }
+
+    function _exitReviewView() {
+        document.body.classList.remove("in-review");
+        window.scrollTo({ top: 0, behavior: "instant" });
+    }
+
     $("#review-btn")?.addEventListener("click", () => {
         const dates = selectedDates();
         const platforms = enabledPlatforms();
         if (!dates.length) { alert("Select at least one date."); return; }
         if (!platforms.length) { alert("Enable at least one platform."); return; }
         buildCustomizeTabs(dates, platforms);
-        $("#select-area").style.display = "none";
-        $("#customize-area").style.display = "block";
+        _enterReviewView(dates, platforms);
         // Fire-and-forget; fills blanks as suggestions return. Guard the
         // rejection so an unawaited failure can't become an unhandled rejection.
         autofillShortsTitles(dates).catch((e) => console.error("autofill titles failed:", e));
+    });
+
+    $("#review-back-btn")?.addEventListener("click", () => {
+        _exitReviewView();
     });
 
     // ── Upload orchestration (batched, chunked, SSE) ─────────────────────

@@ -160,11 +160,44 @@ def generate_title_suggestions(
         f'Example: ["Title one", "Title two", "Title three"]'
     )
 
-    # H12: pre-bind so the JSONDecodeError handler below never sees an
-    # unbound name when failure happens inside response.json() itself.
+    # Outer loop: retry once if the LLM returned an unparseable or empty
+    # result. Ollama on a hosted deploy can return truncated / malformed
+    # output on the FIRST generation after the model has been unloaded
+    # from memory (cold start) — the second call lands on a warm model
+    # and produces clean JSON. The HTTP request has its OWN retry for
+    # transient network errors (one attempt → one extra on connect/
+    # timeout), so this outer loop is strictly for parse / empty
+    # failures and the per-call budget remains bounded.
+    _CONTENT_RETRY_DELAY_S = 1.0
+    titles_out: list[str] = []
+    for content_attempt in range(2):
+        titles_out = _attempt_generation(prompt, llm_config)
+        if titles_out:
+            _llm_breaker().record_success()
+            _cache_put(cache_key, titles_out)
+            return titles_out
+        if content_attempt == 0:
+            logger.warning(
+                "llamafile returned no usable titles on attempt 1/2 — "
+                "retrying in %.1fs (likely an Ollama cold-start warm-up)",
+                _CONTENT_RETRY_DELAY_S,
+            )
+            time.sleep(_CONTENT_RETRY_DELAY_S)
+    return []
+
+
+def _attempt_generation(prompt: str, llm_config: dict) -> list[str]:
+    """One HTTP call + parse cycle. Returns the parsed titles list, or
+    [] on any failure (network, HTTP, JSON parse, empty, malformed
+    shape). Logs every failure mode so the caller's retry loop and
+    triage have evidence. Does NOT touch the circuit breaker on parse
+    / empty failures — only on infra-level errors — so a single odd
+    response from a healthy LLM doesn't trip protection."""
+    # Pre-bind so the JSONDecodeError handler below never sees an unbound
+    # name when failure happens inside response.json() itself.
     text = ""
     try:
-        logger.info("Calling llamafile transcript_length=%d", len(transcript))
+        logger.info("Calling llamafile (attempt)")
         # One retry on a transient network error — the LLM server may be mid
         # (re)start. Content failures (bad JSON, 4xx) are NOT retried here.
         response = None
@@ -196,8 +229,6 @@ def generate_title_suggestions(
             logger.error("llamafile request failed after retries: %s", last_exc)
             return []
         response.raise_for_status()
-        # H12: validate the JSON shape before indexing — an unexpected payload
-        # used to surface as a confusing KeyError/IndexError trace.
         payload = response.json()
         try:
             text = payload["choices"][0]["message"]["content"].strip()
@@ -208,7 +239,7 @@ def generate_title_suggestions(
 
         # Strip markdown code fences if present
         if text.startswith("```"):
-            # L12: split may produce <2 parts if the closing fence is missing.
+            # split may produce <2 parts if the closing fence is missing.
             parts = text.split("```")
             text = parts[1] if len(parts) > 1 else parts[0].lstrip("`")
             if text.startswith("json"):
@@ -223,10 +254,9 @@ def generate_title_suggestions(
         text = text.strip()
 
         titles = json.loads(text)
-        if isinstance(titles, list) and all(isinstance(t, str) for t in titles):
-            _llm_breaker().record_success()
-            _cache_put(cache_key, titles)
+        if isinstance(titles, list) and all(isinstance(t, str) for t in titles) and titles:
             return titles
+        logger.warning("llamafile returned a non-list-of-strings or empty list: %r", titles)
         return []
 
     except requests.exceptions.ConnectionError:

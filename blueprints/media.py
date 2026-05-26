@@ -650,11 +650,22 @@ def suggest_titles():
         return jsonify({"error": "No transcript for this date"}), 422
     if not is_llamafile_running():
         return jsonify({"error": "Title LLM backend is not reachable"}), 503
-    try:
-        count = int(data.get("count") or 5)
-    except (TypeError, ValueError):
-        count = 5
-    count = max(1, min(count, 10))
+    # When the client omits `count`, fall through to the config's
+    # ``llm.num_title_suggestions`` by passing ``num_suggestions=None``
+    # to generate_title_suggestions. Previously this hardcoded 5 here,
+    # ignoring the operator's config value (user reported getting 5
+    # suggestions with config set to 3).
+    raw_count = data.get("count")
+    count: int | None
+    if raw_count is None:
+        count = None
+    else:
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            count = None
+        if count is not None:
+            count = max(1, min(count, 10))
     try:
         suggestions = generate_title_suggestions(transcript, num_suggestions=count)
     except Exception as exc:  # noqa: BLE001

@@ -70,7 +70,7 @@ def test_connect_passes_certifi_ssl_context_for_wss(monkeypatch):
     for wss URLs so the bundled certifi CAs are used."""
     captured = {}
 
-    def _fake_client(url, ssl_context=None):
+    def _fake_client(url, ssl_context=None, **_kw):
         captured["url"] = url
         captured["ssl_context"] = ssl_context
         return _FakeWS([])
@@ -90,7 +90,7 @@ def test_connect_skips_ssl_context_for_ws(monkeypatch):
     context — wrapping a plain TCP socket in TLS would just fail."""
     captured = {}
 
-    def _fake_client(url, ssl_context=None):
+    def _fake_client(url, ssl_context=None, **_kw):
         captured["ssl_context"] = ssl_context
         return _FakeWS([])
 
@@ -98,6 +98,29 @@ def test_connect_skips_ssl_context_for_ws(monkeypatch):
     monkeypatch.setattr(simple_websocket, "Client", _fake_client)
     transport._connect("ws://localhost:5000/agent/socket?token=x")
     assert captured["ssl_context"] is None
+
+
+def test_connect_arms_ping_interval(monkeypatch):
+    """Without an application-level WebSocket keepalive, idle
+    connections were dropped after ~24s by consumer-router NAT timers
+    (Windows agent reconnect storm reported in the field). simple-
+    websocket's ``ping_interval`` makes the protocol emit RFC 6455
+    PING frames automatically; flask-sock auto-responds with PONG.
+    The forwarded value must be set and less than the observed NAT
+    window."""
+    captured = {}
+
+    def _fake_client(url, ssl_context=None, ping_interval=None):
+        captured["ping_interval"] = ping_interval
+        return _FakeWS([])
+
+    import simple_websocket
+    monkeypatch.setattr(simple_websocket, "Client", _fake_client)
+    transport._connect("wss://autoalert.pro/agent/socket?token=x")
+    assert captured["ping_interval"] == transport._PING_INTERVAL_S
+    # Sanity: comfortably under the ~24s NAT window AND well under
+    # Cloudflare's 100s WebSocket idle cap.
+    assert 1.0 < transport._PING_INTERVAL_S < 30.0
 
 
 def test_connect_bounds_handshake_with_socket_default_timeout(monkeypatch):
@@ -108,7 +131,7 @@ def test_connect_bounds_handshake_with_socket_default_timeout(monkeypatch):
     import socket as _socket
     seen = {}
 
-    def _fake_client(url, ssl_context=None):
+    def _fake_client(url, ssl_context=None, **_kw):
         seen["timeout_during_call"] = _socket.getdefaulttimeout()
         return _FakeWS([])
 

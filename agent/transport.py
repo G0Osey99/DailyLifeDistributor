@@ -34,6 +34,18 @@ _RECV_POLL_INTERVAL = 1.0
 # show "Connecting…" with no timeout, no log, no recourse.
 _CONNECT_TIMEOUT_S = 20.0
 
+# WebSocket PING cadence. With no application-level keepalive the
+# connection idles silently and consumer-router NAT tables drop the
+# established TCP flow after roughly 20-40s (observed: a Windows agent
+# behind a typical home router reconnects every ~24s). simple-websocket
+# sends RFC 6455 PING frames at this interval and flask-sock auto-
+# responds with PONG, so the connection stays in NAT's "active" set and
+# a half-open break is detected within ``2 × _PING_INTERVAL_S`` instead
+# of waiting for the next app-layer message (which may never come for
+# an idle agent). 15s comfortably beats the ~24s window observed in the
+# field while staying well under Cloudflare's 100s WebSocket idle cap.
+_PING_INTERVAL_S = 15.0
+
 
 def _build_ssl_context() -> ssl.SSLContext:
     """Build an SSLContext that trusts the same CAs ``requests`` does.
@@ -58,9 +70,11 @@ def _connect(url: str):
     """Seam for tests: real WebSocket client.
 
     Forces the SSL context to use the bundled certifi CA file (see
-    ``_build_ssl_context``) so wss:// works in a PyInstaller .app, and
+    ``_build_ssl_context``) so wss:// works in a PyInstaller .app,
     bounds the connect+handshake at ``_CONNECT_TIMEOUT_S`` so a stalled
-    handshake surfaces as ``OSError`` instead of hanging forever.
+    handshake surfaces as ``OSError`` instead of hanging forever, and
+    arms ``ping_interval=_PING_INTERVAL_S`` so consumer-router NATs
+    don't drop the idle connection after ~24s.
     """
     parts = urlsplit(url)
     ssl_context: Optional[ssl.SSLContext] = (
@@ -69,7 +83,11 @@ def _connect(url: str):
     prev_timeout = socket.getdefaulttimeout()
     socket.setdefaulttimeout(_CONNECT_TIMEOUT_S)
     try:
-        return simple_websocket.Client(url, ssl_context=ssl_context)
+        return simple_websocket.Client(
+            url,
+            ssl_context=ssl_context,
+            ping_interval=_PING_INTERVAL_S,
+        )
     finally:
         socket.setdefaulttimeout(prev_timeout)
 

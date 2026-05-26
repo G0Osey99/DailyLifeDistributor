@@ -583,6 +583,15 @@ def scan():
     Returns ``{"dates": {iso: {"categories": {cat: [names]}, "metadata":
     {...}}}}`` — matched filenames per category per date, plus the cached
     spreadsheet's metadata (title/transcript/...) for each matched date.
+
+    Date matching is anchored to the loaded spreadsheet: when a sheet is
+    present with a mapped date column, only filename-parsed dates that
+    appear in the sheet are returned. This eliminates noise from old
+    archive files (e.g. ``YYMMDD``-named clips from previous years that
+    happen to also parse as a date in the user's target month) and
+    disambiguates year-less filenames (``0601.jpg``, ``602.jpg``)
+    against the user's actual scheduling intent. Without a sheet
+    loaded, the full parse is returned (preserves manual workflows).
     """
     data = request.get_json(silent=True) or {}
     categories = data.get("categories") or {}
@@ -601,6 +610,7 @@ def scan():
     # Attach the cached spreadsheet's per-date metadata where it's mapped.
     path = _spreadsheet_path()
     mapping = flask_session.get("excel_mapping") or {}
+    sheet_dates: set[str] | None = None
     if os.path.isfile(path) and mapping.get("date_column"):
         try:
             meta_by_date = parse_spreadsheet(path, mapping)
@@ -609,6 +619,17 @@ def scan():
         for iso, meta in meta_by_date.items():
             if iso in dates:
                 dates[iso]["metadata"] = meta
+        sheet_dates = set(meta_by_date.keys())
+
+    # Anchor to the sheet: drop parsed dates that aren't in the user's
+    # scheduling plan. ``meta_by_date`` is empty when the sheet can't be
+    # parsed — in that case we keep the full set so the scan still works
+    # as a fallback. If the sheet is missing entirely (no date_column
+    # mapping), we also skip the filter — that's the manual workflow
+    # where the filenames are the source of truth.
+    if sheet_dates:
+        dates = {iso: payload for iso, payload in dates.items()
+                 if iso in sheet_dates}
 
     return jsonify({"dates": dates})
 

@@ -68,6 +68,31 @@ def _try_mmdd(digits: str) -> Optional[datetime]:
         return None
 
 
+def _try_mdd(digits: str) -> Optional[datetime]:
+    """Parse 3-digit string as M-DD (single-digit month + 2-digit day).
+
+    Handles the "missing leading zero" case — e.g. ``602.jpg`` for June 2,
+    where the operator dropped the leading zero on the month. Only the
+    month is ambiguous; the day is always 2 digits so we don't have to
+    consider M-D / MM-D interpretations.
+
+    Same year-inference rule as ``_try_mmdd``: assume current year, but
+    bump to next year if the resulting date is more than 60 days in the
+    past (handles scheduling content near year-end).
+    """
+    try:
+        mm, dd = int(digits[0:1]), int(digits[1:3])
+        today = datetime.today()
+        dt = _valid(datetime(today.year, mm, dd))
+        if dt is None:
+            return None
+        if (today - dt).days > 60:
+            dt = _valid(datetime(today.year + 1, mm, dd))
+        return dt
+    except ValueError:
+        return None
+
+
 def _try_yymmdd(digits: str) -> Optional[datetime]:
     """Parse 6-digit string as YYMMDD, always interpreting YY as 20YY."""
     try:
@@ -166,6 +191,12 @@ def _parse_date_entry_from_stem(stem: str) -> tuple:
     digits = re.sub(r"\D", "", stem)
     if not digits:
         return None, [], False
+
+    if len(digits) == 3:
+        # M-DD (missing leading zero on month) — e.g. `602.jpg` for June 2.
+        # No alternatives to consider: the day is always 2 digits.
+        dt = _try_mdd(digits)
+        return dt, [], False
 
     if len(digits) == 4:
         dt = _try_mmdd(digits)

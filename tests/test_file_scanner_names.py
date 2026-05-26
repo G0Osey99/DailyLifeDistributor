@@ -38,3 +38,36 @@ def test_parse_names_six_digit_ambiguity_surfaces_both_dates():
 def test_parse_names_thumbnail_and_audio_extensions_allowed():
     out = parse_names(["thumb_250521.png", "episode_250521.mp3"])
     assert sorted(out["2025-05-21"]) == ["episode_250521.mp3", "thumb_250521.png"]
+
+
+def test_parse_names_three_digit_mdd_handles_missing_leading_zero(monkeypatch):
+    """Operators occasionally drop the leading zero on the month for
+    single-digit months: ``602.jpg`` instead of ``0602.jpg`` for
+    June 2. Previously these 3-digit stems were silently dropped
+    (the parser only knew 4/6/8-digit formats). Now they parse as
+    M-DD with the same current-year inference as MMDD."""
+    from datetime import datetime
+    import core.file_scanner as fs
+    # Pin "today" so the year-inference math is deterministic.
+    class _FakeDT(datetime):
+        @classmethod
+        def today(cls):
+            return datetime(2026, 5, 26)
+    monkeypatch.setattr(fs, "datetime", _FakeDT)
+    out = parse_names(["602.jpg", "615.png", "1231.jpg"])
+    # 602 → June 2 of the current year (2026); not >60d in the past
+    # since "today" is May 26.
+    assert "2026-06-02" in out
+    assert out["2026-06-02"] == ["602.jpg"]
+    # 615 → June 15
+    assert "2026-06-15" in out
+    # 1231 → MMDD (4-digit) is still handled by the existing path.
+    assert "2026-12-31" in out
+
+
+def test_parse_names_three_digit_invalid_month_dropped(monkeypatch):
+    """`982` parses as month=9, day=82 — invalid day. Must be dropped,
+    not crash."""
+    out = parse_names(["982.jpg", "00.jpg"])
+    # 982 is rejected (day=82 invalid); 00.jpg is < 3 digits, also rejected.
+    assert out == {}

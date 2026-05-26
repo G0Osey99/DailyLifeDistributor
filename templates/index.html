@@ -335,7 +335,7 @@
                         ('scripture_column', 'Scripture', ''),
                         ('prayer_column', 'Prayer', ''),
                         ('topic_column', 'Topic',
-                            'Drives the free-stock image search for Rock Spotlight / Vista / Reflection slots — broad topical keywords work best.'),
+                            'Optional hint for the free-stock image search (Rock Spotlight / Vista / Reflection). The local LLM derives nature/landscape search terms from the scripture passage on its own; mapping a Topic column just feeds an extra hint into the same prompt. Safe to leave unmapped.'),
                         ('transcript_column', 'Transcript',
                             'Plain transcript text. Fed to the LLM to suggest titles when the title column is blank. Leave this unmapped to disable LLM suggestions.'),
                     ] %}

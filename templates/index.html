@@ -10,6 +10,16 @@
     @media (max-width: 1100px) { .setup-grid { grid-template-columns: 1fr; } }
     .setup-grid .card { margin-bottom: 0; }
     .setup-right { display: flex; flex-direction: column; gap: 20px; }
+    /* Grid/flex children default to `min-width: auto` (= content's
+       min-content width). With a `width: max-content` table inside,
+       the grid track would expand to fit the whole spreadsheet —
+       pushing the card off the viewport and silently disabling the
+       `overflow-x: auto` on the preview. `min-width: 0` lets each
+       track shrink to its allotted fraction so the preview's scrollbar
+       actually kicks in. Mirrored on .setup-right so the same thing
+       holds in the single-column responsive layout below 1100px. */
+    .setup-grid > * { min-width: 0; }
+    .setup-right > * { min-width: 0; }
 
     .picker-list { display: flex; flex-direction: column; gap: 10px; }
     .picker-row {
@@ -32,7 +42,20 @@
     .mapping-field select { font-size: 12px; }
     #mapping-section { display: none; }
     .sheet-preview-label { font-size: 11px; font-weight: 600; color: var(--shell-text-dim); text-transform: uppercase; letter-spacing: .04em; display: block; margin-bottom: 4px; }
-    .sheet-preview { overflow-x: auto; border: 1px solid var(--shell-border, #2a2a2a); border-radius: 6px; max-height: 220px; overflow-y: auto; }
+    /* Preview box: cap at 100% of its grid track horizontally (combined
+       with `min-width: 0` on the parent track above) and at a viewport-
+       relative height vertically. clamp(220, 50vh, 480) hits roughly:
+         small laptop:    50vh ≈ 350px (12-14 rows visible)
+         large desktop:   capped at 480px (no runaway growth)
+         tiny window:     stays at 220px floor (still usable)
+       Past either bound, the box scrolls. */
+    .sheet-preview {
+        max-width: 100%;
+        max-height: clamp(220px, 50vh, 480px);
+        overflow: auto;
+        border: 1px solid var(--shell-border, #2a2a2a);
+        border-radius: 6px;
+    }
     .sheet-preview table { border-collapse: collapse; font-size: 11px; width: max-content; min-width: 100%; }
     .sheet-preview th, .sheet-preview td { border: 1px solid var(--shell-border, #2a2a2a); padding: 4px 8px; text-align: left; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
     .sheet-preview th { position: sticky; top: 0; background: var(--shell-bg-elev, #1c1c1c); font-weight: 600; color: var(--shell-text-dim); }

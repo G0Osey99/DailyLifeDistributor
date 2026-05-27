@@ -344,6 +344,15 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
         from agent import dispatch
 
         job_id = msg.get("job_id", "")
+        # Visibility: previously nothing logged on receipt, so when a user
+        # reported "I clicked Upload and the agent did nothing" there was
+        # no way to tell if the frame arrived. INFO so it shows up at the
+        # default log level alongside the connect/keepalive lines.
+        _row_count = len(msg.get("rows") or msg.get("payload", {}).get("rows") or [])
+        log.info(
+            "agent: received job_plan job=%s rows=%d",
+            (job_id or "?")[:8], _row_count,
+        )
 
         class _T:
             def send(self, frame):

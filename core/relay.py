@@ -240,4 +240,18 @@ def send_to_device(device_name: str, envelope: dict) -> None:
         sink = room.agents.get(device_name) if room else None
     if sink is None:
         raise ValueError(f"send_to_device: device {device_name!r} not connected")
-    sink(msg)
+    # Wrap the sink call so a closed-mid-dispatch socket surfaces with
+    # device + envelope type in the log instead of bubbling as an opaque
+    # 500. Previously: WS dies between _pick_device and sink() (the
+    # symptom was the WS reconnect storm), sink raises silently from the
+    # caller's POV, batch_run 500s, dashboard shows a generic error and
+    # the on-call has nothing to grep for.
+    try:
+        sink(msg)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "send_to_device: sink write failed for device=%s type=%s (%s: %s)",
+            (device_name or "?")[:8], envelope.get("type", "?"),
+            type(exc).__name__, exc,
+        )
+        raise

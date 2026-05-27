@@ -208,6 +208,16 @@ def run(*, envelope: dict, paths: dict, emit,
         for platform in row["platforms"]:
             tasks.append((platform, row))
 
+    # Visibility: when a user reports "the agent did nothing", the absence
+    # of this line tells us the dispatch never reached the executor — vs.
+    # the breaker / uploader layer if the line IS there but no per-row
+    # events follow.
+    _logger.info(
+        "run_batch: starting job=%s rows=%d tasks=%d max_workers=%d",
+        (envelope.get("job_id") or "?")[:8],
+        len(rows), len(tasks), max_workers,
+    )
+
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = [
             ex.submit(_run_one, platform, row, emit, paths,

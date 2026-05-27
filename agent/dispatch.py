@@ -91,6 +91,11 @@ def handle_job_plan(*, plan: dict, transport: Any) -> None:
     intended to be called from a background thread in agent/main.py.
     """
     job_id = plan["job_id"]
+    _rows = plan.get("rows") or plan.get("payload", {}).get("rows") or []
+    _logger.info(
+        "dispatch: handling job_plan job=%s rows=%d",
+        (job_id or "?")[:8], len(_rows),
+    )
 
     def _emit(frame: dict) -> None:
         # Stamp job_id on every outgoing frame so the server can route it.

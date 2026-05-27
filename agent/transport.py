@@ -18,6 +18,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import certifi
 import simple_websocket
+from wsproto.events import Ping
 
 PROTOCOL_VERSION = 1
 
@@ -34,19 +35,25 @@ _RECV_POLL_INTERVAL = 1.0
 # show "Connecting…" with no timeout, no log, no recourse.
 _CONNECT_TIMEOUT_S = 20.0
 
-# App-level WebSocket keepalive cadence. We DO NOT pass ping_interval
-# to ``simple_websocket.Client`` — the library's background ping thread
+# WebSocket keepalive cadence. We DO NOT pass ping_interval to
+# ``simple_websocket.Client`` — the library's background ping thread
 # calls ``self.ws.send(Ping())`` + ``self.sock.send(...)`` concurrently
 # with user-thread sends, and neither wsproto's connection state nor
 # the SSL socket is thread-safe. The field report
 # (``[SSL] internal error (_ssl.c:2427)`` / ``EOF occurred in violation
 # of protocol``) was the classic state-corruption signature.
 #
-# Instead the receive-loop thread sends a tiny app-level keepalive
-# frame on this cadence, serialized through ``AgentConnection._send_lock``
-# (which all outbound sends — worker-thread events, hello, keepalive —
-# share). 15s comfortably beats the ~24s consumer-router NAT-drop
-# window and stays well under Cloudflare's 100s WS idle cap.
+# Instead the receive-loop thread emits a real WebSocket PING **control
+# frame** (wsproto ``Ping()`` event) on this cadence, serialized through
+# ``AgentConnection._send_lock`` (which all outbound sends share). An
+# earlier attempt used a JSON ``{"type":"keepalive"}`` data frame; that
+# did NOT keep the connection alive — observed in the field as a ~24s
+# reconnect storm even with the keepalive firing exactly on cadence at
+# 15s intervals. Middleboxes (Cloudflare Tunnel, NAT, the consumer
+# router) reset idle timers on protocol control frames, not on
+# application data, so the data-frame keepalive was invisible to them.
+# The PING frame triggers a Pong roundtrip — both directions cross
+# every hop, resetting every idle timer along the path.
 _PING_INTERVAL_S = 15.0
 
 
@@ -153,6 +160,24 @@ class AgentConnection:
             self.ws.send(json.dumps(message))
             self._last_send_at = _time.monotonic()
 
+    def _send_ping(self) -> None:
+        """Emit a WebSocket PING control frame.
+
+        Uses wsproto's ``Ping()`` event so the bytes on the wire are a
+        protocol-level control frame, not a data frame. Middleboxes
+        (Cloudflare Tunnel, NAT, etc.) reset their idle timers on
+        control frames; a JSON data-frame keepalive does not survive
+        those timers in practice. The library's own ping thread does
+        the same dance (``self.sock.send(self.ws.send(Ping()))``); we
+        replicate it here serialized through ``_send_lock`` so it
+        doesn't race the worker thread's data sends.
+        """
+        import time as _time
+        with self._send_lock:
+            out = self.ws.ws.send(Ping())
+            self.ws.sock.send(out)
+            self._last_send_at = _time.monotonic()
+
     def run_once(self, on_message: Callable[[dict], None]) -> bool:
         """Receive one message and dispatch it. Returns False when the
         connection has closed or the shutdown event has been set.
@@ -191,19 +216,19 @@ class AgentConnection:
             _idle = _time.monotonic() - self._last_send_at
             if _idle >= _PING_INTERVAL_S:
                 try:
-                    self.send({"v": PROTOCOL_VERSION, "type": "keepalive"})
+                    self._send_ping()
                     # Logged at INFO (not DEBUG) on purpose: when the user
                     # reports "reconnecting every N seconds", we need to see
                     # in the log whether the keepalive is firing on cadence
                     # or not — that tells us middlebox-vs-our-code in one
                     # glance. Cheap line, one per ~15s.
                     logging.getLogger(__name__).info(
-                        "agent: keepalive sent (idle %.1fs)", _idle,
+                        "agent: PING control frame sent (idle %.1fs)", _idle,
                     )
                 except (simple_websocket.ConnectionClosed,
                         simple_websocket.ConnectionError, OSError) as exc:
                     logging.getLogger(__name__).warning(
-                        "agent: keepalive send failed (%s): %s — "
+                        "agent: PING send failed (%s): %s — "
                         "connection will be reopened",
                         type(exc).__name__, exc,
                     )

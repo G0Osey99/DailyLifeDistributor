@@ -5,12 +5,17 @@ from core import agent_dispatch
 
 
 def test_event_frame_routed_to_job_queue():
+    import json
     q = queue.Queue()
     agent_dispatch.register_job(job_id="J1", sse_queue=q, session_id=None)
     agent_dispatch.on_frame({"v": 1, "type": "event", "job_id": "J1",
                              "row_idx": 0, "event": "upload_progress",
                              "platform": "YouTube Video", "percent": 42})
-    msg = q.get_nowait()
+    # Queue carries JSON STRINGS (the SSE consumer in blueprints/upload.py
+    # passes msg straight to ``json.loads`` — see commit 7fc764b). Earlier
+    # versions of this test asserted against a dict, which silently broke
+    # when the contract tightened.
+    msg = json.loads(q.get_nowait())
     assert msg["event"] == "upload_progress"
     assert msg["row_idx"] == 0
     assert msg["percent"] == 42
@@ -24,11 +29,12 @@ def test_event_for_unknown_job_is_dropped_without_error():
 
 def test_event_frame_strips_envelope_fields():
     """v, type, job_id must NOT appear in the queued message."""
+    import json
     q = queue.Queue()
     agent_dispatch.register_job(job_id="J2", sse_queue=q, session_id=None)
     agent_dispatch.on_frame({"v": 1, "type": "event", "job_id": "J2",
                              "event": "done", "row_idx": 1})
-    msg = q.get_nowait()
+    msg = json.loads(q.get_nowait())
     assert "v" not in msg
     assert "type" not in msg
     assert "job_id" not in msg

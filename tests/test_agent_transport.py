@@ -2,11 +2,36 @@ import json
 from agent import transport
 
 
+class _FakeSock:
+    def __init__(self): self.sent_bytes = []
+    def send(self, data): self.sent_bytes.append(data)
+
+
+class _FakeWsproto:
+    """Stands in for the wsproto ``WSConnection`` exposed as ``Client.ws``.
+
+    The agent's ``_send_ping`` calls ``self.ws.ws.send(Ping())`` to get
+    the on-the-wire bytes of a control frame, mirroring what
+    ``simple_websocket``'s own ping thread does internally.
+    """
+    def __init__(self): self.events_sent = []
+    def send(self, event):
+        self.events_sent.append(event)
+        # Real wsproto returns the encoded bytes — a non-empty marker is
+        # enough for the test fake; ``_FakeSock.send`` will record them.
+        return b"PING-FRAME"
+
+
 class _FakeWS:
     def __init__(self, incoming):
         self._incoming = list(incoming)
         self.sent = []
         self.closed = False
+        # Mirror the real ``simple_websocket.Client`` shape: a wsproto
+        # connection on ``.ws`` and a socket on ``.sock``. ``_send_ping``
+        # uses both to put a PING control frame on the wire.
+        self.ws = _FakeWsproto()
+        self.sock = _FakeSock()
     def send(self, text): self.sent.append(text)
     def receive(self, timeout=None):
         return self._incoming.pop(0) if self._incoming else None
@@ -172,13 +197,19 @@ def test_send_serializes_through_lock(monkeypatch):
     )
 
 
-def test_run_once_emits_keepalive_when_idle(monkeypatch):
+def test_run_once_emits_ping_control_frame_when_idle(monkeypatch):
     """When the WebSocket has been idle for ``_PING_INTERVAL_S``, the
-    receive loop must emit an app-level keepalive frame to keep
-    consumer-router NAT mappings alive (the original purpose of the
-    library's ping_interval, now done safely on the single receive
-    thread)."""
+    receive loop must emit a WebSocket PING **control frame** (not a
+    JSON data frame) to keep middlebox idle timers reset.
+
+    The earlier JSON ``{"type":"keepalive"}`` keepalive fired exactly
+    on cadence yet the connection still died at ~24s — Cloudflare
+    Tunnel (and consumer-router NATs) only reset idle timers on
+    protocol control frames, not on application data. Guard the
+    contract so a future refactor doesn't revert to a data-frame
+    keepalive."""
     import time as _time
+    from wsproto.events import Ping
     fake = _FakeWS([])
     monkeypatch.setattr(transport, "_connect", lambda url: fake)
     conn = transport.AgentConnection("https://x", "tok")
@@ -186,6 +217,8 @@ def test_run_once_emits_keepalive_when_idle(monkeypatch):
     # Burn through any sends from connect() so the assertion below
     # only counts keepalives.
     fake.sent.clear()
+    fake.ws.events_sent.clear()
+    fake.sock.sent_bytes.clear()
     # Pretend the last send was long enough ago to trigger keepalive.
     conn._last_send_at = _time.monotonic() - (transport._PING_INTERVAL_S + 1)
 
@@ -198,9 +231,15 @@ def test_run_once_emits_keepalive_when_idle(monkeypatch):
 
     conn.run_once(lambda m: None)
 
-    # At least one keepalive frame was emitted.
-    assert any('"keepalive"' in s for s in fake.sent), (
-        f"expected a keepalive frame in fake.sent; got: {fake.sent}"
+    # A PING control frame was emitted via wsproto + the raw socket.
+    assert any(isinstance(e, Ping) for e in fake.ws.events_sent), (
+        f"expected a wsproto Ping event; got: {fake.ws.events_sent}"
+    )
+    assert fake.sock.sent_bytes, "PING bytes were not pushed to the socket"
+    # And critically: NO JSON keepalive data frame slipped in.
+    assert not any('"keepalive"' in s for s in fake.sent), (
+        f"keepalive must be a PING control frame, not a JSON data frame; "
+        f"got data frames: {fake.sent}"
     )
 
 

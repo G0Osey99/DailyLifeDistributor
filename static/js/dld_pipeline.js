@@ -970,7 +970,11 @@
                             logProgress(`<div class="text-sm text-dim">⬆ uploading ${esc(name)}…</div>`);
                             await uploadFileChunks(runId, fid, file);
                         }
-                        (filesMap[fid] = filesMap[fid] || []).push({ category, date });
+                        // Include the original filename so the server can
+                        // recover it after reassembly into a hex-UUID temp
+                        // file — needed for e.g. Wistia ref inference, which
+                        // pulls "app 260601" from the user's filename.
+                        (filesMap[fid] = filesMap[fid] || []).push({ category, date, name });
                     }
                 }
             }

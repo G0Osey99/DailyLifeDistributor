@@ -388,6 +388,11 @@ def batch_run():
     # A shared physical file may map to several (category, date) placements,
     # so each file_id carries either one placement dict or a list of them.
     file_paths: dict = {}
+    # Track the original on-disk filename per (category, iso). The temp file
+    # is named with a hex UUID and carries no trace of the source name, so
+    # downstream code that needs the name (Wistia ref inference, etc.) would
+    # have nothing to work with. Browser sends ``name`` in each placement.
+    file_names: dict = {}
     for file_id, placements in files.items():
         fstate = rec["files"].get(file_id)
         if fstate is None or not fstate.get("complete"):
@@ -403,13 +408,17 @@ def batch_run():
         for pl in placements or []:
             category = (pl or {}).get("category", "")
             iso = (pl or {}).get("date", "")
+            name = (pl or {}).get("name", "")
             if category and iso:
                 file_paths[(category, iso)] = path
+                if name:
+                    file_names[(category, iso)] = name
 
     # Rebuild this batch's session entries from the cached spreadsheet + the
     # temp files (titles/descriptions/tags/Rock fields/schedules), then select
     # the batch's dates/platforms so get_summary() yields the right rows.
-    _apply_paths_to_session(file_paths, dates, platforms, overrides)
+    _apply_paths_to_session(file_paths, dates, platforms, overrides,
+                            file_names=file_names)
     summary = [it for it in session.get_summary()
                if it.get("iso_date", it.get("date")) in set(dates)]
     entries_snapshot = dict(session.entries)
@@ -517,7 +526,8 @@ _OVERRIDE_FIELDS = {
 }
 
 
-def _apply_paths_to_session(file_paths, dates, platforms, overrides=None):
+def _apply_paths_to_session(file_paths, dates, platforms, overrides=None,
+                            file_names=None):
     """Rebuild this batch's session entries from the cached spreadsheet + temp
     files so uploads carry the mapped metadata — titles, descriptions, tags,
     Rock fields, transcript, and the per-platform schedule/element defaults —
@@ -545,12 +555,22 @@ def _apply_paths_to_session(file_paths, dates, platforms, overrides=None):
 
     # Group this batch's temp files into a media-like object per date.
     media_by_date: dict = {}
+    file_names = file_names or {}
     for (category, iso), path in file_paths.items():
         field = upload_jobs._CATEGORY_FIELD.get(category)
         if not field:
             continue
         m = media_by_date.setdefault(iso, MediaDateEntry(date=iso, display_date=iso))
         setattr(m, field, path)
+        # Mirror the original filename for the categories that have a
+        # *_name field on MediaDateEntry. Today only the shorts category
+        # needs it (for Wistia ref inference); adding more is a one-line
+        # addition to the dict + the dataclass.
+        name_field_by_category = {"youtube_shorts": "youtube_shorts_name"}
+        name_field = name_field_by_category.get(category)
+        name = file_names.get((category, iso))
+        if name_field and name:
+            setattr(m, name_field, name)
 
     # build_entry() pulls titles/tags/schedules/elements from config + meta.
     with session._lock:

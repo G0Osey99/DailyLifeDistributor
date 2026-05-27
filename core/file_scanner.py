@@ -21,6 +21,13 @@ class MediaDateEntry:
     podcast_path: Optional[str] = None
     thumbnail_path: Optional[str] = None
     email_thumbnail_path: Optional[str] = None
+    # Original filename of the shorts video as it appeared on the user's
+    # disk (e.g. "app 260601.mp4"), used by session_state.build_entry to
+    # infer the Wistia media-reference label. The web path reassembles
+    # chunks into a hex-UUID file_id with no trace of the original name,
+    # so ``infer_wistia_ref(temp_path)`` returns "" — surfaces as
+    # "Missing required fields: wistia_ref" when Rock Spotlight runs.
+    youtube_shorts_name: Optional[str] = None
     date_ambiguous: bool = False
     date_alternatives: list = field(default_factory=list)
 

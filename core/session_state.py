@@ -307,6 +307,15 @@ class SessionState:
         shorts_title = meta.get("shorts_title", "") or youtube_title
 
         shorts_path = media.youtube_shorts_path if media else None
+        # Prefer the original filename for wistia_ref inference. The web
+        # path's hex-UUID temp filename never carries the date-coded
+        # "app 260601" run the inferrer needs; the original name does.
+        # Falls back to the temp path so older callers / agent path still
+        # work when youtube_shorts_name isn't set.
+        shorts_name_or_path = (
+            getattr(media, "youtube_shorts_name", None)
+            if media else None
+        ) or shorts_path
 
         return ReviewEntry(
             date=iso_date,
@@ -327,7 +336,7 @@ class SessionState:
             prayer=meta.get("prayer", ""),
             topic_hint=meta.get("topic", ""),
             transcript=meta.get("transcript", ""),
-            wistia_ref=infer_wistia_ref(shorts_path),
+            wistia_ref=infer_wistia_ref(shorts_name_or_path),
             youtube_schedule_dt=self._default_schedule(iso_date, yt_video_time),
             shorts_schedule_dt=self._default_schedule(iso_date, yt_shorts_time),
             podcast_schedule_dt=self._default_schedule(iso_date, sc_time),

@@ -256,14 +256,53 @@ def build_envelope(
     }
 
 
+def _group_summary_by_iso_date(summary: list[dict]) -> list[dict]:
+    """Convert per-(date, platform) rows from ``session.get_summary()`` into
+    the grouped shape ``filter_done_rows`` expects.
+
+    ``session.get_summary()`` returns one dict per (date, platform) pair:
+        {"date": display_date, "iso_date": iso, "platform": "YouTube Video", ...}
+
+    ``filter_done_rows`` (and ``build_envelope`` downstream) expects:
+        {"date": iso, "platforms": ["YouTube Video", "Rock"]}
+
+    The web path's ``upload_jobs.run_batch`` happens to iterate per-row
+    directly so it never needed this regroup; the agent path does. This
+    helper is the only piece of glue between the two shapes.
+
+    Items that are already in the grouped shape (have a ``platforms``
+    list) pass through unchanged so the original tests still apply.
+    """
+    if not summary:
+        return []
+    # Pass-through path for already-grouped input (test fixtures use this
+    # shape directly, and we want filter_done_rows tests to stay valid).
+    if any(isinstance(it.get("platforms"), list) for it in summary):
+        return summary
+    by_iso: dict[str, list[str]] = {}
+    for item in summary:
+        iso = item.get("iso_date") or item.get("date") or ""
+        platform = item.get("platform") or ""
+        if not iso or not platform:
+            continue
+        bucket = by_iso.setdefault(iso, [])
+        if platform not in bucket:
+            bucket.append(platform)
+    return [{"date": iso, "platforms": plats} for iso, plats in by_iso.items()]
+
+
 def filter_done_rows(*, session_id: str, summary: list[dict]) -> list[dict]:
     """Drop platforms (and entire rows) already recorded as ``success``
     in upload_history.
 
-    Input: session_id, summary = list of {"date": iso, "platforms": [...]}
-    Output: list of {"row_idx": idx_in_summary, "iso_date": iso,
-    "platforms": [remaining]}, entire row omitted if all platforms done.
+    Input: session_id, summary in either of two shapes:
+      * Grouped: list of ``{"date": iso, "platforms": [...]}``
+      * Per-row (from ``session.get_summary()``): list of
+        ``{"iso_date": iso, "platform": str, ...}`` — auto-regrouped here.
+    Output: list of ``{"row_idx": idx_in_summary, "iso_date": iso,
+    "platforms": [remaining]}``, entire row omitted if all platforms done.
     """
+    summary = _group_summary_by_iso_date(summary)
     out: list[dict] = []
     for idx, item in enumerate(summary):
         iso = item["date"]

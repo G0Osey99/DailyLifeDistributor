@@ -64,6 +64,54 @@ def test_filter_drops_row_entirely_when_all_platforms_done(temp_db):
     assert agent_dispatch.filter_done_rows(session_id="S1", summary=summary) == []
 
 
+def test_filter_accepts_per_row_shape_from_session_get_summary(temp_db):
+    """``session.get_summary()`` returns ONE dict per (date, platform):
+        {"date": display, "iso_date": iso, "platform": str, ...}
+    rather than the grouped ``{"date": iso, "platforms": [list]}`` shape
+    the original tests document. ``filter_done_rows`` must regroup
+    automatically — otherwise the agent path 500s on the first call
+    with a real summary (the production bug that surfaced on a live
+    agent upload as ``KeyError: 'platforms'``)."""
+    from core import agent_dispatch, db as _db
+    _db.record_upload(
+        session_id="S1", iso_date="2026-05-22", platform="YouTube Video",
+        title="", file_path="", success=True, url="", scheduled_time="", error="",
+    )
+    # Per-row shape — exactly what session.get_summary() emits.
+    per_row_summary = [
+        {"date": "May 22, 2026", "iso_date": "2026-05-22",
+         "platform": "YouTube Video", "title": "Done one"},
+        {"date": "May 22, 2026", "iso_date": "2026-05-22",
+         "platform": "Rock", "title": "Same date diff platform"},
+        {"date": "May 23, 2026", "iso_date": "2026-05-23",
+         "platform": "YouTube Video", "title": "Next day"},
+    ]
+    rows = agent_dispatch.filter_done_rows(
+        session_id="S1", summary=per_row_summary,
+    )
+    # YouTube Video on 05-22 already succeeded → dropped from that
+    # date's platforms. Rock on 05-22 + YouTube on 05-23 remain.
+    assert rows == [
+        {"row_idx": 0, "iso_date": "2026-05-22", "platforms": ["Rock"]},
+        {"row_idx": 1, "iso_date": "2026-05-23", "platforms": ["YouTube Video"]},
+    ]
+
+
+def test_filter_per_row_deduplicates_repeated_platforms(temp_db):
+    """Defensive — if a summary somehow lists the same (iso, platform)
+    twice, the grouped output mustn't carry the dup forward and
+    cause double-dispatch on the agent."""
+    from core import agent_dispatch
+    per_row = [
+        {"iso_date": "2026-05-22", "platform": "YouTube Video"},
+        {"iso_date": "2026-05-22", "platform": "YouTube Video"},
+    ]
+    rows = agent_dispatch.filter_done_rows(session_id="S2", summary=per_row)
+    assert rows == [
+        {"row_idx": 0, "iso_date": "2026-05-22", "platforms": ["YouTube Video"]},
+    ]
+
+
 def test_collect_credentials_pulls_needed_keys_only():
     from core import agent_dispatch, secrets_store
     # YouTube keys stored as kv secrets; session keys stored as blobs

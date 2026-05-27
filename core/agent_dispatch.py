@@ -453,9 +453,19 @@ def start(
     config: dict,
     device_id: str | None = None,
     browser_ip: str | None = None,
+    job_id: str | None = None,
 ) -> str:
     """Filter done rows, bundle credentials, build the envelope, and send
-    it through the relay to the chosen agent. Returns the new job_id.
+    it through the relay to the chosen agent. Returns the job_id used.
+
+    *job_id* (optional) — when supplied, the dispatch reuses that id
+    instead of minting a new uuid. The caller in ``blueprints/media``
+    pre-registers ``upload_jobs._jobs[job_id]`` BEFORE calling start;
+    if start ignores the caller's id and mints its own, the browser
+    later asks ``/upload/stream?job_id=<minted>`` for an id that's only
+    in ``agent_dispatch._jobs`` (not ``upload_jobs._jobs``), and the
+    SSE endpoint 404s. Honoring the caller-supplied id keeps both
+    registries in sync.
 
     *elements* is a dict mapping iso_date -> UploadElements.to_dict().
     Each row receives its own per-date elements slice; rows whose iso_date
@@ -470,7 +480,8 @@ def start(
     """
     from core.org_context import effective_org_id
     org_id = effective_org_id()
-    job_id = _uuid.uuid4().hex
+    if job_id is None:
+        job_id = _uuid.uuid4().hex
     rows = filter_done_rows(session_id=session_id, summary=summary)
     if not rows:
         _logger.info("agent_dispatch.start(job=%s): nothing to do", job_id)

@@ -540,15 +540,19 @@
             key: "youtube_shorts", label: "YouTube Shorts",
             color: "--p-yt-shorts",
             fields: [
-                // Mirror the server's `shorts_title or youtube_title`
-                // fallback in build_entry so the Shorts tab pre-fills
-                // sensibly when only a single title column is mapped.
-                // The LLM-suggestion path still fires only when the
-                // resolved value is blank, so autofill behavior is
-                // unchanged for users who haven't mapped either column.
+                // NO `fallbackMetaKeys` on this field. Shorts is the one
+                // platform where the LLM is the intended fallback — the
+                // autofill below explicitly skips inputs that are
+                // already populated, so any pre-fill (e.g. from
+                // youtube_title) would silently prevent the LLM from
+                // running on blank Shorts titles. The server's
+                // `shorts_title or youtube_title` fallback in
+                // build_entry still covers the "user left it blank AND
+                // no transcript mapped" case at upload time, so
+                // dropping the review-side fallback loses nothing.
                 { field: "youtube_shorts_title", label: "Title",
                   type: "text", metaKey: "shorts_title",
-                  fallbackMetaKeys: ["youtube_title"], autofillShorts: true },
+                  autofillShorts: true },
                 { field: "description", label: "Description", type: "textarea",
                   metaKey: "description", shared: true },
             ],

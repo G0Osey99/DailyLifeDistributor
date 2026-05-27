@@ -443,6 +443,9 @@ def batch_run():
         except Exception:  # noqa: BLE001 — never block the upload on this
             _browser_ip = None
         try:
+            # IMPORTANT: pass the pre-generated job_id (already in
+            # upload_jobs._jobs) so /upload/stream can find it. Without
+            # this start() mints its own uuid and the browser SSE 404s.
             job_id = agent_dispatch.start(
                 session_id=session.session_id,
                 summary=summary,
@@ -454,6 +457,7 @@ def batch_run():
                 config={"max_workers": _max_workers},
                 device_id=_picked_device,
                 browser_ip=_browser_ip,
+                job_id=job_id,
             )
         except agent_dispatch.NoAgentOnlineError:
             upload_jobs.drop_job(job_id)

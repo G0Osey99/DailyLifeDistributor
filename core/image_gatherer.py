@@ -202,10 +202,16 @@ def _topic_terms_for_verse(verse_text: str, *, topic_hint: str = "") -> list[str
     _MAX_LLM_ATTEMPTS = 2
     for attempt in range(1, _MAX_LLM_ATTEMPTS + 1):
         try:
+            # Use LLM_MODEL env var (matches llm_title_gen). Hardcoded
+            # "local" worked for llamafile, which accepts any model name,
+            # but Ollama returns a 404/empty completion when the model
+            # name doesn't exist in its registry — silently producing
+            # zero terms and tanking every Rock image lookup.
+            from core.llm_title_gen import LLM_MODEL as _LLM_MODEL
             r = requests.post(
                 f"{LLAMAFILE_BASE_URL}/v1/chat/completions",
                 json={
-                    "model": "local",
+                    "model": _LLM_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.5,
                     "max_tokens": 120,

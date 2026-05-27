@@ -95,7 +95,10 @@ def upload_daily_experience(entry, *, elements=None, progress_callback=None) -> 
                     "scheduled_time": "",
                     "error": (
                         "Image gatherer returned no usable image. "
-                        "Check llamafile is running and UNSPLASH_ACCESS_KEY is set."
+                        "Check the LLM backend (llamafile or Ollama at "
+                        "$LLM_BASE_URL) is reachable and that "
+                        "UNSPLASH_ACCESS_KEY (or PEXELS_API_KEY) is set in "
+                        "the server env."
                     ),
                 }
             image_temp_path = image_meta.file_path

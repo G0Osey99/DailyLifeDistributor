@@ -5,6 +5,12 @@ openpyxl>=3.1.0,<4
 google-auth>=2.28.0,<3
 google-auth-oauthlib>=1.2.0,<2
 google-api-python-client>=2.120.0,<3
+# httplib2 0.31.0 changed 308 handling to require a Location: header, which
+# breaks YouTube's resumable upload protocol (308 Resume Incomplete carries
+# Range, not Location). Field symptom: every YouTube chunk upload fails with
+# "Redirected but the response is missing a Location: header." Pin to the
+# last release line that round-trips 308 as the protocol intends.
+httplib2>=0.22.0,<0.31
 # 2.32.0 fixed CVE-2024-35195 (a Session kept verify=False across requests
 # after the first unverified call); 2.32.2 drops the 2.32.0/2.32.1 regressions.
 requests>=2.32.2,<3

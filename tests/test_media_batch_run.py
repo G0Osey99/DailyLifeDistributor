@@ -212,6 +212,71 @@ def test_batch_overrides_apply_episode_title_and_vista_caption(client, monkeypat
     assert entry.vista_caption == "Custom caption ✨"
 
 
+def test_batch_run_agent_path_works_without_uploaded_files(client, monkeypatch):
+    """Agent path: the browser shouldn't have to chunk-upload anything
+    because the files already live on the agent's local disk (the
+    agent resolves paths via its own ``agent.scan``). The previous
+    flow chunk-uploaded anyway and deleted server-side immediately
+    after dispatch — pure bandwidth waste.
+
+    This test confirms the server accepts a batch_run dispatch with
+    ``files: {}`` and real dates/platforms, builds entries with all
+    path fields = None, and hands them to ``agent_dispatch.start``
+    without a reassembly error. The agent will fill in paths from
+    its scan when it processes the job_plan."""
+    import io, openpyxl
+    monkeypatch.setenv("HYBRID_AGENT_ENABLED", "true")
+
+    # Stub agent_dispatch.start so we can inspect the entries snapshot
+    # that's about to be sent to the agent.
+    captured = {}
+
+    def _fake_start(**kw):
+        captured.update(kw)
+        return "JOB-AGENT"
+
+    from core import agent_dispatch
+    monkeypatch.setattr(agent_dispatch, "start", _fake_start)
+    monkeypatch.setattr(agent_dispatch, "register_job",
+                        lambda **kw: None)
+
+    # Prime a real sheet so build_entry has metadata to work with.
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Plan"
+    ws.append(["Date", "Title"])
+    ws.append(["2026-06-01", "Day 1"])
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    client.post("/media/spreadsheet", data={"file": (buf, "plan.xlsx")},
+                content_type="multipart/form-data")
+    client.post("/media/mapping", json={
+        "sheet_name": "Plan", "date_column": "Date",
+        "youtube_title_column": "Title",
+    })
+
+    # Initialize a run (acquires the per-user lock) and immediately
+    # dispatch on the agent path with NO file uploads.
+    run_id = _init(client)
+    resp = client.post("/media/batch/run?path=agent", json={
+        "run_id": run_id,
+        "dates": ["2026-06-01"],
+        "platforms": ["youtube_video"],
+        "files": {},  # ← key change: no upload required
+    })
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    assert resp.get_json()["job_id"] == "JOB-AGENT"
+
+    # The agent received a non-empty entries snapshot, but with no
+    # server-side paths — those get resolved by the agent's scan.
+    entries = captured.get("entries") or {}
+    assert "2026-06-01" in entries
+    entry = entries["2026-06-01"]
+    # Title flowed through from the spreadsheet.
+    assert entry.youtube_title == "Day 1"
+    # Path fields are all None — the agent fills them in via scan.
+    for f in ("youtube_video_path", "youtube_shorts_path",
+              "podcast_path", "thumbnail_path"):
+        assert getattr(entry, f) is None, f"{f} should be None on agent path"
+
+
 def test_run_finish_releases_lock(client):
     run_id = _init(client)
     # Busy while active.

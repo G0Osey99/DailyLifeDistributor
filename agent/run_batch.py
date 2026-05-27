@@ -99,6 +99,15 @@ def _breaker_for(platform: str, cb_cfg: dict):
 def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
              yt_state: _YtState,
              cancel_event: "threading.Event | None" = None) -> None:
+    # Visibility: without these lines, a task that errored inside
+    # _dispatch_upload was invisible in the agent log — the only signal
+    # was "no events flowing", which is indistinguishable from "still
+    # working". INFO so they appear at the default level.
+    _logger.info(
+        "run_batch._run_one: platform=%s row_idx=%s iso=%s paths_keys=%s",
+        platform, row.get("row_idx"), row.get("iso_date"),
+        sorted((paths.get(row.get("iso_date"), {}) or {}).keys()),
+    )
     # Check cancellation BEFORE acquiring any platform resources (browser
     # launch, OAuth refresh, etc). In-flight rows that already passed this
     # gate are allowed to finish — cancellation is best-effort cooperative,
@@ -149,20 +158,37 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
                 yt_state.record(row["row_idx"], None)
 
     except _INFRA_FAILURES as e:
+        # exception() so the agent log carries the full traceback —
+        # otherwise we get "error: timeout" with no clue what timed out
+        # and no way to triage from a user's bug report.
+        _logger.exception(
+            "run_batch._run_one INFRA failure platform=%s row_idx=%s: %s",
+            platform, row.get("row_idx"), e,
+        )
         breaker.record_failure()
         emit({"type": "event", "event": "error", "platform": platform,
               "row_idx": row["row_idx"], "iso_date": row["iso_date"],
-              "error": str(e)})
+              "error": f"{type(e).__name__}: {e}"})
         if platform == "YouTube Video":
             yt_state.record(row["row_idx"], None)
 
     except Exception as e:
+        _logger.exception(
+            "run_batch._run_one DATA failure platform=%s row_idx=%s: %s",
+            platform, row.get("row_idx"), e,
+        )
         # Data failure — neutral to breaker.
         emit({"type": "event", "event": "error", "platform": platform,
               "row_idx": row["row_idx"], "iso_date": row["iso_date"],
-              "error": str(e)})
+              "error": f"{type(e).__name__}: {e}"})
         if platform == "YouTube Video":
             yt_state.record(row["row_idx"], None)
+    else:
+        _logger.info(
+            "run_batch._run_one finished platform=%s row_idx=%s emits=%d success=%s",
+            platform, row.get("row_idx"), len(captured),
+            any(f.get("event") == "success" for f in captured),
+        )
 
 
 # ---------------------------------------------------------------------------

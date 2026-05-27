@@ -259,7 +259,25 @@ def get_authenticated_service():
     if httplib2 is not None:
         try:
             from google_auth_httplib2 import AuthorizedHttp  # type: ignore
-            authed_http = AuthorizedHttp(creds, http=httplib2.Http(timeout=_HTTP_TIMEOUT_SECONDS))
+            h = httplib2.Http(timeout=_HTTP_TIMEOUT_SECONDS)
+            # Strip 308 from the redirect set. YouTube's resumable upload
+            # uses 308 ("Resume Incomplete") as a non-redirect status and
+            # does NOT include a Location header, but httplib2 treats it
+            # as a redirect by default and raises RedirectMissingLocation.
+            # googleapiclient.http.build_http() does this exact strip, but
+            # we don't go through build_http — we hand-roll the Http to set
+            # the socket timeout, so we have to apply the fix ourselves.
+            # Field symptom before this: every YouTube Video + Shorts
+            # upload failed with "Redirected but the response is missing a
+            # Location: header." on the very first chunk past the resumable
+            # session URL.
+            try:
+                h.redirect_codes = h.redirect_codes - {308}
+            except AttributeError:
+                # Very old httplib2 (<0.10) — no .redirect_codes attribute.
+                # Nothing to strip; the bug only landed in newer releases.
+                pass
+            authed_http = AuthorizedHttp(creds, http=h)
             return build(API_SERVICE_NAME, API_VERSION, http=authed_http, cache_discovery=False)
         except ImportError:
             # google-auth-httplib2 isn't installed — fall back to creds path.

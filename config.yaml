@@ -13,7 +13,7 @@ platforms:
   simplecast: true
   rock: false
   rock_email: false
-  vista_social: false
+  vista_social: true
 youtube:
   default_category_id: '22'
   default_privacy: private

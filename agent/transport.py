@@ -34,16 +34,19 @@ _RECV_POLL_INTERVAL = 1.0
 # show "Connecting…" with no timeout, no log, no recourse.
 _CONNECT_TIMEOUT_S = 20.0
 
-# WebSocket PING cadence. With no application-level keepalive the
-# connection idles silently and consumer-router NAT tables drop the
-# established TCP flow after roughly 20-40s (observed: a Windows agent
-# behind a typical home router reconnects every ~24s). simple-websocket
-# sends RFC 6455 PING frames at this interval and flask-sock auto-
-# responds with PONG, so the connection stays in NAT's "active" set and
-# a half-open break is detected within ``2 × _PING_INTERVAL_S`` instead
-# of waiting for the next app-layer message (which may never come for
-# an idle agent). 15s comfortably beats the ~24s window observed in the
-# field while staying well under Cloudflare's 100s WebSocket idle cap.
+# App-level WebSocket keepalive cadence. We DO NOT pass ping_interval
+# to ``simple_websocket.Client`` — the library's background ping thread
+# calls ``self.ws.send(Ping())`` + ``self.sock.send(...)`` concurrently
+# with user-thread sends, and neither wsproto's connection state nor
+# the SSL socket is thread-safe. The field report
+# (``[SSL] internal error (_ssl.c:2427)`` / ``EOF occurred in violation
+# of protocol``) was the classic state-corruption signature.
+#
+# Instead the receive-loop thread sends a tiny app-level keepalive
+# frame on this cadence, serialized through ``AgentConnection._send_lock``
+# (which all outbound sends — worker-thread events, hello, keepalive —
+# share). 15s comfortably beats the ~24s consumer-router NAT-drop
+# window and stays well under Cloudflare's 100s WS idle cap.
 _PING_INTERVAL_S = 15.0
 
 
@@ -70,11 +73,14 @@ def _connect(url: str):
     """Seam for tests: real WebSocket client.
 
     Forces the SSL context to use the bundled certifi CA file (see
-    ``_build_ssl_context``) so wss:// works in a PyInstaller .app,
+    ``_build_ssl_context``) so wss:// works in a PyInstaller .app, and
     bounds the connect+handshake at ``_CONNECT_TIMEOUT_S`` so a stalled
-    handshake surfaces as ``OSError`` instead of hanging forever, and
-    arms ``ping_interval=_PING_INTERVAL_S`` so consumer-router NATs
-    don't drop the idle connection after ~24s.
+    handshake surfaces as ``OSError`` instead of hanging forever.
+
+    Note: we deliberately do NOT pass ``ping_interval`` here. The
+    library's ping thread races user-thread sends (see the
+    ``_PING_INTERVAL_S`` doc above). ``AgentConnection`` runs its own
+    single-threaded app-level keepalive instead.
     """
     parts = urlsplit(url)
     ssl_context: Optional[ssl.SSLContext] = (
@@ -83,11 +89,7 @@ def _connect(url: str):
     prev_timeout = socket.getdefaulttimeout()
     socket.setdefaulttimeout(_CONNECT_TIMEOUT_S)
     try:
-        return simple_websocket.Client(
-            url,
-            ssl_context=ssl_context,
-            ping_interval=_PING_INTERVAL_S,
-        )
+        return simple_websocket.Client(url, ssl_context=ssl_context)
     finally:
         socket.setdefaulttimeout(prev_timeout)
 
@@ -117,6 +119,19 @@ class AgentConnection:
         # If provided, run_once will return False when this event is set so
         # the caller's message loop exits cleanly without blocking on recv().
         self._shutdown = shutdown_event or threading.Event()
+        # All outbound sends serialize through this lock. ``simple_websocket``
+        # is not safe for concurrent writes — wsproto mutates connection
+        # state in ``ws.send()`` and the SSL socket isn't reentrant either.
+        # Concurrent writes manifested in the field as
+        # ``[SSL] internal error (_ssl.c:2427)`` / ``EOF occurred in
+        # violation of protocol`` (state corruption) and dropped the
+        # WebSocket mid-job. The lock covers worker-thread event emission,
+        # hello, and the keepalive in ``run_once``.
+        self._send_lock = threading.Lock()
+        # Tracks when we last put any frame on the wire so the keepalive
+        # only sends when truly idle (the timer doesn't fire while uploads
+        # are emitting progress events).
+        self._last_send_at = 0.0
 
     def connect(self, pending_results: Optional[list] = None) -> None:
         """Open the WebSocket and send the hello frame.
@@ -126,11 +141,17 @@ class AgentConnection:
         it is embedded in the hello so the server can apply it idempotently
         before the normal event stream resumes.
         """
+        import time as _time
         self.ws = _connect(_to_ws_url(self.server_url, self.token))
-        self.ws.send(json.dumps(_build_hello(pending_results)))
+        with self._send_lock:
+            self.ws.send(json.dumps(_build_hello(pending_results)))
+            self._last_send_at = _time.monotonic()
 
     def send(self, message: dict) -> None:
-        self.ws.send(json.dumps(message))
+        import time as _time
+        with self._send_lock:
+            self.ws.send(json.dumps(message))
+            self._last_send_at = _time.monotonic()
 
     def run_once(self, on_message: Callable[[dict], None]) -> bool:
         """Receive one message and dispatch it. Returns False when the
@@ -153,6 +174,7 @@ class AgentConnection:
         from ``agent.dispatch._pending_results`` before invoking on_message
         so callers don't need to know about the reconciliation protocol.
         """
+        import time as _time
         while not self._shutdown.is_set():
             try:
                 raw = self.ws.receive(timeout=_RECV_POLL_INTERVAL)
@@ -160,6 +182,18 @@ class AgentConnection:
                     simple_websocket.ConnectionError):
                 # Real disconnect — caller will reconnect.
                 return False
+            # App-level keepalive — emit a tiny frame whenever the last
+            # send (any send, including upload events) was longer ago than
+            # _PING_INTERVAL_S. Runs on this single receive thread so it
+            # serializes naturally with worker-thread sends through
+            # ``_send_lock``. Avoids the simple_websocket ping-thread race
+            # that produced ``[SSL] internal error`` in the field.
+            if (_time.monotonic() - self._last_send_at) >= _PING_INTERVAL_S:
+                try:
+                    self.send({"v": PROTOCOL_VERSION, "type": "keepalive"})
+                except (simple_websocket.ConnectionClosed,
+                        simple_websocket.ConnectionError, OSError):
+                    return False
             if raw is None:
                 # Poll timeout: loop and re-check shutdown event.
                 continue

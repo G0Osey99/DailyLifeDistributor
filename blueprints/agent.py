@@ -555,6 +555,12 @@ def register_sockets(sock) -> None:
                                    "image_used"):
                         _agent_dispatch.on_frame(frame)
                         continue
+                    elif ftype == "keepalive":
+                        # App-level NAT-keepalive emitted by the agent's
+                        # receive loop every ~15s when idle. Server has
+                        # no work to do — drop it on the floor so it
+                        # doesn't get broadcast to browsers.
+                        continue
                 except Exception:
                     # A malformed frame (bad JSON, unexpected shape, or a
                     # transient bug in on_frame) must not bring the socket

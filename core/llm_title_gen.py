@@ -69,6 +69,21 @@ _LLM_HEALTH_TIMEOUT = 5
 _LLM_TEMPERATURE = 0.8
 _LLM_MAX_TOKENS = 300
 
+# Title generation is theme-detection from the transcript, not full
+# comprehension — the model only needs enough text to identify the
+# message's core idea. Long sermons and conversational episodes can
+# run 4000-10000 words (~5000-13000 tokens); at typical Ollama
+# prefill speeds that's tens of seconds JUST processing input the
+# model doesn't need.
+#
+# Empirically ~2000 chars (≈ 400-500 tokens) is enough for solid
+# titles on this content; past that the marginal title quality is
+# zero but latency keeps climbing linearly with transcript length.
+# Truncation is applied at prompt-build time only; the cache key
+# still hashes the FULL transcript so editing past the cutoff still
+# invalidates the cache.
+_MAX_TRANSCRIPT_CHARS = 2000
+
 
 def _llm_breaker():
     from core.circuit_breaker import get_breaker
@@ -134,6 +149,23 @@ def generate_title_suggestions(
     if cached is not None:
         return cached
 
+    # Truncate at a word boundary so the model doesn't see "I was think"
+    # at the end. rfind() returns -1 when there's no space, in which case
+    # we just hard-cut at the char limit (very short transcripts are
+    # rare anyway). The hash above stays keyed to the full transcript
+    # so an edit past the cutoff still busts the cache.
+    transcript_for_prompt = transcript
+    if len(transcript_for_prompt) > _MAX_TRANSCRIPT_CHARS:
+        cut = transcript_for_prompt.rfind(" ", 0, _MAX_TRANSCRIPT_CHARS)
+        if cut < int(_MAX_TRANSCRIPT_CHARS * 0.8):
+            # No space found late enough — fall back to a hard cut.
+            cut = _MAX_TRANSCRIPT_CHARS
+        transcript_for_prompt = transcript_for_prompt[:cut].rstrip() + "…"
+        logger.info(
+            "llamafile: truncated transcript %d → %d chars for prompt",
+            len(transcript), len(transcript_for_prompt),
+        )
+
     prompt = (
         "You are an expert social-media copywriter for a faith-based YouTube Shorts "
         "channel. The channel covers Christian topics: faith, scripture, prayer, "
@@ -154,7 +186,7 @@ def generate_title_suggestions(
         f"Each must be under 60 characters. "
         f"Include at least: one question, one incomplete sentence ending with '...', "
         f"and one bold declarative statement.\n\n"
-        f"Base them on this transcript:\n{transcript}\n\n"
+        f"Base them on this transcript:\n{transcript_for_prompt}\n\n"
         f"Return ONLY a valid JSON array of strings. "
         f"No explanation, no markdown, no preamble. "
         f'Example: ["Title one", "Title two", "Title three"]'

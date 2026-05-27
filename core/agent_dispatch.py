@@ -166,7 +166,15 @@ def on_frame(frame: dict) -> None:
                 )
             except Exception as exc:
                 _logger.warning("record_upload failed: %s", exc)
-        job["queue"].put({k: v for k, v in frame.items() if k not in ("v", "type", "job_id")})
+        # The SSE handler reads ``msg = queue.get()`` then calls
+        # ``json.loads(msg)`` — it expects a JSON STRING, not a dict.
+        # The web path's emit already does ``json.dumps(payload)``
+        # (see blueprints/media.py:emit). Match that contract or the
+        # consumer 500s with "JSON object must be str, bytes or
+        # bytearray, not dict".
+        payload = {k: v for k, v in frame.items() if k not in ("v", "type", "job_id")}
+        import json as _json
+        job["queue"].put(_json.dumps(payload))
         return
     elif ftype == "credentials_updated":
         key, value = frame.get("key"), frame.get("value")

@@ -942,27 +942,40 @@
     }
 
     async function uploadBatch(runId, batchDates, platforms, overrides) {
-        // Gather the distinct physical files needed for this batch.
-        const fileIdByFile = new Map();   // File -> file_id
-        const filesMap = {};              // file_id -> [{category, date}]
-        for (const date of batchDates) {
-            const res = scanResults[date];
-            if (!res) continue;
-            for (const [category, names] of Object.entries(res.categories || {})) {
-                for (const name of names) {
-                    const file = fileStore[category] && fileStore[category].get(name);
-                    if (!file) continue;
-                    let fid = fileIdByFile.get(file);
-                    if (!fid) {
-                        const res2 = await postJSON(`/media/file/new?run_id=${runId}`, {});
-                        fid = res2.data.file_id;
-                        fileIdByFile.set(file, fid);
-                        logProgress(`<div class="text-sm text-dim">⬆ uploading ${esc(name)}…</div>`);
-                        await uploadFileChunks(runId, fid, file);
+        // Agent path: the agent reads files directly from the user's
+        // local disk via its own scan, so the browser has nothing to
+        // upload to the server. The chunk-upload below is web-only.
+        // Previously we did the upload anyway and then deleted the
+        // bytes server-side immediately after dispatch — pure waste of
+        // bandwidth and time, especially noticeable on slow links or
+        // big video batches.
+        const isAgent = _uploadPath() === "agent";
+        const filesMap = {};
+        if (!isAgent) {
+            // Web path: chunk-upload each distinct physical file once,
+            // then map file_id → [{category, date}] placements.
+            const fileIdByFile = new Map();
+            for (const date of batchDates) {
+                const res = scanResults[date];
+                if (!res) continue;
+                for (const [category, names] of Object.entries(res.categories || {})) {
+                    for (const name of names) {
+                        const file = fileStore[category] && fileStore[category].get(name);
+                        if (!file) continue;
+                        let fid = fileIdByFile.get(file);
+                        if (!fid) {
+                            const res2 = await postJSON(`/media/file/new?run_id=${runId}`, {});
+                            fid = res2.data.file_id;
+                            fileIdByFile.set(file, fid);
+                            logProgress(`<div class="text-sm text-dim">⬆ uploading ${esc(name)}…</div>`);
+                            await uploadFileChunks(runId, fid, file);
+                        }
+                        (filesMap[fid] = filesMap[fid] || []).push({ category, date });
                     }
-                    (filesMap[fid] = filesMap[fid] || []).push({ category, date });
                 }
             }
+        } else {
+            logProgress(`<div class="text-sm text-dim">⤴ dispatching ${batchDates.length} date(s) to the agent — files stream from your machine, no upload to server.</div>`);
         }
         // Only this batch's date overrides.
         const batchOverrides = {};
@@ -971,7 +984,7 @@
         // honors it as step (1) of the fallback chain. Empty string =
         // Auto = let the server pick using the fallback chain.
         let runUrl = `/media/batch/run?path=${_uploadPath()}`;
-        if (_uploadPath() === "agent" && _agentState.selectedId) {
+        if (isAgent && _agentState.selectedId) {
             runUrl += `&device_id=${encodeURIComponent(_agentState.selectedId)}`;
         }
         const res = await postJSON(runUrl, {

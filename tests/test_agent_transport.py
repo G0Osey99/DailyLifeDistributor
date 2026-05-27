@@ -100,27 +100,108 @@ def test_connect_skips_ssl_context_for_ws(monkeypatch):
     assert captured["ssl_context"] is None
 
 
-def test_connect_arms_ping_interval(monkeypatch):
-    """Without an application-level WebSocket keepalive, idle
-    connections were dropped after ~24s by consumer-router NAT timers
-    (Windows agent reconnect storm reported in the field). simple-
-    websocket's ``ping_interval`` makes the protocol emit RFC 6455
-    PING frames automatically; flask-sock auto-responds with PONG.
-    The forwarded value must be set and less than the observed NAT
-    window."""
+def test_connect_does_not_pass_library_ping_interval(monkeypatch):
+    """simple_websocket's built-in ``ping_interval`` spawns a background
+    thread that calls ``ws.send()`` + ``sock.send()`` concurrently with
+    user-thread sends. Neither wsproto's connection state nor the SSL
+    socket is thread-safe — concurrent writes in the field surfaced as
+    ``[SSL] internal error (_ssl.c:2427)`` and dropped the WebSocket
+    mid-job. We rely on a single-threaded app-level keepalive in
+    ``AgentConnection.run_once`` instead. This test guards the contract
+    so a future "fix" doesn't reintroduce the library ping."""
     captured = {}
 
-    def _fake_client(url, ssl_context=None, ping_interval=None):
-        captured["ping_interval"] = ping_interval
+    def _fake_client(url, ssl_context=None, **kwargs):
+        captured["kwargs"] = kwargs
         return _FakeWS([])
 
     import simple_websocket
     monkeypatch.setattr(simple_websocket, "Client", _fake_client)
     transport._connect("wss://autoalert.pro/agent/socket?token=x")
-    assert captured["ping_interval"] == transport._PING_INTERVAL_S
-    # Sanity: comfortably under the ~24s NAT window AND well under
-    # Cloudflare's 100s WebSocket idle cap.
+    assert "ping_interval" not in captured["kwargs"], (
+        "must not pass ping_interval — library's ping thread is "
+        "not thread-safe with user-thread sends"
+    )
+    # Sanity: app-level keepalive cadence still under Cloudflare's 100s cap.
     assert 1.0 < transport._PING_INTERVAL_S < 30.0
+
+
+def test_send_serializes_through_lock(monkeypatch):
+    """All outbound frames must go through ``_send_lock`` so worker-thread
+    event emission can't race the receive-thread keepalive. Without this
+    serialization, simple_websocket's non-thread-safe internals corrupt
+    the SSL stream and the field bug returns."""
+    import threading
+    fake = _FakeWS([])
+    monkeypatch.setattr(transport, "_connect", lambda url: fake)
+    conn = transport.AgentConnection("https://x", "tok")
+    conn.connect()  # hello frame already on the wire
+
+    # 50 concurrent senders — without a lock the fake's `sent` list
+    # would still be intact but the underlying wsproto/sock calls
+    # would interleave. We can't observe SSL corruption in a fake,
+    # but we CAN verify the lock attribute exists and is acquired
+    # when send() runs.
+    barrier = threading.Barrier(50)
+    acquired_under_lock = []
+
+    real_send = conn.ws.send  # capture the fake's send
+
+    def _checking_send(payload):
+        # When ``conn.send`` is in progress, ``_send_lock`` must be held.
+        acquired_under_lock.append(conn._send_lock.locked())
+        return real_send(payload)
+
+    conn.ws.send = _checking_send
+
+    def worker():
+        barrier.wait()
+        conn.send({"v": 1, "type": "event", "payload": {}})
+
+    threads = [threading.Thread(target=worker) for _ in range(50)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert acquired_under_lock, "no sends were observed"
+    # Every observed send happened with the lock held.
+    assert all(acquired_under_lock), (
+        f"send executed without holding _send_lock "
+        f"({acquired_under_lock.count(False)} of {len(acquired_under_lock)} runs)"
+    )
+
+
+def test_run_once_emits_keepalive_when_idle(monkeypatch):
+    """When the WebSocket has been idle for ``_PING_INTERVAL_S``, the
+    receive loop must emit an app-level keepalive frame to keep
+    consumer-router NAT mappings alive (the original purpose of the
+    library's ping_interval, now done safely on the single receive
+    thread)."""
+    import time as _time
+    fake = _FakeWS([])
+    monkeypatch.setattr(transport, "_connect", lambda url: fake)
+    conn = transport.AgentConnection("https://x", "tok")
+    conn.connect()
+    # Burn through any sends from connect() so the assertion below
+    # only counts keepalives.
+    fake.sent.clear()
+    # Pretend the last send was long enough ago to trigger keepalive.
+    conn._last_send_at = _time.monotonic() - (transport._PING_INTERVAL_S + 1)
+
+    # run_once will receive None (timeout) then loop. Set shutdown after
+    # one poll so the test doesn't block.
+    def _stop_after_one_poll(*a, **kw):
+        conn._shutdown.set()
+        return None
+    fake.receive = _stop_after_one_poll
+
+    conn.run_once(lambda m: None)
+
+    # At least one keepalive frame was emitted.
+    assert any('"keepalive"' in s for s in fake.sent), (
+        f"expected a keepalive frame in fake.sent; got: {fake.sent}"
+    )
 
 
 def test_connect_bounds_handshake_with_socket_default_timeout(monkeypatch):

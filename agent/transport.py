@@ -188,11 +188,25 @@ class AgentConnection:
             # serializes naturally with worker-thread sends through
             # ``_send_lock``. Avoids the simple_websocket ping-thread race
             # that produced ``[SSL] internal error`` in the field.
-            if (_time.monotonic() - self._last_send_at) >= _PING_INTERVAL_S:
+            _idle = _time.monotonic() - self._last_send_at
+            if _idle >= _PING_INTERVAL_S:
                 try:
                     self.send({"v": PROTOCOL_VERSION, "type": "keepalive"})
+                    # Logged at INFO (not DEBUG) on purpose: when the user
+                    # reports "reconnecting every N seconds", we need to see
+                    # in the log whether the keepalive is firing on cadence
+                    # or not — that tells us middlebox-vs-our-code in one
+                    # glance. Cheap line, one per ~15s.
+                    logging.getLogger(__name__).info(
+                        "agent: keepalive sent (idle %.1fs)", _idle,
+                    )
                 except (simple_websocket.ConnectionClosed,
-                        simple_websocket.ConnectionError, OSError):
+                        simple_websocket.ConnectionError, OSError) as exc:
+                    logging.getLogger(__name__).warning(
+                        "agent: keepalive send failed (%s): %s — "
+                        "connection will be reopened",
+                        type(exc).__name__, exc,
+                    )
                     return False
             if raw is None:
                 # Poll timeout: loop and re-check shutdown event.

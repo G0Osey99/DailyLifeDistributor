@@ -53,26 +53,48 @@ def upload_daily_experience(entry, *, elements=None, progress_callback=None) -> 
     rock_reflection_on = bool(getattr(elements, "rock_reflection", True))
     rock_image_on = bool(getattr(elements, "rock_image", True))
 
-    missing: list[str] = []
+    # Each entry: (field present?, human label with remediation). Messages
+    # name the source column / file so the user can fix it without guessing —
+    # the old bare "Missing required fields: wistia_ref" sent the user
+    # hunting with no idea where the value comes from.
+    import os as _os
+    _shorts = getattr(entry, "youtube_shorts_path", None)
+    _shorts_name = _os.path.basename(_shorts) if _shorts else "(no Shorts file)"
+    checks: list[tuple[bool, str]] = []
     if rock_spotlight_on:
-        if not getattr(entry, "episode_title", "").strip():
-            missing.append("episode_title")
-        if not getattr(entry, "wistia_ref", "").strip():
-            missing.append("wistia_ref")
+        checks.append((
+            bool(getattr(entry, "episode_title", "").strip()),
+            "episode_title (Spotlight title — maps from the Excel "
+            "title/episode column)",
+        ))
+        checks.append((
+            bool(getattr(entry, "wistia_ref", "").strip()),
+            f"wistia_ref (the 'app YYMMDD' Wistia label, inferred from the "
+            f"Shorts filename — got {_shorts_name!r}, expected a 6-digit date "
+            f"code like 'app 260601.mp4')",
+        ))
     if rock_vista_on:
-        if not getattr(entry, "passage", "").strip():
-            missing.append("passage")
-        if not getattr(entry, "scripture", "").strip():
-            missing.append("scripture")
-    if rock_reflection_on and not getattr(entry, "prayer", "").strip():
-        missing.append("prayer")
+        checks.append((
+            bool(getattr(entry, "passage", "").strip()),
+            "passage (Vista verse reference — maps from the Excel passage column)",
+        ))
+        checks.append((
+            bool(getattr(entry, "scripture", "").strip()),
+            "scripture (Vista verse text — maps from the Excel scripture column)",
+        ))
+    if rock_reflection_on:
+        checks.append((
+            bool(getattr(entry, "prayer", "").strip()),
+            "prayer (Reflection content — maps from the Excel prayer column)",
+        ))
+    missing = [label for present, label in checks if not present]
     if missing:
         return {
             "success": False,
             "skipped": False,
             "url": "",
             "scheduled_time": "",
-            "error": f"Missing required fields: {', '.join(missing)}",
+            "error": "Rock can't run — missing: " + "; ".join(missing),
         }
 
     image_temp_path: Optional[str] = None

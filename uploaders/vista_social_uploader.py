@@ -446,7 +446,13 @@ def upload_post(entry, elements=None, progress_callback=None) -> dict:
 
     file_path = getattr(entry, "youtube_shorts_path", None)
     if not file_path or not os.path.isfile(file_path):
-        return {"success": False, "error": f"Shorts file not found: {file_path}"}
+        if not file_path:
+            return {"success": False, "error": (
+                "Vista Social needs the Shorts video (it posts the same clip), "
+                "but no file was matched in the 'Vertical Video (Shorts)' folder "
+                "for this date. Add the Shorts file or uncheck Vista Social."
+            )}
+        return {"success": False, "error": f"Shorts file not found on disk: {file_path}"}
 
     vs_caption = elements is None or getattr(elements, "vs_description", True)
     vs_schedule = elements is None or getattr(elements, "vs_schedule", True)

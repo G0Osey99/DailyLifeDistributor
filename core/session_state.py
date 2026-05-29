@@ -487,26 +487,38 @@ class SessionState:
 
             # Vista Social row — schedules a single post to Instagram + Facebook
             # using the YouTube Shorts video as the media.
-            if entry.platforms_enabled.get("vista_social") and entry.youtube_shorts_path:
+            #
+            # Gate on the platform flag ALONE, not on youtube_shorts_path.
+            # Previously a missing Shorts file made this whole row vanish from
+            # the summary with zero feedback — the user enabled Vista Social,
+            # clicked Upload, and it simply never appeared (no success, no
+            # error, no skip). When the file is genuinely absent the Vista
+            # uploader returns a clean "Shorts file not found" error, which
+            # surfaces as a visible (non-aborting) error row — far better than
+            # silent disappearance. See the parallel reasoning for why we keep
+            # the file in the row's "file" field (None is fine; the uploader
+            # re-checks os.path.isfile).
+            if entry.platforms_enabled.get("vista_social"):
                 skipped = not elems.vs_enabled
                 vs_elements_info = self._elements_summary_vs(
                     enabled=elems.vs_enabled,
                     description=elems.vs_description,
                     schedule=elems.vs_schedule,
                 )
+                _vs_title = (entry.vista_caption or entry.youtube_shorts_title
+                             or entry.youtube_title or "")[:80]
                 summaries.append(
                     {
                         "date": entry.display_date,
                         "iso_date": entry.date,
                         "platform": "Vista Social",
-                        "title": (entry.vista_caption or entry.youtube_shorts_title
-                                  or entry.youtube_title)[:80],
+                        "title": _vs_title,
                         "scheduled_time": (
                             entry.vista_schedule_dt.strftime("%Y-%m-%d %H:%M %Z")
                             if entry.vista_schedule_dt
                             else "Immediate"
                         ),
-                        "file": entry.youtube_shorts_path,
+                        "file": entry.youtube_shorts_path or "—",
                         "thumbnail": "—",
                         "elements": vs_elements_info,
                         "skipped": skipped,

@@ -489,7 +489,16 @@ def upload_video(entry, is_short: bool = False, dry_run: bool = False, elements=
                 title = entry.youtube_title
 
         if not file_path or not os.path.isfile(file_path):
-            result["error"] = f"Video file not found: {file_path}"
+            kind = "Shorts" if is_short else "video"
+            folder = "Vertical Video (Shorts)" if is_short else "Horizontal Video"
+            if not file_path:
+                result["error"] = (
+                    f"No {kind} file for this date — nothing was matched in the "
+                    f"'{folder}' folder. Check the file's date code matches the "
+                    f"date you're uploading."
+                )
+            else:
+                result["error"] = f"{kind.capitalize()} file not found on disk: {file_path}"
             return result
 
         # Never send an empty title — YouTube will reject it

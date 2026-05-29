@@ -434,6 +434,17 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
     if _state is not None:
         _state.set_token(token or "")
 
+    # Load the user's saved media folders into the scanner. Without this the
+    # agent had no idea where local media lived, so scan() returned nothing
+    # and every agent-path upload failed file-not-found. Safe when nothing's
+    # configured yet (sets an empty root map); the GUI's folder picker calls
+    # media_roots.save_and_apply() to update it live.
+    try:
+        from agent import media_roots as _media_roots
+        _media_roots.apply_saved_roots()
+    except Exception:
+        log.warning("could not apply saved media roots at startup", exc_info=True)
+
     try:
         result = updater.check_and_apply(server_url)
         # check_and_apply calls os._exit() internally on success, so if we

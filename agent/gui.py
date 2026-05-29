@@ -15,9 +15,11 @@ Drop in over the previous file — public API is identical:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import tkinter as tk
 import tkinter.font
+from tkinter import filedialog
 import webbrowser
 
 import customtkinter as ctk
@@ -391,6 +393,29 @@ class AgentGUI:
             self._build_session_row(
                 key, name, last=(i == len(self.SESSION_ORDER) - 1)
             )
+
+        # ─── Media folders ───
+        # One-time, persistent config of WHERE local media lives. Without it
+        # the agent can't resolve files to upload (scan() returns nothing).
+        # Opens a modal so the main window stays uncluttered.
+        media_header = ctk.CTkFrame(body, fg_color="transparent")
+        media_header.pack(fill="x", pady=(0, 8))
+        self._section_rail(media_header, "Media folders").pack(side="left")
+        self.media_status = ctk.CTkLabel(
+            media_header, text="—",
+            text_color=PAL["text_dim"], font=(self._font, 10),
+        )
+        self.media_status.pack(side="right")
+        self.media_btn = ctk.CTkButton(
+            body, text="📁  Configure media folders…",
+            command=self._open_media_folders_dialog,
+            fg_color=PAL["shell_panel"], hover_color=PAL["shell_sunken"],
+            text_color=PAL["text"], font=(self._font, 12),
+            corner_radius=10, height=38,
+            border_width=1, border_color=PAL["shell_border"],
+        )
+        self.media_btn.pack(fill="x", pady=(0, 12))
+        self._refresh_media_status()
 
         # ─── Activity log ───
         log_header = ctk.CTkFrame(body, fg_color="transparent")
@@ -1071,6 +1096,168 @@ class AgentGUI:
         dialog.bind("<Return>", lambda _e: submit())
         dialog.bind("<Escape>", lambda _e: cancel())
         dialog.protocol("WM_DELETE_WINDOW", cancel)
+
+    # ─── media folders ──────────────────────────────────────────────────
+    def _refresh_media_status(self) -> None:
+        """Update the 'N/5 folders set' hint in the Media folders header."""
+        try:
+            from agent import config, media_roots
+            saved = config.get_media_roots() or {}
+            n = sum(1 for k in media_roots.CONFIG_KEYS if saved.get(k))
+        except Exception:
+            n = 0
+        total = 5
+        if n == 0:
+            self.media_status.configure(text="not set", text_color=PAL["warn"])
+        elif n < total:
+            self.media_status.configure(text=f"{n}/{total} set",
+                                        text_color=PAL["warn"])
+        else:
+            self.media_status.configure(text="all set", text_color=PAL["ok"])
+
+    def _open_media_folders_dialog(self) -> None:
+        """Modal: pick the five local media folders (or auto-detect from a
+        parent). Delegates all logic to agent.media_roots (tested); this
+        method is only widget plumbing."""
+        from agent import config, media_roots
+
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Media folders")
+        dialog.geometry("560x520")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color=PAL["shell_bg"])
+        dialog.transient(self.root)
+        dialog.grab_set()
+        tk.Frame(dialog, bg=PAL["accent"], height=3).pack(side="top", fill="x")
+
+        ctk.CTkLabel(
+            dialog, text="Where is your media on this computer?",
+            text_color=PAL["text"], font=(self._font, 16, "bold"),
+        ).pack(pady=(18, 2))
+        ctk.CTkLabel(
+            dialog,
+            text="Pick the folder for each kind of file (the same five you "
+                 "choose on the website). Set once — every agent upload reuses "
+                 "them. Or auto-detect them all from one parent folder.",
+            text_color=PAL["text_muted"], font=(self._font, 11),
+            wraplength=500, justify="center",
+        ).pack(padx=18, pady=(0, 10))
+
+        # Live working copy of the paths, seeded from saved config.
+        working: dict[str, str] = dict(config.get_media_roots() or {})
+        path_labels: dict[str, ctk.CTkLabel] = {}
+
+        def _short(p: str) -> str:
+            if not p:
+                return "— not set —"
+            # Show the last two path components so the user can tell folders
+            # apart without the full (often long) absolute path.
+            parts = p.replace("\\", "/").rstrip("/").split("/")
+            return ".../" + "/".join(parts[-2:]) if len(parts) > 2 else p
+
+        def _refresh_row(key: str) -> None:
+            lbl = path_labels.get(key)
+            if lbl is not None:
+                val = working.get(key, "")
+                lbl.configure(
+                    text=_short(val),
+                    text_color=PAL["text_muted"] if val else PAL["text_dim"],
+                )
+
+        def _choose(key: str) -> None:
+            initial = working.get(key) or os.path.expanduser("~")
+            chosen = filedialog.askdirectory(
+                parent=dialog, title="Choose folder", initialdir=initial,
+            )
+            if chosen:
+                working[key] = chosen
+                _refresh_row(key)
+
+        def _autodetect() -> None:
+            parent = filedialog.askdirectory(
+                parent=dialog, title="Pick the parent folder that contains your media subfolders",
+                initialdir=os.path.expanduser("~"),
+            )
+            if not parent:
+                return
+            found = media_roots.autodetect_roots(parent)
+            if not found:
+                detect_note.configure(
+                    text="No matching subfolders found — pick each one below.",
+                    text_color=PAL["warn"],
+                )
+                return
+            working.update(found)
+            for key in media_roots.CONFIG_KEYS:
+                _refresh_row(key)
+            detect_note.configure(
+                text=f"Auto-detected {len(found)} folder(s). Fill any blanks below.",
+                text_color=PAL["ok"],
+            )
+
+        # Auto-detect button + note.
+        ctk.CTkButton(
+            dialog, text="✨  Auto-detect from a parent folder",
+            command=_autodetect,
+            fg_color=PAL["accent_soft"], hover_color="#cfe0f7",
+            text_color=PAL["accent"], font=(self._font, 11, "bold"),
+            corner_radius=7, height=30,
+        ).pack(pady=(0, 2))
+        detect_note = ctk.CTkLabel(
+            dialog, text="", text_color=PAL["text_dim"], font=(self._font, 10),
+        )
+        detect_note.pack(pady=(0, 8))
+
+        # One row per category.
+        rows = ctk.CTkFrame(dialog, fg_color="transparent")
+        rows.pack(fill="x", padx=20)
+        for key, label, _kinds in media_roots.MEDIA_CATEGORIES:
+            row = ctk.CTkFrame(rows, fg_color="transparent")
+            row.pack(fill="x", pady=3)
+            ctk.CTkLabel(
+                row, text=label, text_color=PAL["text"],
+                font=(self._font, 11, "bold"), anchor="w", width=210,
+            ).pack(side="left")
+            ctk.CTkButton(
+                row, text="Choose…", command=lambda k=key: _choose(k),
+                fg_color=PAL["shell_panel"], hover_color=PAL["shell_sunken"],
+                text_color=PAL["text"], border_width=1,
+                border_color=PAL["shell_border_strong"],
+                font=(self._font, 10), corner_radius=6, width=72, height=26,
+            ).pack(side="right")
+            pl = ctk.CTkLabel(
+                row, text="", text_color=PAL["text_dim"],
+                font=(self._mono, 10), anchor="e",
+            )
+            pl.pack(side="right", padx=(8, 8), fill="x", expand=True)
+            path_labels[key] = pl
+            _refresh_row(key)
+
+        def _save_close() -> None:
+            try:
+                media_roots.save_and_apply(working)
+            except Exception:
+                log.exception("saving media folders failed")
+            self._refresh_media_status()
+            dialog.destroy()
+
+        btn_row = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_row.pack(pady=16)
+        ctk.CTkButton(
+            btn_row, text="Cancel", command=dialog.destroy,
+            fg_color="transparent", hover_color=PAL["shell_sunken"],
+            text_color=PAL["text"], corner_radius=7,
+            border_width=1, border_color=PAL["shell_border_strong"],
+            width=100, height=32,
+        ).pack(side="left", padx=6)
+        ctk.CTkButton(
+            btn_row, text="Save", command=_save_close,
+            fg_color=PAL["accent"], hover_color=PAL["accent_hover"],
+            text_color="#ffffff", font=(self._font, 11, "bold"),
+            corner_radius=7, width=100, height=32,
+        ).pack(side="left", padx=6)
+
+        dialog.bind("<Escape>", lambda _e: dialog.destroy())
 
     # ─── actions ───────────────────────────────────────────────────────
     def _primary_action(self) -> None:

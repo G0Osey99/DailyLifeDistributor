@@ -363,7 +363,11 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
                                          elements=elements)
 
     elif platform == "Vista Social":
-        e.youtube_video_path = p.get("video")
+        # Vista posts the SHORTS clip (uploader reads youtube_shorts_path),
+        # not the horizontal video. The previous code set youtube_video_path,
+        # so the Vista uploader always saw youtube_shorts_path=None and failed
+        # file-not-found on the agent path. Match the uploader + the web path.
+        e.youtube_shorts_path = p.get("short_video")
         result = vista_social_uploader.upload_post(e, elements=elements)
 
     else:

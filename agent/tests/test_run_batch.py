@@ -156,6 +156,37 @@ def test_dispatch_calls_youtube_uploader_with_resolved_video_path(monkeypatch, t
     assert called["is_short"] is False
 
 
+def test_dispatch_vista_uses_shorts_path_not_video_path(monkeypatch, tmp_path):
+    """Regression: Vista Social posts the SHORTS clip — the dispatch must set
+    youtube_shorts_path (what the Vista uploader reads), not youtube_video_path.
+    The old code set youtube_video_path, so Vista always saw a None shorts
+    path and failed file-not-found on the agent path."""
+    from uploaders import vista_social_uploader
+    seen = {}
+
+    def _fake_post(entry, elements=None, progress_callback=None):
+        seen["shorts_path"] = getattr(entry, "youtube_shorts_path", None)
+        seen["video_path"] = getattr(entry, "youtube_video_path", None)
+        return {"success": True, "url": "https://vista/x"}
+
+    monkeypatch.setattr(vista_social_uploader, "upload_post", _fake_post)
+    short = tmp_path / "app 260522.mp4"
+    short.write_bytes(b"x")
+    run_batch.run(
+        envelope={
+            "rows": [{"row_idx": 0, "iso_date": "2026-05-22",
+                      "platforms": ["Vista Social"],
+                      "entry": {"date": "2026-05-22", "display_date": "May 22, 2026"},
+                      "elements": {"vs_enabled": True}}],
+            "config": {"max_workers": 1},
+        },
+        # The scanner resolves the Shorts clip under the 'short_video' kind.
+        paths={"2026-05-22": {"short_video": str(short)}},
+        emit=lambda f: None,
+    )
+    assert seen["shorts_path"] == str(short), "Vista must receive the shorts path"
+
+
 # ---------------------------------------------------------------------------
 # Phase 3: per-run state, breaker reset, Rock-Email aborts on missing YT URL
 # ---------------------------------------------------------------------------

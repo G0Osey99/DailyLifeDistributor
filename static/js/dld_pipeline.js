@@ -1006,6 +1006,72 @@
         return result;
     }
 
+    // ── Preflight readiness check ───────────────────────────────────────
+    // Hits /preflight/check for the currently-enabled platforms and renders
+    // a per-platform red/green verdict with remediation, WITHOUT uploading
+    // anything. Lets the operator confirm sessions/keys/LLM are good before
+    // committing a multi-date run.
+    $("#preflight-btn")?.addEventListener("click", async () => {
+        const platforms = enabledPlatforms();
+        const dates = selectedDates();
+        const out = $("#preflight-results");
+        const btn = $("#preflight-btn");
+        if (!platforms.length) { alert("Enable at least one platform to check."); return; }
+        btn.disabled = true;
+        out.innerHTML = '<div class="text-sm text-dim"><span class="spinner"></span> Checking readiness…</div>';
+        try {
+            // 1) Platform readiness (sessions / keys / LLM).
+            const qs = encodeURIComponent(platforms.join(","));
+            const r = await fetch(`/preflight/check?platforms=${qs}`,
+                                  { headers: { "Accept": "application/json" } });
+            const data = await r.json();
+            const checks = data.checks || {};
+            const checkRows = Object.entries(checks).map(([key, c]) => {
+                const icon = c.ok ? "✓" : (c.blocking ? "✗" : "⚠");
+                const color = c.ok ? "var(--ok)" : (c.blocking ? "var(--err)" : "var(--warn)");
+                const detail = c.detail
+                    ? `<div class="text-sm text-dim" style="margin-left:20px;">${esc(c.detail)}</div>`
+                    : "";
+                return `<div class="text-sm" style="color:${color};font-weight:600;">${icon} ${esc(key)} — ${esc(c.status || "")}</div>${detail}`;
+            }).join("");
+            const checkVerdict = data.ok
+                ? '<div class="text-sm" style="color:var(--ok);font-weight:700;margin-top:6px;">Sessions/keys OK.</div>'
+                : '<div class="text-sm" style="color:var(--err);font-weight:700;margin-top:6px;">Fix the ✗ readiness items before uploading.</div>';
+
+            // 2) Per-date data dry-run (files / required fields), if dates are selected.
+            let dryHtml = "";
+            if (dates.length) {
+                // Send only the selected dates' scan slices.
+                const scanSlice = {};
+                for (const d of dates) if (scanResults[d]) scanSlice[d] = scanResults[d];
+                const dr = await postJSON("/preflight/dryrun",
+                    { dates, platforms, scan: scanSlice });
+                const drData = dr.data || {};
+                const drRows = (drData.rows || []).map((row) => {
+                    const icon = row.ok ? "✓" : "✗";
+                    const color = row.ok ? "var(--ok)" : "var(--err)";
+                    const issues = (row.issues || []).length
+                        ? `<div class="text-sm text-dim" style="margin-left:20px;">${row.issues.map(esc).join("<br>")}</div>`
+                        : "";
+                    return `<div class="text-sm" style="color:${color};font-weight:600;">${icon} ${esc(row.date)} — ${esc(row.platform)}</div>${issues}`;
+                }).join("");
+                const drVerdict = drData.ok
+                    ? '<div class="text-sm" style="color:var(--ok);font-weight:700;margin-top:6px;">All selected dates have complete data.</div>'
+                    : '<div class="text-sm" style="color:var(--err);font-weight:700;margin-top:6px;">Some dates are missing files or fields — fix the ✗ rows.</div>';
+                dryHtml = `<div style="margin-top:12px;font-weight:700;">Per-date data check</div>${drRows}${drVerdict}`;
+            } else {
+                dryHtml = '<div class="text-sm text-dim" style="margin-top:12px;">Select dates to also run the per-date data check.</div>';
+            }
+
+            out.innerHTML = '<div style="font-weight:700;">Platform readiness</div>' +
+                checkRows + checkVerdict + dryHtml;
+        } catch (err) {
+            out.innerHTML = `<div class="text-sm" style="color:var(--err)">Preflight failed: ${esc(err.message || err)}</div>`;
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
     $("#upload-btn")?.addEventListener("click", async () => {
         const dates = selectedDates();
         const platforms = enabledPlatforms();

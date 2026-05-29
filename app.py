@@ -689,6 +689,7 @@ def create_app() -> Flask:
     from blueprints.remote_login import bp as remote_login_bp
     from blueprints.media import bp as media_bp
     from blueprints.landing import bp as landing_bp
+    from blueprints.preflight import bp as preflight_bp
 
     app.register_blueprint(landing_bp)
     app.register_blueprint(scan_bp)
@@ -698,6 +699,7 @@ def create_app() -> Flask:
     app.register_blueprint(history_bp)
     app.register_blueprint(remote_login_bp)
     app.register_blueprint(media_bp)
+    app.register_blueprint(preflight_bp)
 
     # Multi-tenant phase α: program-owner admin pages.
     from blueprints.admin import bp as admin_bp

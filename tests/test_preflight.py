@@ -157,33 +157,38 @@ def test_dryrun_rock_passes_with_full_data():
 
 
 def test_dryrun_quota_warns_when_over_daily_cap(monkeypatch):
-    """The big multi-date gotcha: many YouTube uploads blow the daily quota.
-    validate_run must estimate it and warn when the run won't fit."""
+    """validate_run must estimate YouTube quota and warn when the run won't
+    fit. Cost-agnostic: we pin a low cap so the test doesn't break when
+    Google changes the per-upload cost (it dropped 1600→100 on 2025-12-04)."""
     from blueprints import preflight
     from core import quota
-    monkeypatch.setattr(quota, "DAILY_QUOTA", 10000)
+    monkeypatch.setattr(quota, "DAILY_QUOTA", 200)  # tiny cap → easily exceeded
     monkeypatch.setattr(quota, "get_quota_used", lambda: 0)
-    # Build 10 dates each with a horizontal video → 10 videos.insert.
     dates = [f"2026-06-{d:02d}" for d in range(1, 11)]
     scan = {d: {"categories": {"youtube_video": [f"yt {d}.mp4"]}, "metadata":
                 {"youtube_title": "T"}} for d in dates}
     res = preflight.validate_run(dates, ["youtube_video"], scan)
     q = res["quota"]
     assert q["youtube_uploads"] == 10
-    # 10 * (1600+50) = 16,500 > 10,000 → does not fit.
     assert q["fits"] is False
-    assert "quotaExceeded" in q["message"] or "quota" in q["message"].lower()
+    assert "quota" in q["message"].lower()
 
 
-def test_dryrun_quota_fits_for_small_run(monkeypatch):
+def test_dryrun_quota_fits_a_full_month_at_current_cost(monkeypatch):
+    """At the current 100-unit videos.insert cost, a full month of dates
+    (Video + Shorts) fits the default 10,000/day cap — the user's real case."""
     from blueprints import preflight
     from core import quota
     monkeypatch.setattr(quota, "DAILY_QUOTA", 10000)
     monkeypatch.setattr(quota, "get_quota_used", lambda: 0)
-    scan = {"2026-06-01": {"categories": {"youtube_video": ["yt.mp4"]},
-                           "metadata": {"youtube_title": "T"}}}
-    res = preflight.validate_run(["2026-06-01"], ["youtube_video"], scan)
-    assert res["quota"]["fits"] is True
+    dates = [f"2026-06-{d:02d}" for d in range(1, 31)]  # 30 dates
+    scan = {d: {"categories": {"youtube_video": [f"yt {d}.mp4"],
+                               "youtube_shorts": [f"app {d}.mp4"]},
+                "metadata": {"youtube_title": "T"}} for d in dates}
+    res = preflight.validate_run(dates, ["youtube_video", "youtube_shorts"], scan)
+    q = res["quota"]
+    assert q["youtube_uploads"] == 60  # 30 dates × (video + shorts)
+    assert q["fits"] is True, f"30 dates should fit at current cost: {q}"
 
 
 def test_dryrun_rock_email_needs_youtube_video_in_run():

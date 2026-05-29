@@ -7,7 +7,9 @@ restarts, and concurrent refreshes — anything that calls the YouTube API
 in this process contributes to the same daily counter.
 
 Cost table is sourced from the YouTube Data API v3 quota docs:
-  - videos.insert         = 1600
+  - videos.insert         = 100   (reduced from 1600 on 2025-12-04 per the
+                                    API revision history — ~100 uploads/day
+                                    now fit the default 10,000-unit cap)
   - thumbnails.set        = 50
   - channels.list         = 1
   - playlistItems.list    = 1
@@ -34,8 +36,11 @@ _RESET_TZ = ZoneInfo("America/Los_Angeles")
 
 QUOTA_COSTS = {
     # Upload-side actions (charged on success in the SSE stream).
-    "video_upload": 1600,
-    "shorts_upload": 1600,
+    # videos.insert dropped 1600 → 100 on 2025-12-04 (YouTube Data API
+    # revision history); the default 10,000/day cap now allows ~100 video
+    # uploads/day instead of 6, so a full month of (Video + Shorts) fits.
+    "video_upload": 100,
+    "shorts_upload": 100,
     "thumbnail_set": 50,
     "shorts_thumbnail": 50,
     # Refresh-side actions (charged per API call inside youtube_source).

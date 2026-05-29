@@ -410,10 +410,13 @@ def validate_run(dates, platforms, scan, org_id=None) -> dict:
 
 def _estimate_youtube_quota(yt_uploads: int, org_id=None) -> dict:
     """Estimate the YouTube Data API quota this run would consume vs today's
-    remaining cap. The single biggest Monday gotcha: videos.insert costs 1600
-    units and the default daily quota is 10,000, so only ~3 dates' worth of
-    (Video + Shorts) fit in a day. Surfacing this BEFORE the run prevents the
-    "first 3 dates upload, the rest fail quotaExceeded" surprise.
+    remaining cap. Since 2025-12-04 videos.insert is 100 units (was 1600), so
+    the default 10,000/day cap fits ~30 dates of (Video + Shorts) — a full
+    month — comfortably. This still surfaces a warning if a run genuinely
+    exceeds the remaining cap (e.g. quota already spent today, or an unusually
+    large batch), so the operator never gets a mid-run 'quotaExceeded' surprise.
+    Reads the live cost from core.quota.QUOTA_COSTS, so it auto-tracks any
+    future cost change.
     """
     try:
         from core.quota import QUOTA_COSTS, DAILY_QUOTA, get_quota_used

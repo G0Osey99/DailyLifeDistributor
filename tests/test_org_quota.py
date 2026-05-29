@@ -19,16 +19,16 @@ def test_yt_quota_usage_table_exists():
 def test_track_increments_org_usage():
     db.init_db()
     quota.track_org_quota_usage(org_id=1, action="video_upload")
-    assert quota.get_org_quota_used(1) == 1600
+    assert quota.get_org_quota_used(1) == quota.QUOTA_COSTS["video_upload"]
     quota.track_org_quota_usage(org_id=1, action="thumbnail_set")
-    assert quota.get_org_quota_used(1) == 1650
+    assert quota.get_org_quota_used(1) == quota.QUOTA_COSTS["video_upload"] + quota.QUOTA_COSTS["thumbnail_set"]
 
 
 def test_different_orgs_isolated():
     db.init_db()
     quota.track_org_quota_usage(org_id=1, action="video_upload")
     quota.track_org_quota_usage(org_id=2, action="thumbnail_set")
-    assert quota.get_org_quota_used(1) == 1600
+    assert quota.get_org_quota_used(1) == quota.QUOTA_COSTS["video_upload"]
     assert quota.get_org_quota_used(2) == 50
 
 

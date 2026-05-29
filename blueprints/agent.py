@@ -169,19 +169,21 @@ def pair_redeem():
     # over to the new row so the dashboard's device picker doesn't fill up
     # with abandoned duplicates. The user still has to enter the pairing
     # code, so consent is unchanged.
-    relinked = False
+    # Re-link detection is READ-ONLY here. We must NOT revoke the prior device
+    # until the pairing code validates — otherwise an attacker who guesses an
+    # HWID hash could revoke a victim's active device just by POSTing a bad
+    # code (INF-4). Look up the prior row to inherit its friendly name, then
+    # revoke it only AFTER redeem succeeds.
+    prior_to_relink = None
     inherited_name = None
     if hwid_hash:
         prior = devices.find_by_hwid(hwid_hash)
         if prior and not prior.get("revoked"):
-            # Carry the old friendly name (the agent only knows its
-            # system hostname; users typically renamed it post-pair).
+            prior_to_relink = prior
             inherited_name = prior.get("name")
-            devices.revoke_device(prior["id"])
-            relinked = True
 
     name = (data.get("name") or "device").strip()
-    if relinked and inherited_name:
+    if inherited_name:
         name = inherited_name
 
     result = devices.redeem_pairing_code(
@@ -193,6 +195,17 @@ def pair_redeem():
     if result is None:
         return jsonify({"error": "invalid or expired code"}), 400
     device_id, token = result
+
+    # Code validated + new device created — NOW it's safe to revoke the stale
+    # same-hardware row so the picker doesn't fill with duplicates.
+    relinked = False
+    if prior_to_relink is not None:
+        try:
+            devices.revoke_device(prior_to_relink["id"])
+            relinked = True
+        except Exception:  # noqa: BLE001 — pairing already succeeded; relink is cosmetic
+            _log.debug("relink revoke failed for %s", prior_to_relink.get("id"),
+                       exc_info=True)
     body = {"device_id": device_id, "token": token}
     if relinked:
         body["relinked"] = True

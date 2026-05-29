@@ -109,10 +109,21 @@ def _scan(shorts="app 260601.mp4", video="youtube 260601.mp4",
 
 def test_dryrun_all_good_for_simple_platforms():
     from blueprints.preflight import validate_run
+    # SimpleCast needs a resolvable episode title (podcast_title/youtube_title);
+    # files alone aren't enough (CAL-1).
     res = validate_run(["2026-06-01"], ["youtube_video", "youtube_shorts", "simplecast"],
-                       _scan())
+                       _scan(meta={"youtube_title": "Daily Life June 1"}))
     assert res["ok"] is True
     assert all(r["ok"] for r in res["rows"])
+
+
+def test_dryrun_simplecast_flags_missing_title():
+    """CAL-1: podcast audio present but no title → false-GREEN previously."""
+    from blueprints.preflight import validate_run
+    res = validate_run(["2026-06-01"], ["simplecast"], _scan(meta={}))
+    row = res["rows"][0]
+    assert row["ok"] is False
+    assert any("title" in i for i in row["issues"])
 
 
 def test_dryrun_flags_missing_shorts_file():

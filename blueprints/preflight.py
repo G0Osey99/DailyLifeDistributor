@@ -77,7 +77,10 @@ def _check_youtube() -> dict:
         from uploaders import youtube_uploader
         if youtube_uploader.is_authenticated():
             return {"ok": True, "status": "Authenticated",
-                    "detail": "", "blocking": True}
+                    "detail": ("Token present and refreshable — not API-validated "
+                               "here. A revoked grant still reads green; if uploads "
+                               "401, re-connect YouTube in Settings."),
+                    "blocking": True}
         return {
             "ok": False, "status": "Not authenticated",
             "detail": ("No usable YouTube token. Open Settings → Connect "
@@ -148,7 +151,21 @@ def _check_llm() -> dict:
             if r.status_code < 500:
                 ids = [m.get("id") for m in (r.json().get("data") or [])]
                 # LLM_MODEL "local" is the llamafile wildcard — always fine.
-                if LLM_MODEL != "local" and ids and LLM_MODEL not in ids:
+                # Ollama lists models with their tag ("llama3.2:latest"), so a
+                # config of LLM_MODEL="llama3.2" must match "llama3.2:latest"
+                # (and vice-versa). Exact-match-only was a false-RED that scared
+                # operators off a working setup.
+                def _model_served(want, served):
+                    for got in served:
+                        if not got:
+                            continue
+                        if got == want:
+                            return True
+                        # tag-prefix either direction: want "llama3.2" ~ "llama3.2:latest"
+                        if got.split(":", 1)[0] == want.split(":", 1)[0]:
+                            return True
+                    return False
+                if LLM_MODEL != "local" and ids and not _model_served(LLM_MODEL, ids):
                     model_ok = False
                     model_detail = (
                         f"Configured model {LLM_MODEL!r} is not in the served "
@@ -291,6 +308,24 @@ def _validate_row(platform: str, cats: dict, meta: dict,
                   "youtube_shorts": "Vertical Video (Shorts)",
                   "podcast": "Podcast Audio"}.get(cat, cat)
         issues.append(f"no file matched in the '{folder}' folder for this date")
+
+    if platform == "simplecast":
+        # The episode title resolves from podcast_title || youtube_title. With
+        # both blank the uploader would push a blank-titled episode — a real
+        # failure the old file-only check missed (false-GREEN).
+        if not ((meta.get("podcast_title") or "").strip()
+                or (meta.get("youtube_title") or "").strip()):
+            issues.append("no episode title — fill the podcast-title or "
+                          "youtube-title column for this date")
+
+    if platform == "vista_social":
+        # Vista's caption falls back to the description, then a title. Only
+        # flag when there is NO text anywhere (an all-blank post is almost
+        # always a mistake); a filled description alone is fine.
+        if not any((meta.get(k) or "").strip() for k in
+                   ("vista_caption", "description", "shorts_title", "youtube_title")):
+            issues.append("no caption/description text — the Vista post would "
+                          "have no words (fill vista-caption or description)")
 
     if platform == "rock":
         # Wistia ref is inferred from the Shorts filename — the exact failure

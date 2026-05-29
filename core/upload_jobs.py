@@ -398,10 +398,12 @@ def _dispatch_upload(platform, entry, elements, emit, effective_row, item,
         # handlers turn it into the usual per-row error / re-Connect message.
         breaker.record_failure()
         raise
-    # Only genuine progress heals the breaker. A plain result-dict failure is
-    # treated as neutral (likely a per-row data issue, not infra), so it
-    # neither trips nor closes the breaker.
-    if result is None or result.get("success") or result.get("skipped"):
+    # Only a genuine SUCCESS heals the breaker. A plain result-dict failure is
+    # neutral (likely a per-row data issue, not infra). A SKIP (element- or
+    # idempotently-disabled) exercised none of the platform's infra, so it must
+    # NOT close a breaker that an actually-broken integration just opened —
+    # previously a skipped row masked a dead session for the next real row.
+    if result is not None and result.get("success") and not result.get("skipped"):
         breaker.record_success()
     return result
 
@@ -417,7 +419,11 @@ def _build_yt_video_expected(summary, skip_set):
         if it.get("platform") == "YouTube Video":
             rid = f"{it['date']}_YouTube Video"
             iso = it.get("iso_date", it["date"])
-            expected[iso] = rid not in skip_set
+            # A YT Video row that's element-DISABLED (it["skipped"]) produces
+            # no watch URL, so it must NOT be "expected" — otherwise the date's
+            # Rock Email waits on a result that never comes and then errors,
+            # instead of falling back to entry.youtube_watch_url.
+            expected[iso] = (rid not in skip_set) and not it.get("skipped", False)
     return expected
 
 
@@ -512,6 +518,13 @@ def run_batch(
                 emit_safe({"type": "error", "row": idx, "date": item["date"],
                            "platform": platform, "error_type": "cancelled",
                            "message": "job cancelled before dispatch"})
+                # If this is the YouTube Video a Rock Email row is waiting on,
+                # record a failure result so the waiter resolves immediately
+                # instead of polling the full 30-min timeout (WEB-11).
+                if platform == "YouTube Video":
+                    session.record_result(
+                        item.get("iso_date", item["date"]), "YouTube Video",
+                        {"success": False, "error": "cancelled"})
                 return idx, item, None
             if row_id in skip_set:
                 emit_safe({"type": "skip", "row": idx, "platform": platform, "date": item["date"]})
@@ -553,33 +566,41 @@ def run_batch(
 
         for future in as_completed(future_to_item):
             idx, item = future_to_item[future]
+            # When a YouTube Video row raises (infra/SessionExpired) it never
+            # called record_result, so a Rock Email row waiting on it would
+            # poll the full 30-min timeout. Record a failure result on any
+            # exception so the waiter resolves immediately (WEB-11).
+            def _signal_yt_failure(reason):
+                if item.get("platform") == "YouTube Video":
+                    session.record_result(
+                        item.get("iso_date", item["date"]), "YouTube Video",
+                        {"success": False, "error": reason})
             try:
                 _, _, result = future.result()
             except SessionExpiredError:
+                _signal_yt_failure("session expired")
                 emit_safe({"type": "error", "row": idx, "date": item["date"],
                            "platform": item["platform"],
                            "message": (f"Session expired for {item['platform']}. Open Settings "
                                        "and click 'Connect' to re-authenticate, then retry.")})
                 continue
             except Exception as exc:
+                _signal_yt_failure(str(exc))
                 emit_safe({"type": "error", "row": idx, "date": item["date"],
                            "platform": item["platform"], "message": str(exc)})
                 continue
 
             iso_date = item.get("iso_date", item["date"])
             if result is None:
-                row_id = f"{item['date']}_{item['platform']}"
-                if session_id and row_id in skip_set:
-                    try:
-                        _db.record_upload(
-                            session_id=session_id, iso_date=iso_date,
-                            platform=item["platform"], title=item.get("title", ""),
-                            file_path=item.get("file", ""), success=False, url="",
-                            scheduled_time=item.get("scheduled_time", ""),
-                            error="skipped", external_id=None,
-                        )
-                    except Exception as e:
-                        logger.warning("DB record_upload (skip) failed: %s", e)
+                # result is None for: cancel-before-dispatch, entry-not-found,
+                # and idempotent skips (row already recorded success in a prior
+                # run — these are in skip_set). In every case the appropriate
+                # event was already emitted in _upload_one. Do NOT write a DB
+                # row here: the old code recorded success=False/error="skipped"
+                # for idempotent skips, stamping a spurious FAILURE on top of a
+                # (date, platform) that already has a real success row — which
+                # shows as a failed row in History and can read as "not done".
+                # The existing success row is the source of truth; leave it.
                 continue
 
             session.record_result(iso_date, item["platform"], result)

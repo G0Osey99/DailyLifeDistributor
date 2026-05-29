@@ -144,6 +144,37 @@ def sweep_orphans(active_run_ids: set[str]) -> int:
     return removed
 
 
+# How long a cached per-session spreadsheet lives before the sweep reclaims it.
+_SPREADSHEET_TTL_SECONDS = 14 * 24 * 60 * 60  # 14 days
+
+
+def sweep_spreadsheet_cache(ttl_seconds: int = _SPREADSHEET_TTL_SECONDS) -> int:
+    """Delete cached `<media_sid>.xlsx` files older than *ttl_seconds*.
+
+    The per-browser-session spreadsheet cache under ``<temp>/spreadsheets`` is
+    keyed by session cookie and only overwritten on the next upload for that
+    cookie — so without a TTL it accumulates one file per distinct session
+    forever on the tight VPS volume (WEB-12). The orphan sweep deliberately
+    skips this dir (it's not a run-id), so it needs its own reaper. Returns
+    the number of files removed.
+    """
+    sheets_dir = os.path.join(_TEMP_ROOT, "spreadsheets")
+    if not os.path.isdir(sheets_dir):
+        return 0
+    import time as _time
+    cutoff = _time.time() - max(0, ttl_seconds)
+    removed = 0
+    for name in os.listdir(sheets_dir):
+        full = os.path.join(sheets_dir, name)
+        try:
+            if os.path.isfile(full) and os.path.getmtime(full) < cutoff:
+                os.remove(full)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def has_free_space(required_bytes: int) -> bool:
     """True if the temp volume can hold required_bytes with a safety margin."""
     os.makedirs(_TEMP_ROOT, exist_ok=True)

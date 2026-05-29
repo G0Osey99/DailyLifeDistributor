@@ -772,6 +772,11 @@ def create_app() -> Flask:
     # in depth. Apply via the same view-functions trick as the agent
     # blueprint — limiter exists only after Limiter(app=...).
     for endpoint, limit in (
+        # SEC-1: the primary password POST was previously throttled ONLY by the
+        # in-process per-IP lockout (resets on restart / bypassed multi-worker).
+        # A flask-limiter ceiling is cheap defense-in-depth and uses the shared
+        # RATELIMIT_STORAGE_URI when configured.
+        ("auth.login_submit", "10 per minute"),
         ("recovery.recover_submit", "5 per minute"),
         ("recovery.reset_submit", "10 per hour"),
         ("auth.login_2fa_post", "10 per minute"),
@@ -843,6 +848,12 @@ def create_app() -> Flask:
         removed = _media_session.sweep_orphans(active_run_ids=set())
         if removed:
             app.logger.info("media: swept %d orphaned upload temp dir(s)", removed)
+        # WEB-12: the per-session spreadsheet cache isn't a run-id dir, so the
+        # orphan sweep skips it — reap stale cached sheets here so they don't
+        # accumulate one-per-session forever on the VPS volume.
+        sheets = _media_session.sweep_spreadsheet_cache()
+        if sheets:
+            app.logger.info("media: swept %d stale cached spreadsheet(s)", sheets)
     except Exception:  # noqa: BLE001
         app.logger.warning("media: startup orphan sweep failed", exc_info=True)
 

@@ -84,10 +84,18 @@ def redeem_pairing_code(
             return None
         if datetime.fromisoformat(row["expires_at"]) < now:
             return None
-        conn.execute(
-            "UPDATE agent_pairing_codes SET consumed = 1 WHERE code_hash = ?",
+        # INF-5: consume atomically — guard the UPDATE on consumed=0 and check
+        # rowcount. Without the WHERE guard two concurrent redeems of the same
+        # code could both pass the SELECT and both create a device. The
+        # conditional UPDATE lets exactly one win (single SQLite writer).
+        cur = conn.execute(
+            "UPDATE agent_pairing_codes SET consumed = 1 "
+            "WHERE code_hash = ? AND consumed = 0",
             (code_hash,),
         )
+        if cur.rowcount != 1:
+            # Another redeem consumed it between our SELECT and UPDATE.
+            return None
         device_id = uuid.uuid4().hex
         token = secrets.token_urlsafe(32)
         # Inherit user_id from the code-creation side if present.

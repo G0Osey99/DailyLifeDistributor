@@ -15,6 +15,19 @@ from typing import Optional
 
 from core.playwright_session import SessionExpiredError
 
+try:  # Playwright TimeoutError is an infra failure that should trip the breaker.
+    from playwright.sync_api import TimeoutError as _PlaywrightTimeout  # type: ignore
+except Exception:  # pragma: no cover
+    class _PlaywrightTimeout(Exception):  # type: ignore
+        pass
+
+# Infra failures (dead session / unresponsive page / network) must PROPAGATE
+# so the dispatch's circuit breaker records them and stops relaunching Chrome
+# on every remaining date. Previously the broad ``except Exception`` below
+# swallowed these into a neutral result-dict, so the Rock breaker never opened.
+_INFRA_FAILURES = (SessionExpiredError, _PlaywrightTimeout,
+                   ConnectionError, TimeoutError, OSError)
+
 from .client import RockBrowserClient
 from .fields import ParentFields, ReflectionFields, SpotlightFields, VistaFields
 from .text import normalize_vista_content, parent_title, reflection_title
@@ -196,13 +209,21 @@ def upload_daily_experience(entry, *, elements=None, progress_callback=None) -> 
                     )
                 except Exception as e:  # noqa: BLE001 — DB hiccup must not fail the upload
                     log.warning("record_image_use failed: %s", e)
-                append_credits_entry(
-                    used_on_date=entry.date,
-                    source=image_meta.source,
-                    photographer=image_meta.photographer,
-                    photo_url=image_meta.photo_url,
-                    topic=image_meta.topic,
-                )
+                # UPL-14: guard the credits-ledger write too. Every Rock item is
+                # already saved at this point; a disk/permission error writing
+                # the credits file must NOT propagate to the outer handler and
+                # flip a fully-successful build to failure (which would orphan/
+                # duplicate the children on the next re-run).
+                try:
+                    append_credits_entry(
+                        used_on_date=entry.date,
+                        source=image_meta.source,
+                        photographer=image_meta.photographer,
+                        photo_url=image_meta.photo_url,
+                        topic=image_meta.topic,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log.warning("append_credits_entry failed: %s", e)
 
             _emit("done")
             # Rock items publish immediately on save (no future schedule), but
@@ -215,10 +236,13 @@ def upload_daily_experience(entry, *, elements=None, progress_callback=None) -> 
                 "scheduled_time": f"{entry.date} 00:00",
                 "error": "",
             }
-    except SessionExpiredError:
-        # Hosted mode: propagate so upload_jobs surfaces the re-Connect message.
+    except _INFRA_FAILURES:
+        # Propagate infra failures (incl. SessionExpiredError) so the dispatch
+        # circuit breaker records them and fails Rock fast for the rest of the
+        # run instead of relaunching Chrome and burning the nav timeout on
+        # every remaining date.
         raise
-    except Exception as e:  # noqa: BLE001 — surface any failure as a row error
+    except Exception as e:  # noqa: BLE001 — per-row DATA failure → row error
         log.exception("Rock Daily Experience build failed for %s", entry.date)
         return {
             "success": False,

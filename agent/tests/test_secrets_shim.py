@@ -206,3 +206,45 @@ def test_install_exposes_all_blob_and_has_methods_on_synthetic_module():
         assert any(e.get("type") == "credentials_updated" for e in emitted)
     finally:
         sys.modules.pop("core.secrets_store", None)
+
+
+def test_shim_accepts_org_id_kwarg_like_real_uploaders():
+    """Regression (AGT-1): the bundled uploaders call get/set/delete_secret and
+    get/set_blob with org_id=effective_org_id(). The shim must accept (and
+    ignore) org_id or every real upload crashes with TypeError before touching
+    the platform API. This was invisible because all dispatch tests stub
+    _dispatch_upload."""
+    secrets_shim.install_as_core_secrets_store(
+        initial={"youtube.token": '{"refresh_token":"x"}'},
+        emit=lambda _f: None,
+    )
+    try:
+        mod = sys.modules["core.secrets_store"]
+        # Exactly the call shapes from uploaders/youtube_uploader.py +
+        # core/playwright_session.py.
+        assert mod.get_secret("youtube.token", org_id=7) == '{"refresh_token":"x"}'
+        mod.set_secret("youtube.token", '{"refresh_token":"y"}', org_id=7)
+        assert mod.get_secret("youtube.token", org_id=7) == '{"refresh_token":"y"}'
+        mod.set_blob("playwright.rock_session", b'{"v":1}', org_id=7)
+        assert mod.get_blob("playwright.rock_session", org_id=7) == b'{"v":1}'
+        assert mod.has_secret("playwright.rock_session", org_id=7) is True
+        mod.delete_secret("playwright.rock_session", org_id=7)
+        assert mod.has_secret("playwright.rock_session", org_id=7) is False
+    finally:
+        sys.modules.pop("core.secrets_store", None)
+
+
+def test_shim_exposes_get_platform_secret():
+    """Regression (AGT-2): youtube_uploader._load_client_config calls
+    get_platform_secret('youtube.client_secrets'); the shim must provide it
+    (delegating to the bare-key lookup) or YouTube auth crashes on the agent."""
+    secrets_shim.install_as_core_secrets_store(
+        initial={"youtube.client_secrets": '{"web":{}}'},
+        emit=lambda _f: None,
+    )
+    try:
+        mod = sys.modules["core.secrets_store"]
+        assert mod.get_platform_secret("youtube.client_secrets") == '{"web":{}}'
+        assert mod.get_platform_blob("youtube.client_secrets") == b'{"web":{}}'
+    finally:
+        sys.modules.pop("core.secrets_store", None)

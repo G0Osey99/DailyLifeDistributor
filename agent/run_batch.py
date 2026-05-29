@@ -127,6 +127,12 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
         emit({"type": "event", "event": "error", "platform": platform,
               "row_idx": row["row_idx"], "iso_date": row["iso_date"],
               "error": "circuit_breaker_open"})
+        if platform == "YouTube Video":
+            # Critical: a Rock Email row for this date may already be blocked
+            # in yt_state.wait(). Without recording None here it would hang the
+            # full 30-min timeout holding a worker slot. Every other YT exit
+            # path records; the breaker-open path must too.
+            yt_state.record(row["row_idx"], None)
         return
 
     # Rock Email must wait for this date's YouTube Video result (if present).
@@ -243,6 +249,23 @@ def run(*, envelope: dict, paths: dict, emit,
         (envelope.get("job_id") or "?")[:8],
         len(rows), len(tasks), max_workers,
     )
+
+    # If nothing resolved for ANY row, the most likely cause is that the agent
+    # has no media folders configured — in which case every file-backed task
+    # would fail with its own generic file-not-found (N confusing errors for
+    # one root cause). Emit a single actionable diagnostic up front. We still
+    # PROCEED with the run: Rock (Daily Experience) and Rock Email can succeed
+    # with no local media file (they use the server-supplied Wistia ref +
+    # gathered image), so we must not short-circuit them.
+    if tasks and not any((paths.get(r["iso_date"]) or {}) for _p, r in tasks):
+        _logger.warning("run_batch: no media resolved for any row — "
+                        "agent may have no media folders configured")
+        emit({"type": "event", "event": "warning",
+              "job_id": envelope.get("job_id"),
+              "message": ("No local media matched for any selected date. If "
+                          "this device's uploads fail file-not-found, open the "
+                          "agent window → 'Configure media folders…' (or "
+                          "auto-detect from a parent folder), then re-run.")})
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = [

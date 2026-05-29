@@ -198,15 +198,26 @@ class PendingResults:
         self._lock = _thr.RLock()
 
     def observe(self, frame: dict) -> None:
-        """Record *frame* if it is a success event; ignore everything else."""
+        """Record *frame* if it is a success event; ignore everything else.
+
+        Uses ``.get()`` for every field: a success frame that's missing
+        job_id/row_idx/platform (malformed, or emitted by a path that didn't
+        stamp them) must be skipped, never KeyError out of the emit hot path
+        and kill the job's event stream.
+        """
         if frame.get("type") != "event" or frame.get("event") != "success":
             return
-        key = (frame["job_id"], frame["row_idx"], frame["platform"])
+        job_id = frame.get("job_id")
+        row_idx = frame.get("row_idx")
+        platform = frame.get("platform")
+        if job_id is None or row_idx is None or not platform:
+            return
+        key = (job_id, row_idx, platform)
         entry = {
-            "job_id": frame["job_id"],
-            "row_idx": frame["row_idx"],
-            "iso_date": frame["iso_date"],
-            "platform": frame["platform"],
+            "job_id": job_id,
+            "row_idx": row_idx,
+            "iso_date": frame.get("iso_date", ""),
+            "platform": platform,
             "status": "success",
             "payload": frame.get("payload", {}),
         }

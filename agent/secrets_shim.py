@@ -134,20 +134,28 @@ class Shim:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def get_secret(self, key: str) -> Optional[str]:
+    # NOTE on ``org_id``: the real ``core.secrets_store`` scopes rows per org,
+    # but the agent's envelope already contains exactly the right org's
+    # credentials keyed by their BARE key (the server resolved the org before
+    # building the envelope). So every shim method accepts and IGNORES an
+    # ``org_id`` kwarg — present only so the bundled uploaders (which call
+    # ``get_secret(..., org_id=effective_org_id())`` etc.) work unchanged.
+    # Without this the first real upload crashed with
+    # ``TypeError: unexpected keyword argument 'org_id'``.
+    def get_secret(self, key: str, *, org_id=None) -> Optional[str]:
         token = self._d.get(key)
         if token is None:
             return None
         return self._decrypt_to_str(token)
 
-    def set_secret(self, key: str, value: str) -> None:
+    def set_secret(self, key: str, value: str, *, org_id=None) -> None:
         if self._closed:
             _log.warning("secrets_shim.set_secret called after shutdown(); ignoring")
             return
         self._d[key] = self._encrypt_str(value)
         self._emit({"type": "credentials_updated", "key": key, "value": value})
 
-    def delete_secret(self, key: str) -> None:
+    def delete_secret(self, key: str, *, org_id=None) -> None:
         # Overwrite the ciphertext before popping (defense in depth — the
         # ciphertext doesn't reveal plaintext, but make the residency
         # story uniform across set / delete / shutdown).
@@ -157,11 +165,21 @@ class Shim:
         self._d.pop(key, None)
         self._emit({"type": "credentials_updated", "key": key, "value": ""})
 
-    def has_secret(self, key: str) -> bool:
+    def has_secret(self, key: str, *, org_id=None) -> bool:
         """True if the shim is currently holding a value for ``key``."""
         return key in self._d
 
-    def get_blob(self, key: str) -> Optional[bytes]:
+    def get_platform_secret(self, key: str) -> Optional[str]:
+        """Platform-shared secret (e.g. ``youtube.client_secrets``). On the
+        server these live in an org-independent slot; in the envelope they
+        arrive under the same bare key, so this is just ``get_secret``."""
+        return self.get_secret(key)
+
+    def get_platform_blob(self, key: str) -> Optional[bytes]:
+        """Binary form of :meth:`get_platform_secret`."""
+        return self.get_blob(key)
+
+    def get_blob(self, key: str, *, org_id=None) -> Optional[bytes]:
         """Return the stored value as UTF-8 bytes, or None if unset.
 
         PlaywrightSession passes Playwright storage_state JSON through
@@ -173,7 +191,7 @@ class Shim:
             return None
         return val.encode("utf-8")
 
-    def set_blob(self, key: str, data: bytes) -> None:
+    def set_blob(self, key: str, data: bytes, *, org_id=None) -> None:
         """Store *data* (UTF-8 bytes) and emit ``credentials_updated``.
 
         Non-UTF-8 payloads are logged and dropped — the server treats all
@@ -195,7 +213,8 @@ class Shim:
 
     @contextlib.contextmanager
     def materialize_blob_to_tempfile(self, key: str, *,
-                                     suffix: str = "") -> Iterator[Optional[str]]:
+                                     suffix: str = "",
+                                     org_id=None) -> Iterator[Optional[str]]:
         val = self.get_secret(key)
         if val is None:
             yield None
@@ -258,6 +277,8 @@ def install_as_core_secrets_store(*, initial: dict, emit: _EmitFn) -> Shim:
     mod.set_secret = shim.set_secret                       # type: ignore[attr-defined]
     mod.delete_secret = shim.delete_secret                 # type: ignore[attr-defined]
     mod.has_secret = shim.has_secret                       # type: ignore[attr-defined]
+    mod.get_platform_secret = shim.get_platform_secret     # type: ignore[attr-defined]
+    mod.get_platform_blob = shim.get_platform_blob         # type: ignore[attr-defined]
     mod.get_blob = shim.get_blob                           # type: ignore[attr-defined]
     mod.set_blob = shim.set_blob                           # type: ignore[attr-defined]
     mod.materialize_blob_to_tempfile = shim.materialize_blob_to_tempfile  # type: ignore[attr-defined]

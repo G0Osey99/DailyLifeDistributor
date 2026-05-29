@@ -156,6 +156,36 @@ def test_dryrun_rock_passes_with_full_data():
     assert res["rows"][0]["ok"] is True
 
 
+def test_dryrun_quota_warns_when_over_daily_cap(monkeypatch):
+    """The big multi-date gotcha: many YouTube uploads blow the daily quota.
+    validate_run must estimate it and warn when the run won't fit."""
+    from blueprints import preflight
+    from core import quota
+    monkeypatch.setattr(quota, "DAILY_QUOTA", 10000)
+    monkeypatch.setattr(quota, "get_quota_used", lambda: 0)
+    # Build 10 dates each with a horizontal video → 10 videos.insert.
+    dates = [f"2026-06-{d:02d}" for d in range(1, 11)]
+    scan = {d: {"categories": {"youtube_video": [f"yt {d}.mp4"]}, "metadata":
+                {"youtube_title": "T"}} for d in dates}
+    res = preflight.validate_run(dates, ["youtube_video"], scan)
+    q = res["quota"]
+    assert q["youtube_uploads"] == 10
+    # 10 * (1600+50) = 16,500 > 10,000 → does not fit.
+    assert q["fits"] is False
+    assert "quotaExceeded" in q["message"] or "quota" in q["message"].lower()
+
+
+def test_dryrun_quota_fits_for_small_run(monkeypatch):
+    from blueprints import preflight
+    from core import quota
+    monkeypatch.setattr(quota, "DAILY_QUOTA", 10000)
+    monkeypatch.setattr(quota, "get_quota_used", lambda: 0)
+    scan = {"2026-06-01": {"categories": {"youtube_video": ["yt.mp4"]},
+                           "metadata": {"youtube_title": "T"}}}
+    res = preflight.validate_run(["2026-06-01"], ["youtube_video"], scan)
+    assert res["quota"]["fits"] is True
+
+
 def test_dryrun_rock_email_needs_youtube_video_in_run():
     from blueprints.preflight import validate_run
     # Rock Email alone, no YouTube Video → no watch URL source.

@@ -1058,7 +1058,18 @@
                 const drVerdict = drData.ok
                     ? '<div class="text-sm" style="color:var(--ok);font-weight:700;margin-top:6px;">All selected dates have complete data.</div>'
                     : '<div class="text-sm" style="color:var(--err);font-weight:700;margin-top:6px;">Some dates are missing files or fields — fix the ✗ rows.</div>';
-                dryHtml = `<div style="margin-top:12px;font-weight:700;">Per-date data check</div>${drRows}${drVerdict}`;
+                // YouTube quota estimate — the #1 multi-date gotcha (videos.insert
+                // is 1600 units, daily cap ~10k → only ~3 dates of YT/day).
+                const q = drData.quota || {};
+                let quotaHtml = "";
+                if (q.youtube_uploads) {
+                    if (q.fits === false && q.message) {
+                        quotaHtml = `<div class="text-sm" style="color:var(--warn);font-weight:700;margin-top:8px;">⚠ YouTube quota: ${esc(q.message)}</div>`;
+                    } else {
+                        quotaHtml = `<div class="text-sm text-dim" style="margin-top:8px;">YouTube quota: ~${(q.estimate_units||0).toLocaleString()} of ${(q.remaining_units||0).toLocaleString()} units remaining today — fits.</div>`;
+                    }
+                }
+                dryHtml = `<div style="margin-top:12px;font-weight:700;">Per-date data check</div>${drRows}${drVerdict}${quotaHtml}`;
             } else {
                 dryHtml = '<div class="text-sm text-dim" style="margin-top:12px;">Select dates to also run the per-date data check.</div>';
             }

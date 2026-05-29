@@ -378,6 +378,7 @@ def validate_run(dates, platforms, scan, org_id=None) -> dict:
     """
     requested = [p for p in (platforms or []) if p in _ALL_PLATFORMS]
     rows: list[dict] = []
+    yt_uploads = 0  # count of videos.insert this run would issue
     for iso in (dates or []):
         slot = (scan or {}).get(iso) or {}
         cats = slot.get("categories") or {}
@@ -391,13 +392,59 @@ def validate_run(dates, platforms, scan, org_id=None) -> dict:
                 "ok": not issues,
                 "issues": issues,
             })
+            # Count an actual upload only when the media file is present (a
+            # fileless YT row won't reach videos.insert).
+            if platform == "youtube_video" and _first_name(cats, "youtube_video"):
+                yt_uploads += 1
+            elif platform == "youtube_shorts" and _first_name(cats, "youtube_shorts"):
+                yt_uploads += 1
     ok = all(r["ok"] for r in rows) if rows else False
     return {
         "ok": ok,
         "rows": rows,
+        "quota": _estimate_youtube_quota(yt_uploads, org_id),
         "note": ("Data-only check — login sessions and API keys are validated "
                  "separately by the readiness check."),
     }
+
+
+def _estimate_youtube_quota(yt_uploads: int, org_id=None) -> dict:
+    """Estimate the YouTube Data API quota this run would consume vs today's
+    remaining cap. The single biggest Monday gotcha: videos.insert costs 1600
+    units and the default daily quota is 10,000, so only ~3 dates' worth of
+    (Video + Shorts) fit in a day. Surfacing this BEFORE the run prevents the
+    "first 3 dates upload, the rest fail quotaExceeded" surprise.
+    """
+    try:
+        from core.quota import QUOTA_COSTS, DAILY_QUOTA, get_quota_used
+        per_upload = QUOTA_COSTS.get("video_upload", 1600) + \
+            QUOTA_COSTS.get("thumbnail_set", 50)  # each video usually sets a thumb
+        estimate = yt_uploads * per_upload
+        used = int(get_quota_used() or 0)
+        remaining = max(0, int(DAILY_QUOTA) - used)
+        fits = estimate <= remaining
+        # How many dates' worth of YouTube fit per day (Video+Shorts = 2 uploads).
+        per_day_dates = int(DAILY_QUOTA // (2 * per_upload)) if per_upload else 0
+        msg = ""
+        if yt_uploads and not fits:
+            msg = (f"This run needs ~{estimate:,} YouTube quota units but only "
+                   f"~{remaining:,} remain today (cap {int(DAILY_QUOTA):,}). "
+                   f"YouTube uploads past the cap fail with 'quotaExceeded'. "
+                   f"Only about {per_day_dates} date(s) of YouTube (Video+Shorts) "
+                   f"fit per day — spread the run across days, upload the "
+                   f"non-YouTube platforms now, or request a quota increase.")
+        return {
+            "youtube_uploads": yt_uploads,
+            "estimate_units": estimate,
+            "remaining_units": remaining,
+            "cap_units": int(DAILY_QUOTA),
+            "fits": bool(fits),
+            "dates_per_day": per_day_dates,
+            "message": msg,
+        }
+    except Exception as e:  # noqa: BLE001 — estimate is best-effort
+        return {"youtube_uploads": yt_uploads, "fits": True, "message": "",
+                "error": str(e)}
 
 
 @bp.route("/preflight/dryrun", methods=["POST"])

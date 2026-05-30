@@ -36,6 +36,30 @@ def test_owner_clicks_approve_link_emails_reset(client, db, captured_emails):
     assert "reset_url" in reset["vars"]
 
 
+def test_expired_request_cannot_be_approved(client, db, captured_emails):
+    """SEC-003: recovery_requests.expires_at (48h) must be enforced. After
+    49h the Owner's approval is rejected as expired and no reset email goes
+    out — previously expires_at was written but never checked, so an Owner
+    could approve a months-old request."""
+    from freezegun import freeze_time
+    org = make_org(db, "Acme")
+    user = make_user(db, username="alice", email="alice@example.com")
+    add_membership(db, user["id"], org["id"], role="user")
+    owner = make_user(db, username="o", email="o@x.com")
+    add_membership(db, owner["id"], org["id"], role="owner")
+    with freeze_time("2026-05-01 12:00:00"):
+        client.post("/recover", data={"username": "alice", "note": "lost phone"})
+    rid = db.list_recovery_requests()[0]["id"]
+    captured_emails.clear()
+    with freeze_time("2026-05-03 13:00:00"):  # 49h later — past the 48h TTL
+        login_as(client, owner)  # establish the session in the same window
+        resp = client.get(f"/admin-actions/recovery/{rid}/approve")
+    assert resp.status_code == 200
+    assert b"expired" in resp.data.lower()
+    assert db.get_recovery_request(rid)["approved_at"] is None
+    assert not any(m["template"] == "recovery_approved" for m in captured_emails)
+
+
 def test_non_owner_cannot_approve(client, db, captured_emails):
     org = make_org(db, "Acme")
     user = make_user(db, username="alice", email="alice@example.com")

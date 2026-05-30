@@ -67,10 +67,13 @@ _JOB_RETENTION_SECONDS = 300
 _REAPER_INTERVAL_SECONDS = 60
 # Bound the queue so a closed-tab SSE consumer can't pin GBs of progress
 # events in memory. 1000 entries is ~5 GB of upload at 5 MB chunk granularity
-# — well past anything realistic. Lossy events (progress) drop on full;
-# milestone events (start/success/error/done) always block-put.
+# — well past anything realistic. Emitters use put_nowait (see
+# blueprints/media.py and core/agent_dispatch.py), so ANY event — including
+# milestones like 'done' — drops when the queue is full rather than blocking
+# the producer; terminal completion is conveyed out-of-band via job["done"]
+# (set BEFORE the done event is emitted), so the SSE consumer still terminates
+# even if the 'done' frame itself is dropped.
 _QUEUE_MAXSIZE = 1000
-_LOSSY_EVENT_TYPES = {"upload_progress", "progress", "phase_change"}
 
 _log = logging.getLogger(__name__)
 

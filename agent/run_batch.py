@@ -7,10 +7,12 @@ B4: skeleton + parallel pool (real dispatch added in B5/B6).
 B5: circuit breaker + email-after-YT ordering.
 B6: real per-platform dispatch into bundled uploaders.
 Phase 3: per-run YT state (no module-level mutation between runs),
-         circuit_breaker.reset_all() at the start of each run, and a
-         Rock-Email guard that mirrors core/upload_jobs._dispatch_upload —
-         when YT was expected but returned no URL, error out instead of
-         calling rock_schedule_email with a blank link.
+         circuit_breaker.reset_prefix("upload:") at the start of each run
+         (resets only the upload:* breakers, not unrelated ones like
+         llm:title — see CONC-004), and a Rock-Email guard that mirrors
+         core/upload_jobs._dispatch_upload — when YT was expected but
+         returned no URL, error out instead of calling rock_schedule_email
+         with a blank link.
 """
 from __future__ import annotations
 
@@ -226,11 +228,12 @@ def run(*, envelope: dict, paths: dict, emit,
 
     Phase 3:
       - Per-run _YtState (no module-level mutation between calls).
-      - circuit_breaker.reset_all() at the top so a breaker tripped by a
-        previous run doesn't open-circuit the new one. The registry is
-        process-global; per-run resets are a safe default for a single-
-        agent fleet where the operator may have fixed the broken session
-        between runs.
+      - circuit_breaker.reset_prefix("upload:") at the top so an upload
+        breaker tripped by a previous run doesn't open-circuit the new one.
+        The registry is process-global; per-run resets are a safe default for
+        a single-agent fleet where the operator may have fixed the broken
+        session between runs. Scoped to "upload:" so non-run breakers
+        (e.g. llm:title) survive — see CONC-004.
     """
     # Drop the upload:* breakers tripped by a previous run on this process,
     # so a fixed session isn't open-circuited by stale state (CONC-004). Scope

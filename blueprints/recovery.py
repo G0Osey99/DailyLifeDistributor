@@ -184,12 +184,11 @@ def reset_submit():
             token=token,
             error="Token already used.",
         ), 400
-    if _request_expired(rrow):
-        return render_template(
-            "recover_reset.html",
-            token=token,
-            error="This recovery request has expired.",
-        ), 400
+    # NOTE: the 48h request expiry (_request_expired) is enforced at APPROVE
+    # time, not here. The reset token has its own independent 1-hour max_age
+    # (loads() above), so an approval issued late in the 48h window still
+    # yields a usable 1h reset link; re-checking expires_at here would reject
+    # a legitimately-approved reset whose token is still valid.
     h = hashlib.sha256(token.encode("utf-8")).hexdigest()
     if rrow.get("password_reset_token_hash") != h:
         abort(400)

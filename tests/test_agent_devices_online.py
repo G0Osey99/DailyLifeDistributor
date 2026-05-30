@@ -93,6 +93,9 @@ def test_online_endpoint_lists_connected_agent(client):
 
 def test_online_endpoint_same_network_true_when_ips_match(client, monkeypatch):
     _login(client)
+    # same_network relies on the CF-Connecting-IP path, which SEC-006 only
+    # trusts on the hosted deploy. Force is_hosted() True for this test.
+    monkeypatch.setattr("core.hosted.is_hosted", lambda: True)
     # Register the agent with a known IP, then arrange for _client_ip()
     # (during the GET) to return the same value via CF-Connecting-IP.
     device_id = _pair_and_register_agent(
@@ -109,8 +112,10 @@ def test_online_endpoint_same_network_true_when_ips_match(client, monkeypatch):
         RELAY.unregister_agent(_ACCOUNT, device_id)
 
 
-def test_online_endpoint_same_network_false_when_ips_differ(client):
+def test_online_endpoint_same_network_false_when_ips_differ(client, monkeypatch):
     _login(client)
+    # CF-Connecting-IP path is hosted-only (SEC-006).
+    monkeypatch.setattr("core.hosted.is_hosted", lambda: True)
     device_id = _pair_and_register_agent(
         client, hwid_hash="c" * 64, connect_ip="10.0.0.5")
     try:

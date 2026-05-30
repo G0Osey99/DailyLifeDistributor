@@ -284,6 +284,9 @@ def test_upload_path_agent_passes_browser_ip(
         return "JID"
 
     monkeypatch.setattr(agent_dispatch, "start", _fake_start)
+    # browser_ip is derived from _client_ip(), whose CF-Connecting-IP trust is
+    # hosted-only (SEC-006). Force is_hosted() True so the header is honored.
+    monkeypatch.setattr("core.hosted.is_hosted", lambda: True)
 
     r = app_with_hybrid_enabled.post(
         "/media/batch/run?path=agent",

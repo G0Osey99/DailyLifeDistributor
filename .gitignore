@@ -67,3 +67,6 @@ Thumbs.db
 # Never commit local SSH keys (release uploader, etc.)
 release_key*
 *.pem
+
+.audit/
+AUDIT.md

@@ -28,6 +28,11 @@ _PLATFORM_KEYS: dict[str, tuple[str, ...]] = {
     "YouTube Shorts": ("youtube.token", "youtube.client_secrets"),
     "Rock":           ("playwright.rock_session",),
     "Rock Email":     ("playwright.rock_session",),
+    # Canonical platform string is "SimpleCast" (capital C) — the spelling
+    # emitted in the run summary (core/session_state.py) and matched by the
+    # web dispatch (core/upload_jobs.py). "Simplecast" is kept as a defensive
+    # alias so a stray lowercase spelling still resolves the credential.
+    "SimpleCast":     ("playwright.simplecast_session",),
     "Simplecast":     ("playwright.simplecast_session",),
     "Vista Social":   ("playwright.vista_social_session",),
 }

@@ -137,6 +137,55 @@ def test_email_waits_for_youtube_url(temp_db, monkeypatch):
     assert captured.get("watch_url") == "https://youtu.be/WATCH"
 
 
+def test_no_deadlock_when_email_rows_precede_youtube(temp_db, monkeypatch):
+    """TC-COV-10 / CONC-003: with max_workers <= the number of Rock Email
+    rows, the pool must not deadlock. Each email row blocks in
+    _resolve_youtube_watch_url waiting on its date's YouTube result; if the
+    email waiters fill every worker slot while the YouTube rows sit queued
+    behind them, the batch hangs forever. This summary orders the email rows
+    FIRST (worst case) with only 2 workers — it deadlocks unless email rows
+    are submitted last."""
+    import threading
+    import time
+
+    def fake_yt(entry, **k):
+        time.sleep(0.05)
+        return {"success": True, "url": "https://youtu.be/" + entry.date}
+
+    def fake_email(entry, youtube_watch_url="", **k):
+        return {"success": True, "url": "https://rock/email"}
+
+    monkeypatch.setattr(upload_jobs, "yt_upload_video", fake_yt)
+    monkeypatch.setattr(upload_jobs, "rock_schedule_email", fake_email)
+
+    dates = ["2025-05-21", "2025-05-22"]
+    entries = {d: _entry(d) for d in dates}
+    # Email rows BEFORE their YouTube rows — the ordering that deadlocks the
+    # naive single-pool submission with max_workers == #email rows.
+    summary = (
+        [{"date": d, "iso_date": d, "platform": "Rock Email", "title": "t"} for d in dates]
+        + [{"date": d, "iso_date": d, "platform": "YouTube Video", "title": "t"} for d in dates]
+    )
+    file_paths = {("youtube_video", d): f"/tmp/run/v-{d}" for d in dates}
+
+    finished = threading.Event()
+
+    def _run():
+        events, emit = _collect_emit()
+        upload_jobs.run_batch(
+            dates=dates, summary=summary, file_paths=file_paths,
+            session_id="sess1", emit=emit, entries_snapshot=entries,
+            config={"upload": {"max_workers": 2}},
+        )
+        finished.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    assert finished.wait(timeout=20), (
+        "run_batch deadlocked: email waiters filled the pool while the "
+        "YouTube rows they wait on sat queued"
+    )
+
+
 def test_paths_pointed_at_temp_files(temp_db, monkeypatch):
     seen = {}
     monkeypatch.setattr(upload_jobs, "yt_upload_video",

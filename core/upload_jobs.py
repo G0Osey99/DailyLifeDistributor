@@ -546,8 +546,21 @@ def run_batch(
             return idx, item, result
 
     future_to_item: dict = {}
+    # CONC-003: submit Rock Email rows LAST. An email row blocks in
+    # _resolve_youtube_watch_url waiting on the same date's YouTube Video
+    # result; if email waiters fill every worker slot before the YouTube rows
+    # are picked up, the pool deadlocks (waiters hold all slots while the YT
+    # futures sit queued). Submitting every non-email row first means each
+    # YouTube Video row is started (or finished) before any waiter can take the
+    # last slot — its dependency always has a worker, so it always progresses.
+    # idx is the ORIGINAL enumerate index, preserved through the reorder, so
+    # dashboard row identity (the "row" field on every event) is unchanged.
+    submission_order = sorted(
+        enumerate(batch_summary),
+        key=lambda pair: pair[1].get("platform") == "Rock Email",
+    )
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for idx, item in enumerate(batch_summary):
+        for idx, item in submission_order:
             # Pre-submit cancel check: if cancel was signalled while we were
             # submitting earlier rows, short-circuit the rest of this loop
             # rather than queueing N more workers that'll each emit their

@@ -82,6 +82,33 @@ def test_idempotent_skip_already_succeeded(temp_db, monkeypatch):
     assert skipped
 
 
+def test_conc002_no_duplicate_history_row_under_concurrent_record(temp_db, monkeypatch):
+    """CONC-002: the skip_set is built once at batch start. If a concurrent
+    run records the same (session, date, platform) success between that build
+    and this run's record_upload, the second write must be skipped so the
+    History view doesn't gain a duplicate success row."""
+    iso = "2025-05-21"
+
+    def fake_yt(entry, **k):
+        # Simulate a concurrent run finishing this exact row first — after
+        # this run already passed the batch-start skip check.
+        _db.record_upload(session_id="sess1", iso_date=iso, platform="YouTube Video",
+                          title="t", file_path="", success=True,
+                          url="https://yt/concurrent", scheduled_time="", error="")
+        return {"success": True, "url": "https://yt/thisrun"}
+
+    monkeypatch.setattr(upload_jobs, "yt_upload_video", fake_yt)
+    entries = {iso: _entry(iso)}
+    summary = [{"date": iso, "iso_date": iso, "platform": "YouTube Video", "title": "t"}]
+    file_paths = {("youtube_video", iso): "/tmp/run/v"}
+    events, emit = _collect_emit()
+    upload_jobs.run_batch(dates=[iso], summary=summary, file_paths=file_paths,
+                          session_id="sess1", emit=emit, entries_snapshot=entries)
+    rows = [r for r in _db.get_history(session_id="sess1")
+            if r["platform"] == "YouTube Video" and r["success"]]
+    assert len(rows) == 1, f"duplicate upload_history row written: {len(rows)} rows"
+
+
 def test_email_waits_for_youtube_url(temp_db, monkeypatch):
     captured = {}
 

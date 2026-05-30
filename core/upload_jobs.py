@@ -617,6 +617,23 @@ def run_batch(
                            "message": result.get("error") or "Unknown error"})
 
             if session_id:
+                # CONC-002: the skip_set was built once at batch start. Under a
+                # concurrent run for the same session, a (date, platform) can
+                # pass that check in both runs and reach here twice. Re-check
+                # immediately before the write so a successful row isn't
+                # duplicated in upload_history / the History view. (This keeps
+                # the persistence idempotent; fully preventing the concurrent
+                # double *upload* to the platform would need a per-(session,
+                # date, platform) claim — the PerUserRunLock already blocks the
+                # common same-user trigger.)
+                if (result.get("success")
+                        and _db.has_successful_upload(session_id, iso_date, item["platform"])):
+                    logger.info(
+                        "CONC-002: skipping duplicate upload_history write for "
+                        "(%s, %s, %s) — already recorded success",
+                        session_id, iso_date, item["platform"],
+                    )
+                    continue
                 try:
                     _db.record_upload(
                         session_id=session_id, iso_date=iso_date,

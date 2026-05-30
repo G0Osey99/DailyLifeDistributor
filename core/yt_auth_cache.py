@@ -57,9 +57,14 @@ def invalidate_yt_auth_cache() -> None:
 
     Called right after the token changes (OAuth success, Clear Token) so the
     Settings badge flips immediately instead of lagging up to the TTL.
+
+    The cache is keyed by effective org id (cached_yt_authenticated stores
+    _YT_AUTH_CACHE[org_key] = {"value":.., "checked_at":..}). The previous
+    implementation set sibling "value"/"checked_at" keys, which no reader ever
+    consults — so it was a no-op and the badge lagged the full TTL. Clear every
+    org entry so the next read for any org re-checks the store.
     """
-    _YT_AUTH_CACHE["value"] = None
-    _YT_AUTH_CACHE["checked_at"] = 0.0
+    _YT_AUTH_CACHE.clear()
 
 
 # Backward-compatible alias: app.py historically exposed this name.

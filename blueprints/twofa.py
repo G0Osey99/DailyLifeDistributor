@@ -116,14 +116,20 @@ def verify_totp_post():
 def enable_email_2fa():
     user = _current_user() or {}
     _db.set_user_email_2fa(user["id"], True)
-    _email_2fa.generate_login_code(user["id"])
+    sent = _email_2fa.generate_login_code(user["id"])
     _audit.write_event(
         action="user.2fa_enabled",
         actor_user_id=user["id"],
         metadata={"method": "email"},
         ip=_req_ip(), ua=_req_ua(),
     )
-    flash("Email 2FA enabled. A test code was sent to your email.")
+    # generate_login_code returns None when the per-user send rate limit is
+    # hit (SEC-005) — don't claim a code was sent when none was.
+    if sent is not None:
+        flash("Email 2FA enabled. A test code was sent to your email.")
+    else:
+        flash("Email 2FA enabled. You've requested several codes recently — "
+              "check your inbox for the latest, or try again in a few minutes.")
     return redirect(url_for("twofa.settings_2fa"))
 
 
@@ -141,8 +147,12 @@ def send_email_code():
     if not user or not user.get("email_2fa_enabled"):
         flash("Email 2FA is not enabled for this account.")
         return redirect(url_for("twofa.settings_2fa"))
-    _email_2fa.generate_login_code(user["id"])
-    flash("Sent a 6-digit code to your email. It expires in 10 minutes.")
+    if _email_2fa.generate_login_code(user["id"]) is not None:
+        flash("Sent a 6-digit code to your email. It expires in 10 minutes.")
+    else:
+        # Rate limited (SEC-005) — no new code minted; be honest about it.
+        flash("You've requested several codes recently. Check your inbox for "
+              "the most recent one, or try again in a few minutes.")
     return redirect(url_for("twofa.settings_2fa"))
 
 

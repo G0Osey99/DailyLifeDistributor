@@ -996,16 +996,20 @@ def insert_email_2fa_code(*, user_id: int, code_hash: str, expires_at: str, crea
         return cur.lastrowid
 
 
-def count_email_2fa_codes_since(user_id: int, since_iso: str) -> int:
-    """Count email-2FA codes minted for *user_id* at/after *since_iso*.
+def count_unused_email_2fa_codes_since(user_id: int, since_iso: str) -> int:
+    """Count UNUSED email-2FA codes minted for *user_id* at/after *since_iso*.
 
-    Powers the per-user send rate limit (SEC-005) so a held partial token or
-    a logged-in user can't spam the victim's inbox / burn Resend quota.
+    Powers the per-user send rate limit (SEC-005). Counting only *unused* codes
+    is deliberate: an attacker spamming the victim's inbox can't consume the
+    codes, so they pile up unused and trip the cap — while a legitimate user
+    who actually receives and *uses* each code never accumulates enough unused
+    codes to lock themselves out of the factor (the consumed codes drop out of
+    the count via used_at).
     """
     with _get_conn() as c:
         row = c.execute(
             "SELECT COUNT(*) AS n FROM email_2fa_codes "
-            "WHERE user_id=? AND created_at>=?",
+            "WHERE user_id=? AND created_at>=? AND used_at IS NULL",
             (user_id, since_iso),
         ).fetchone()
     return int(row["n"]) if row else 0

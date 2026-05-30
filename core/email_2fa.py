@@ -41,9 +41,9 @@ def generate_login_code(user_id: int) -> str | None:
     Callers ignore the return value; tests introspect it.
     """
     since_iso = (_now() - _RATE_WINDOW).isoformat()
-    if _db.count_email_2fa_codes_since(user_id, since_iso) >= _RATE_MAX:
+    if _db.count_unused_email_2fa_codes_since(user_id, since_iso) >= _RATE_MAX:
         log.warning(
-            "email-2FA send rate limit hit for user_id=%s (>=%d in %s); "
+            "email-2FA send rate limit hit for user_id=%s (>=%d unused in %s); "
             "suppressing extra code", user_id, _RATE_MAX, _RATE_WINDOW,
         )
         return None

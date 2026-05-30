@@ -430,6 +430,20 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_upload_history_user "
             "ON upload_history(user_id)"
         )
+        # PERF-001: the two query shapes that run most often and grow with the
+        # table — the idempotent-skip lookup (has_successful_upload, filters on
+        # session_id+iso_date+platform) and the calendar/history window
+        # (get_history_for_window / get_history, filter+ORDER BY on iso_date) —
+        # had no covering index and were full table scans. upload_history grows
+        # one row per (date,platform) forever, so add covering indexes.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_uh_skip "
+            "ON upload_history(session_id, iso_date, platform)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_uh_iso_date "
+            "ON upload_history(iso_date)"
+        )
         # Multi-tenant phase δ: per-org per-platform soft mutex used by the
         # web upload dispatch. Primary key (org_id, platform) gives us a
         # single holder per pair; expires_at lets a stale lock auto-release

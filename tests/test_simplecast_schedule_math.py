@@ -40,11 +40,16 @@ def test_targets_hour_mod_12():
 
 
 def test_targets_ampm_boundary():
-    """AM/PM boundary at 12:00 — noon is PM, midnight is AM."""
+    """AM/PM boundary at 12:00 — noon is PM, midnight is AM.
+
+    Uses on-grid :55 for the "just before" cases: post-CORR-002 the helper
+    rounds to the nearest 5 min, so 11:59 would round up to 12:00 (pm) and
+    23:59 to 00:00 next day (am). :55 stays in the same hour.
+    """
     assert _compute_schedule_targets(datetime(2026, 5, 13, 0, 0))["ampm_value"] == "am"
-    assert _compute_schedule_targets(datetime(2026, 5, 13, 11, 59))["ampm_value"] == "am"
+    assert _compute_schedule_targets(datetime(2026, 5, 13, 11, 55))["ampm_value"] == "am"
     assert _compute_schedule_targets(datetime(2026, 5, 13, 12, 0))["ampm_value"] == "pm"
-    assert _compute_schedule_targets(datetime(2026, 5, 13, 23, 59))["ampm_value"] == "pm"
+    assert _compute_schedule_targets(datetime(2026, 5, 13, 23, 55))["ampm_value"] == "pm"
 
 
 @pytest.mark.parametrize("minute,expected", [
@@ -59,31 +64,32 @@ def test_targets_ampm_boundary():
     (32, "30"),
     (33, "35"),
     (57, "55"),
-    (58, "60 % 60 = 00"),  # placeholder, see assertion below
+    (58, "00"),    # rounds up to 60 -> minute 00 of the NEXT hour (see below)
 ])
 def test_targets_minute_snap_to_5(minute, expected):
-    """Minutes snap to the nearest 5; 58 rounds up to 60 which wraps to 00."""
+    """Minutes snap to the nearest 5; 58 rounds up to 60 -> :00 of next hour."""
     s = _compute_schedule_targets(datetime(2026, 5, 13, 10, minute))
-    if minute == 58:
-        # Documents the wrap: rounding 58 up to 60 yields "00", which the
-        # picker accepts (the user just gets the next hour's :00 slot).
-        # Anyone relying on minute=58 should be aware they'll land on :00.
-        assert s["minute_value"] == "00"
-    else:
-        assert s["minute_value"] == expected
+    assert s["minute_value"] == expected
 
 
-def test_targets_minute_wrap_documents_hour_drift():
-    """Minute wrap to 00 does NOT bump the hour value — caller's responsibility.
-
-    This is a known quirk: if a user schedules 10:58, the minute snaps to 60
-    -> 00, but hour stays "10". The picker happily stores 10:00, which is
-    almost certainly not what the user wanted. A future fix would round the
-    full datetime to the nearest 5-minute mark before extracting components.
-    """
+def test_targets_minute_snap_carries_into_hour():
+    """Regression (CORR-002): snapping minute 58 up to 60 must CARRY into the
+    hour, not silently land on :00 of the same hour (which published ~58 min
+    early). 10:58 -> 11:00, not 10:00."""
     s = _compute_schedule_targets(datetime(2026, 5, 13, 10, 58))
     assert s["minute_value"] == "00"
-    assert s["hour_value"] == "10"  # not "11" — drift on purpose for now
+    assert s["hour_value"] == "11"   # carried, not "10"
+    assert s["ampm_value"] == "am"
+
+
+def test_targets_minute_snap_carries_across_midnight():
+    """23:58 snaps to 00:00 of the NEXT day — hour/day/month must all roll."""
+    s = _compute_schedule_targets(datetime(2026, 5, 31, 23, 58))
+    assert s["minute_value"] == "00"
+    assert s["hour_value"] == "00"        # midnight
+    assert s["ampm_value"] == "am"
+    assert s["day_id"] == "id-2026-06-01"  # rolled into June
+    assert s["header"] == "June 2026"
 
 
 # --------- _compute_schedule_targets: tz-aware ---------

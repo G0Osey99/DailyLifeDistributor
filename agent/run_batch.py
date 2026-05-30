@@ -232,8 +232,12 @@ def run(*, envelope: dict, paths: dict, emit,
         agent fleet where the operator may have fixed the broken session
         between runs.
     """
-    # Drop any breakers tripped by a previous run on this process.
-    circuit_breaker.reset_all()
+    # Drop the upload:* breakers tripped by a previous run on this process,
+    # so a fixed session isn't open-circuited by stale state (CONC-004). Scope
+    # to "upload:" rather than reset_all() so a non-run breaker like
+    # "llm:title" — not per-run state — isn't wiped out from under another
+    # component.
+    circuit_breaker.reset_prefix("upload:")
 
     yt_state = _YtState()
 

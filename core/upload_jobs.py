@@ -219,7 +219,11 @@ def _resolve_youtube_watch_url(iso_date, emit_phase):
     deadline = time.time() + timeout_s
     emit_phase("waiting_for_youtube")
     while time.time() < deadline:
-        res = session.upload_results.get(iso_date, {}).get("YouTube Video")
+        # CONC-006: read the two-level dict under the same RLock record_result
+        # writes through, so a concurrent setdefault()+assign can't expose a
+        # half-updated inner dict to this poller.
+        with session._lock:
+            res = session.upload_results.get(iso_date, {}).get("YouTube Video")
         if res is not None:
             if res.get("skipped"):
                 return "", "YouTube Video was skipped for this date."

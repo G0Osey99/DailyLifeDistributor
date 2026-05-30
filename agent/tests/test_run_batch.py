@@ -369,6 +369,43 @@ def test_rock_email_receives_real_youtube_url_key(monkeypatch, tmp_path):
     )
 
 
+def test_run_does_not_reset_non_upload_breakers(monkeypatch):
+    """Regression (CONC-004): run() must reset only the upload:* breakers,
+    not the whole registry. A non-run breaker like llm:title (used by the
+    title generator) must survive a run so its tripped state isn't wiped out
+    from under another component."""
+    from core import circuit_breaker
+    circuit_breaker.reset_all()
+    # Trip a non-upload breaker.
+    llm = circuit_breaker.get_breaker("llm:title", failure_threshold=1,
+                                      recovery_timeout=999999.0)
+    llm.record_failure()
+    assert not llm.allow(), "precondition: llm:title should be OPEN"
+
+    def _disp(*, platform, row, emit, paths, **_):
+        emit({"type": "event", "event": "success", "platform": platform,
+              "row_idx": row["row_idx"], "iso_date": row["iso_date"], "payload": {}})
+        return {"success": True}
+
+    monkeypatch.setattr(run_batch, "_dispatch_upload", _disp)
+    run_batch.run(
+        envelope={
+            "rows": [{"row_idx": 0, "iso_date": "2026-05-22",
+                      "platforms": ["Rock"],
+                      "entry": {"date": "2026-05-22", "display_date": "May 22, 2026"},
+                      "elements": {}}],
+            "config": {"max_workers": 1},
+        },
+        paths={"2026-05-22": {}}, emit=lambda f: None,
+    )
+    # The llm:title breaker must still be the same tripped instance.
+    llm_after = circuit_breaker.get_breaker("llm:title")
+    assert llm_after is llm and not llm_after.allow(), (
+        "run() wiped the llm:title breaker — reset_prefix scoping failed"
+    )
+    circuit_breaker.reset_all()
+
+
 def test_rock_email_aborts_when_yt_failed_no_url(monkeypatch):
     """If YT Video fails (no success event), the Rock Email row for the
     same date must NOT call rock_schedule_email — it should error out

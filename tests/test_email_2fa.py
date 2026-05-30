@@ -42,3 +42,20 @@ def test_verify_garbage_returns_false(db, captured_emails):
     assert email_2fa.verify_login_code(user["id"], "abc") is False
     assert email_2fa.verify_login_code(user["id"], "0000000") is False
     assert email_2fa.verify_login_code(user["id"], "") is False
+
+
+def test_generate_rate_limited_per_user(db, captured_emails):
+    """SEC-005: at most _RATE_MAX codes per user per window. The next call is
+    suppressed (returns None, no new code, no extra email)."""
+    user = make_user(db, username="eve", email="eve@example.com")
+    with freeze_time("2026-05-23 12:00:00"):
+        for _ in range(email_2fa._RATE_MAX):
+            assert email_2fa.generate_login_code(user["id"]) is not None
+        sent_before = len(captured_emails)
+        # The next one within the window is suppressed.
+        assert email_2fa.generate_login_code(user["id"]) is None
+        assert len(captured_emails) == sent_before  # no extra email
+        assert len(db.get_unused_email_2fa_codes(user["id"])) == email_2fa._RATE_MAX
+    # After the window passes, sending resumes.
+    with freeze_time("2026-05-23 12:11:00"):
+        assert email_2fa.generate_login_code(user["id"]) is not None

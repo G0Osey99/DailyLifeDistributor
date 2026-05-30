@@ -957,6 +957,21 @@ def insert_email_2fa_code(*, user_id: int, code_hash: str, expires_at: str, crea
         return cur.lastrowid
 
 
+def count_email_2fa_codes_since(user_id: int, since_iso: str) -> int:
+    """Count email-2FA codes minted for *user_id* at/after *since_iso*.
+
+    Powers the per-user send rate limit (SEC-005) so a held partial token or
+    a logged-in user can't spam the victim's inbox / burn Resend quota.
+    """
+    with _get_conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM email_2fa_codes "
+            "WHERE user_id=? AND created_at>=?",
+            (user_id, since_iso),
+        ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 def get_unused_email_2fa_codes(user_id: int) -> list[dict]:
     with _get_conn() as c:
         rows = c.execute(

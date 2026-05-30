@@ -48,7 +48,10 @@ from core.quota import DAILY_QUOTA, get_quota_used
 from uploaders.youtube_uploader import (
     get_authenticated_service,
 )
-from app import _cached_yt_authenticated, invalidate_yt_auth_cache
+from core.yt_auth_cache import (
+    cached_yt_authenticated as _cached_yt_authenticated,
+    invalidate_yt_auth_cache,
+)
 
 bp = Blueprint("settings", __name__)
 

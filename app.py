@@ -55,60 +55,13 @@ def _configure_file_logging() -> None:
 
 from core import db as _db
 from core.env_validation import validate_env
-from uploaders.youtube_uploader import is_authenticated as yt_is_authenticated
-
-
-# Cache yt_is_authenticated() — context processor runs on every render and
-# the underlying call hits the encrypted store each time. The token now lives
-# in the DB (no file mtime to watch), so we re-check on a simple TTL instead.
-#
-# Keyed by effective org id (or a sentinel for the legacy / no-session case).
-# Before per-org credentials this was a single global cache — that turned
-# stale across impersonation, e.g. owner browses LCBC (cache fills with True),
-# starts acting as a tenant with no YT token, and the navbar still showed
-# "connected" for up to TTL seconds.
-_YT_AUTH_CACHE: dict = {}
-_YT_AUTH_TTL_SEC = 30.0  # Navbar hint only: a cleared/added token can take up to this long to reflect.
-
-
-def _cached_yt_authenticated() -> bool:
-    """Cache the YouTube-authenticated state for the navbar, per effective org.
-
-    The token now lives in the encrypted store (no file mtime to watch), so
-    we re-check at most every _YT_AUTH_TTL_SEC seconds rather than per request.
-    The cache key is the effective org id (impersonation-aware) so the
-    navbar reflects the org you're currently acting as.
-    """
-    try:
-        from core.org_context import effective_org_id
-        key = effective_org_id()
-    except Exception:
-        key = None
-    if key is None:
-        key = "__no_org__"
-    entry = _YT_AUTH_CACHE.get(key)
-    now = time.monotonic()
-    if entry is not None and (now - entry["checked_at"]) < _YT_AUTH_TTL_SEC:
-        return entry["value"]
-    try:
-        val = bool(yt_is_authenticated())
-    except Exception:
-        logging.getLogger(__name__).debug(
-            "_cached_yt_authenticated failed; treating as unauthenticated", exc_info=True
-        )
-        val = False
-    _YT_AUTH_CACHE[key] = {"value": val, "checked_at": now}
-    return val
-
-
-def invalidate_yt_auth_cache() -> None:
-    """Drop the cached YouTube-auth state so the next read re-checks the store.
-
-    Called right after the token changes (OAuth success, Clear Token) so the
-    Settings badge flips immediately instead of lagging up to the TTL.
-    """
-    _YT_AUTH_CACHE["value"] = None
-    _YT_AUTH_CACHE["checked_at"] = 0.0
+# YouTube navbar-auth cache moved to core/yt_auth_cache.py (ARCH-002) so the
+# settings blueprint imports it from a leaf module instead of `from app import`
+# (a backwards circular dependency). Re-exported here for existing callers.
+from core.yt_auth_cache import (  # noqa: F401 — re-export for app-level callers
+    cached_yt_authenticated as _cached_yt_authenticated,
+    invalidate_yt_auth_cache,
+)
 
 
 def create_app() -> Flask:

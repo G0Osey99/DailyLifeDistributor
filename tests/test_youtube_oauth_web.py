@@ -99,12 +99,15 @@ def logged_in_client(temp_db):
 
 
 def test_invalidate_yt_auth_cache_forces_recheck():
+    # The cache moved out of app.py into core/yt_auth_cache.py (ARCH-002);
+    # app re-exports invalidate_yt_auth_cache for callers.
+    from core import yt_auth_cache as y
     import app as a
-    a._YT_AUTH_CACHE["value"] = True
-    a._YT_AUTH_CACHE["checked_at"] = 10_000_000.0
+    y._YT_AUTH_CACHE["value"] = True
+    y._YT_AUTH_CACHE["checked_at"] = 10_000_000.0
     a.invalidate_yt_auth_cache()
-    assert a._YT_AUTH_CACHE["value"] is None
-    assert a._YT_AUTH_CACHE["checked_at"] == 0.0
+    assert y._YT_AUTH_CACHE["value"] is None
+    assert y._YT_AUTH_CACHE["checked_at"] == 0.0
 
 
 def test_callback_rejects_state_mismatch(logged_in_client):

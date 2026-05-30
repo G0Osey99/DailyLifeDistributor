@@ -302,7 +302,7 @@ when `HOSTED` is unset — `app.py` refuses to boot the combination).
 - `recovery_codes` — pre-generated one-time-use codes (10 per user, hashed at rest)
 - `recovery_requests` — user-initiated "I lost my factor" tickets the Owner approves
 - `audit_log` — every security-relevant action (login, 2fa change, invite, role change, password reset…)
-- `audit_log_archive` — nightly rollover at 03:00 UTC (`core.audit_archive`)
+- `audit_log_archive` — nightly rollover at 03:00 UTC (`core.audit_archive`); the rollover MOVES (not deletes) rows older than 365 days out of the hot `audit_log` table, so the main audit views keep a full year of immediately-queryable history and the archive holds the long tail
 - `email_2fa_codes` — 6-digit codes, 10-min TTL, rate-limited per user
 - `login_ip_sightings` — per-user IP history powering "new device sign-in" emails
 - `platform_locks` — coarse per-org per-platform mutex so two simultaneous runs in the same org don't tangle Playwright sessions
@@ -410,7 +410,7 @@ when `HOSTED` is unset — `app.py` refuses to boot the combination).
 | `core/recovery.py` | Pre-generated recovery codes — generate_recovery_codes, regenerate_codes, consume |
 | `core/recovery_request.py` | "I lost my factor" tickets the Owner approves; per-user 1/24h rate limit |
 | `core/audit.py` | `write_event(action, actor_user_id, metadata, ip, ua)` — single insert into `audit_log` |
-| `core/audit_archive.py` | Nightly rollover at 03:00 UTC: moves rows older than 90 days into `audit_log_archive` |
+| `core/audit_archive.py` | Nightly rollover at 03:00 UTC: moves rows older than 365 days into `audit_log_archive` |
 | `core/email.py` | Resend SDK wrapper; templates (welcome, invite, recovery, new-device, etc.); per-call breaker + retry |
 | `core/email_2fa.py` | 6-digit email codes, 10-min TTL, rate-limited per user |
 | `core/login_notifications.py` | "Sign-in from a new IP" emails — diffed against `login_ip_sightings` |

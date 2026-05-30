@@ -498,6 +498,15 @@ def run_batch(
 
     yt_video_expected = _build_yt_video_expected(batch_summary, skip_set)
 
+    # MAINT-001: the web run_batch was nearly silent in logs (only emit/DB
+    # failures) while the agent path logs every step — a failed web run was
+    # almost untriageable. Log run start + per-row outcomes with session_id
+    # correlation, mirroring agent/run_batch.
+    logger.info(
+        "run_batch start: session=%s dates=%d rows=%d skipped=%d max_workers=%d",
+        session_id, len(set(dates)), len(batch_summary), len(skip_set), max_workers,
+    )
+
     def emit_safe(payload):
         try:
             emit(payload)
@@ -621,6 +630,13 @@ def run_batch(
                 continue
 
             session.record_result(iso_date, item["platform"], result)
+            logger.info(
+                "run_batch row done: session=%s date=%s platform=%s success=%s%s",
+                session_id, item["date"], item["platform"],
+                bool(result.get("success")),
+                "" if result.get("success") else
+                f" error={result.get('error') or 'unknown'}",
+            )
             if result.get("skipped"):
                 emit_safe({"type": "skip", "row": idx, "date": item["date"], "platform": item["platform"]})
             elif result.get("success"):

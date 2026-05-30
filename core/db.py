@@ -293,6 +293,17 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_audit_actor_time "
             "ON audit_log(actor_user_id, created_at)"
         )
+        # PERF-010: the archive is the table that grows unboundedly over years;
+        # list_audit_archive orders by created_at DESC and the nightly rollover
+        # selects audit_log WHERE created_at<? — give both a created_at index.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_archive_time "
+            "ON audit_log_archive(created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_created_at "
+            "ON audit_log(created_at)"
+        )
         # Phase per-org-creds: every audit row carries the impersonated org
         # (NULL when the actor was acting as themselves) so an investigator
         # can answer "what did the program owner do while acting as org N?"
@@ -849,6 +860,34 @@ def get_history(session_id: str | None = None, limit: int = 100,
     if session_id:
         clauses.append("session_id = ?")
         args.append(session_id)
+    if org_id is not None:
+        clauses.append("(org_id = ? OR org_id IS NULL)")
+        args.append(int(org_id))
+    sql = (
+        "SELECT * FROM upload_history WHERE " + " AND ".join(clauses)
+        + " ORDER BY uploaded_at DESC LIMIT ?"
+    )
+    args.append(limit)
+    with _get_conn() as conn:
+        rows = conn.execute(sql, args).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_history_for_sessions(session_ids, *, org_id: int | None = None,
+                             limit: int = 5000) -> list[dict]:
+    """Fetch upload_history rows for several sessions in ONE query (PERF-002).
+
+    Replaces the /history N+1 (a per-session get_history in a loop). Ordered
+    by uploaded_at DESC like get_history; the caller groups by session_id.
+    Uses idx_uh_skip (leading session_id). org_id scopes to one tenant,
+    including pre-migration NULL-org rows.
+    """
+    ids = list(session_ids)
+    if not ids:
+        return []
+    qmarks = ",".join("?" for _ in ids)
+    clauses = [f"session_id IN ({qmarks})"]
+    args: list = list(ids)
     if org_id is not None:
         clauses.append("(org_id = ? OR org_id IS NULL)")
         args.append(int(org_id))

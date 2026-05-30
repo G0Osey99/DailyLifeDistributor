@@ -83,6 +83,46 @@ def test_rock_email_waits_for_youtube_video_result(monkeypatch):
     assert seen["watch_url_at_email_start"] == "https://yt/x"
 
 
+def test_session_expired_is_infra_failure_and_trips_breaker(monkeypatch):
+    """Regression (ARCH-005): a Playwright SessionExpiredError is an INFRA
+    failure (like the web path). It must trip the breaker so the agent fails
+    fast instead of re-launching Chrome and burning the login timeout on
+    every remaining date. Before the fix it was caught by the generic
+    'data failure' handler (neutral to the breaker), so all 5 rows ran."""
+    from core import circuit_breaker
+    from core.playwright_session import SessionExpiredError
+    circuit_breaker.reset_all()
+
+    calls = {"n": 0}
+
+    def _disp(*, platform, row, emit, paths, **_):
+        calls["n"] += 1
+        raise SessionExpiredError("rock session expired")
+
+    monkeypatch.setattr(run_batch, "_dispatch_upload", _disp)
+    rows = [
+        {"row_idx": i, "iso_date": f"2026-05-{20 + i:02d}",
+         "platforms": ["Rock"],
+         "entry": {"date": f"2026-05-{20 + i:02d}", "display_date": f"May {20 + i}, 2026"},
+         "elements": {}}
+        for i in range(5)
+    ]
+    run_batch.run(
+        envelope={
+            "rows": rows,
+            "config": {"max_workers": 1,
+                       "circuit_breaker": {"failure_threshold": 3,
+                                           "recovery_timeout_seconds": 60}},
+        },
+        paths={r["iso_date"]: {} for r in rows},
+        emit=lambda f: None,
+    )
+    assert calls["n"] == 3, (
+        f"SessionExpiredError did not trip the breaker (ran {calls['n']} rows)"
+    )
+    circuit_breaker.reset_all()
+
+
 def test_circuit_breaker_short_circuits_after_threshold(monkeypatch):
     """3 consecutive transient failures trip the breaker; 4th+ call is skipped."""
     from core import circuit_breaker

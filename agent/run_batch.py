@@ -28,10 +28,16 @@ except Exception:
     class _PlaywrightTimeout(Exception):  # type: ignore
         """Placeholder when Playwright isn't importable."""
 
+from core.playwright_session import SessionExpiredError
+
 # Infrastructure failures that count toward opening the breaker.
 # Per-row data failures (missing file, bad title) should NOT trip it.
+# Must mirror core/upload_jobs._INFRA_FAILURES — a Playwright session expiry
+# is infra (re-launching Chrome won't help), so it has to trip the breaker;
+# otherwise the agent burns the full login timeout on every remaining date.
 _INFRA_FAILURES = (
     _PlaywrightTimeout,
+    SessionExpiredError,
     ConnectionError,
     TimeoutError,
     OSError,

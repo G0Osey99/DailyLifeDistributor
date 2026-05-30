@@ -724,14 +724,17 @@ def upsert_external_items(items: list[dict], *, org_id: int | None = None) -> No
 
 def mark_stale_external_items(
     platform: str, iso_start: str, iso_end: str, seen_ids: set[str],
-    *, org_id: int | None = None,
+    *, org_id: int | None,
 ) -> int:
     """Flip status='deleted' for rows in [iso_start, iso_end] for this platform
     whose external_id is NOT in `seen_ids`. Returns affected row count.
 
     *org_id* scopes the staleness pass so a refresh for org A doesn't mark
-    org B's items as deleted. None preserves the legacy (system-wide)
-    behavior for callers that haven't been migrated.
+    org B's items as deleted. ``org_id`` is a REQUIRED keyword (CORR-012):
+    passing ``None`` is an explicit opt-in to the legacy system-wide behavior
+    (marks across ALL tenants). Making it required means a hosted caller that
+    forgets to thread the tenant's org_id fails loudly with a TypeError at the
+    call site instead of silently deleting another org's scheduled items.
     """
     org_clause = ""
     org_args: tuple = ()

@@ -25,3 +25,20 @@ def test_archive_is_idempotent_when_no_old_rows(db):
     audit.write_event(action="user.login", actor_user_id=1, org_id=1)
     n = audit_archive.archive_old_entries()
     assert n == 0
+
+
+def test_archive_preserves_acting_as_org_id(db):
+    """SEC-002: the rollover copy must keep acting_as_org_id — it records the
+    org a program owner was impersonating. The previous 10-column copy
+    dropped it, silently losing impersonation provenance on archive."""
+    with freeze_time("2025-01-01"):
+        audit.write_event(action="role.changed", actor_user_id=7, org_id=1,
+                          acting_as_org_id=42)
+    with freeze_time("2026-05-23"):
+        moved = audit_archive.archive_old_entries(batch_size=100)
+    assert moved == 1
+    archived = db.list_audit_archive(limit=10)
+    assert len(archived) == 1
+    assert archived[0]["acting_as_org_id"] == 42, (
+        "acting_as_org_id was dropped during archive rollover"
+    )

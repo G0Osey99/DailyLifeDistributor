@@ -1027,12 +1027,16 @@ def archive_audit_batch(cutoff_iso: str, batch_size: int) -> int:
         if not ids:
             return 0
         placeholders = ",".join("?" * len(ids))
+        # acting_as_org_id MUST be copied: it records the org a program owner
+        # was impersonating when the action happened. Dropping it on archive
+        # (the previous 10-column copy) silently lost impersonation provenance
+        # the moment a row aged out — exactly the audit trail it exists for.
         c.execute(
             f"INSERT INTO audit_log_archive "
             f"  (id, org_id, actor_user_id, action, target_type, target_id, "
-            f"   metadata, ip, user_agent, created_at) "
+            f"   metadata, ip, user_agent, created_at, acting_as_org_id) "
             f"SELECT id, org_id, actor_user_id, action, target_type, target_id, "
-            f"       metadata, ip, user_agent, created_at "
+            f"       metadata, ip, user_agent, created_at, acting_as_org_id "
             f"FROM audit_log WHERE id IN ({placeholders})",
             ids,
         )

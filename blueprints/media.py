@@ -322,7 +322,12 @@ def _run_batch_worker(job_id, run_id, dates, summary, file_paths,
     def emit(payload):
         if q is not None:
             try:
-                q.put(json.dumps(payload))
+                # put_nowait, never a blocking put: the queue is bounded
+                # (maxsize=_QUEUE_MAXSIZE). If the SSE consumer stalls and the
+                # queue fills, a blocking put would hang this worker's finally
+                # block forever (job["done"] never set → 5-min stuck spinner).
+                # Dropping an event is acceptable; hanging the worker is not.
+                q.put_nowait(json.dumps(payload))
             except Exception as e:  # noqa: BLE001 — a dropped event must not kill the worker
                 _log.debug("media: dropped SSE event for run %s: %s", run_id, e)
 
@@ -354,11 +359,14 @@ def _run_batch_worker(job_id, run_id, dates, summary, file_paths,
         rec = _active_run(run_id)
         if rec is not None:
             rec["bytes_total"] = max(0, rec.get("bytes_total", 0) - freed)
-        emit({"type": "batch_done", "run_id": run_id})
-        emit({"type": "done"})
+        # Set the terminal flags BEFORE emitting, so the SSE consumer's
+        # job["done"] poll (blueprints/upload.py) terminates even if the
+        # batch_done/done events are dropped by a full/stalled queue.
         if job is not None:
             job["done"] = True
             job["finished_at"] = time.time()
+        emit({"type": "batch_done", "run_id": run_id})
+        emit({"type": "done"})
 
 
 @bp.route("/media/batch/run", methods=["POST"])
@@ -383,6 +391,15 @@ def batch_run():
     files = data.get("files") or {}
     # Per-date user edits from the customize step: {iso: {field: value}}.
     overrides = data.get("overrides") or {}
+
+    # TYPE-002: `or {}` only rescues falsy values — a non-empty wrong-type
+    # (e.g. a JSON list) would slip through and AttributeError on .items()
+    # below, 500-ing the request and leaving the run lock held. Reject
+    # malformed shapes with a clean 400 like the other handshake errors.
+    if not isinstance(files, dict):
+        return jsonify({"error": "files must be an object"}), 400
+    if not isinstance(overrides, dict):
+        return jsonify({"error": "overrides must be an object"}), 400
 
     # Reassembly handshake: every declared file-id must be fully received.
     # A shared physical file may map to several (category, date) placements,

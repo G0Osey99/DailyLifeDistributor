@@ -57,7 +57,7 @@ def test_rock_email_waits_for_youtube_video_result(monkeypatch):
             time.sleep(0.05)
             emit({"type": "event", "event": "success", "platform": "YouTube Video",
                   "row_idx": row["row_idx"], "iso_date": row["iso_date"],
-                  "payload": {"watch_url": "https://yt/x"}})
+                  "payload": {"url": "https://yt/x"}})
             yt_done_evt.set()
             return {"success": True}
         if platform == "Rock Email":
@@ -205,7 +205,7 @@ def test_sequential_runs_do_not_leak_yt_state(monkeypatch):
         if platform == "YouTube Video":
             emit({"type": "event", "event": "success", "platform": "YouTube Video",
                   "row_idx": row["row_idx"], "iso_date": row["iso_date"],
-                  "payload": {"watch_url": f"https://yt/{row['iso_date']}"}})
+                  "payload": {"url": f"https://yt/{row['iso_date']}"}})
             return {"success": True}
         if platform == "Rock Email":
             seen_watch_urls.append(row.get("yt_watch_url"))
@@ -280,6 +280,52 @@ def test_run_resets_circuit_breakers_so_a_tripped_breaker_does_not_block(monkeyp
     )
     assert calls == ["Rock"], (
         f"breaker was not reset; dispatch was blocked. calls={calls}"
+    )
+
+
+def test_rock_email_receives_real_youtube_url_key(monkeypatch, tmp_path):
+    """Regression (CORR-001): the bundled YouTube uploader returns the watch
+    link under result key ``"url"`` (not ``"watch_url"``). The agent's
+    success-event payload is built from ``result.items()``, so the payload
+    key is ``"url"`` too. _run_one must extract ``url`` to feed yt_state;
+    otherwise a same-date Rock Email row resolves ``None`` and aborts.
+
+    This drives the REAL _dispatch_upload (no monkeypatch on it) so the
+    uploader-result-key -> payload-key -> _run_one-extraction chain is
+    exercised end to end. Fails when _run_one reads "watch_url".
+    """
+    from uploaders import youtube_uploader
+    from uploaders.rock import email as rock_email
+
+    def _fake_yt(entry, is_short=False, dry_run=False, elements=None,
+                 progress_callback=None, event_callback=None):
+        # Mirror the real uploader's success contract: link under "url".
+        return {"success": True, "url": "https://yt/REAL", "video_id": "v"}
+
+    schedule_calls = []
+
+    def _fake_schedule(entry, *, youtube_watch_url, elements=None,
+                       progress_callback=None):
+        schedule_calls.append(youtube_watch_url)
+        return {"success": True}
+
+    monkeypatch.setattr(youtube_uploader, "upload_video", _fake_yt)
+    monkeypatch.setattr(rock_email, "schedule_email", _fake_schedule)
+
+    run_batch.run(
+        envelope={
+            "rows": [{"row_idx": 0, "iso_date": "2026-05-22",
+                      "platforms": ["YouTube Video", "Rock Email"],
+                      "entry": {"date": "2026-05-22", "display_date": "May 22, 2026"},
+                      "elements": {}}],
+            "config": {"max_workers": 4},
+        },
+        paths={"2026-05-22": {}}, emit=lambda f: None,
+    )
+
+    assert schedule_calls == ["https://yt/REAL"], (
+        "Rock Email did not receive the YouTube watch URL — the agent read the "
+        f"wrong payload key. schedule_calls={schedule_calls}"
     )
 
 

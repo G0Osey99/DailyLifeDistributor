@@ -152,8 +152,13 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
         if any(f.get("event") == "success" for f in captured):
             breaker.record_success()
             if platform == "YouTube Video":
+                # The bundled YouTube uploader returns the watch link under
+                # result key "url"; the success-event payload is built from
+                # result.items() (see _dispatch_upload), so the key is "url"
+                # here too. Reading "watch_url" silently yielded None and
+                # broke the same-date Rock-Email handoff on the agent path.
                 url = next(
-                    (f.get("payload", {}).get("watch_url")
+                    (f.get("payload", {}).get("url")
                      for f in captured if f.get("event") == "success"),
                     None,
                 )
@@ -345,9 +350,18 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
                   "percent": percent, "bytes_sent": bytes_sent,
                   "bytes_total": bytes_total, "eta_seconds": eta_seconds})
 
+        def _event_cb(payload):
+            # Forward the uploader's processing-phase events (phase_change,
+            # processing_start/done) so the dashboard sees the same signals
+            # on the agent path as the web path (which passes event_callback).
+            payload.setdefault("platform", platform)
+            payload.setdefault("row_idx", row["row_idx"])
+            payload.setdefault("iso_date", iso)
+            emit(payload)
+
         result = youtube_uploader.upload_video(
             e, is_short=False, elements=elements,
-            progress_callback=_progress_cb,
+            progress_callback=_progress_cb, event_callback=_event_cb,
         )
 
     elif platform == "YouTube Shorts":

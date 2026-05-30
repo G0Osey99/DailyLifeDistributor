@@ -53,6 +53,24 @@ def test_batch_run_rejected_if_file_incomplete(client):
     assert resp.status_code == 409
 
 
+def test_batch_run_rejects_non_dict_files_with_400(client):
+    """TYPE-002: `files`/`overrides` are read with `or {}`, which only
+    rescues falsy values. A non-empty wrong-type (JSON list) used to slip
+    through and AttributeError on .items() → 500 with the run lock still
+    held. It must now be a clean 400."""
+    run_id = _init(client)
+    resp = client.post("/media/batch/run", json={
+        "run_id": run_id, "dates": ["2025-05-21"], "platforms": ["youtube_video"],
+        "files": ["not", "a", "dict"],
+    })
+    assert resp.status_code == 400, resp.get_data(as_text=True)
+    resp2 = client.post("/media/batch/run", json={
+        "run_id": run_id, "dates": ["2025-05-21"], "platforms": ["youtube_video"],
+        "files": {}, "overrides": ["bad"],
+    })
+    assert resp2.status_code == 400
+
+
 def test_batch_run_happy_path_deletes_temp_files(client, monkeypatch):
     captured = {}
 

@@ -7,10 +7,12 @@ B4: skeleton + parallel pool (real dispatch added in B5/B6).
 B5: circuit breaker + email-after-YT ordering.
 B6: real per-platform dispatch into bundled uploaders.
 Phase 3: per-run YT state (no module-level mutation between runs),
-         circuit_breaker.reset_all() at the start of each run, and a
-         Rock-Email guard that mirrors core/upload_jobs._dispatch_upload —
-         when YT was expected but returned no URL, error out instead of
-         calling rock_schedule_email with a blank link.
+         circuit_breaker.reset_prefix("upload:") at the start of each run
+         (resets only the upload:* breakers, not unrelated ones like
+         llm:title — see CONC-004), and a Rock-Email guard that mirrors
+         core/upload_jobs._dispatch_upload — when YT was expected but
+         returned no URL, error out instead of calling rock_schedule_email
+         with a blank link.
 """
 from __future__ import annotations
 
@@ -28,10 +30,16 @@ except Exception:
     class _PlaywrightTimeout(Exception):  # type: ignore
         """Placeholder when Playwright isn't importable."""
 
+from core.playwright_session import SessionExpiredError
+
 # Infrastructure failures that count toward opening the breaker.
 # Per-row data failures (missing file, bad title) should NOT trip it.
+# Must mirror core/upload_jobs._INFRA_FAILURES — a Playwright session expiry
+# is infra (re-launching Chrome won't help), so it has to trip the breaker;
+# otherwise the agent burns the full login timeout on every remaining date.
 _INFRA_FAILURES = (
     _PlaywrightTimeout,
+    SessionExpiredError,
     ConnectionError,
     TimeoutError,
     OSError,
@@ -152,8 +160,13 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
         if any(f.get("event") == "success" for f in captured):
             breaker.record_success()
             if platform == "YouTube Video":
+                # The bundled YouTube uploader returns the watch link under
+                # result key "url"; the success-event payload is built from
+                # result.items() (see _dispatch_upload), so the key is "url"
+                # here too. Reading "watch_url" silently yielded None and
+                # broke the same-date Rock-Email handoff on the agent path.
                 url = next(
-                    (f.get("payload", {}).get("watch_url")
+                    (f.get("payload", {}).get("url")
                      for f in captured if f.get("event") == "success"),
                     None,
                 )
@@ -215,14 +228,19 @@ def run(*, envelope: dict, paths: dict, emit,
 
     Phase 3:
       - Per-run _YtState (no module-level mutation between calls).
-      - circuit_breaker.reset_all() at the top so a breaker tripped by a
-        previous run doesn't open-circuit the new one. The registry is
-        process-global; per-run resets are a safe default for a single-
-        agent fleet where the operator may have fixed the broken session
-        between runs.
+      - circuit_breaker.reset_prefix("upload:") at the top so an upload
+        breaker tripped by a previous run doesn't open-circuit the new one.
+        The registry is process-global; per-run resets are a safe default for
+        a single-agent fleet where the operator may have fixed the broken
+        session between runs. Scoped to "upload:" so non-run breakers
+        (e.g. llm:title) survive — see CONC-004.
     """
-    # Drop any breakers tripped by a previous run on this process.
-    circuit_breaker.reset_all()
+    # Drop the upload:* breakers tripped by a previous run on this process,
+    # so a fixed session isn't open-circuited by stale state (CONC-004). Scope
+    # to "upload:" rather than reset_all() so a non-run breaker like
+    # "llm:title" — not per-run state — isn't wiped out from under another
+    # component.
+    circuit_breaker.reset_prefix("upload:")
 
     yt_state = _YtState()
 
@@ -345,9 +363,18 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
                   "percent": percent, "bytes_sent": bytes_sent,
                   "bytes_total": bytes_total, "eta_seconds": eta_seconds})
 
+        def _event_cb(payload):
+            # Forward the uploader's processing-phase events (phase_change,
+            # processing_start/done) so the dashboard sees the same signals
+            # on the agent path as the web path (which passes event_callback).
+            payload.setdefault("platform", platform)
+            payload.setdefault("row_idx", row["row_idx"])
+            payload.setdefault("iso_date", iso)
+            emit(payload)
+
         result = youtube_uploader.upload_video(
             e, is_short=False, elements=elements,
-            progress_callback=_progress_cb,
+            progress_callback=_progress_cb, event_callback=_event_cb,
         )
 
     elif platform == "YouTube Shorts":

@@ -201,6 +201,7 @@ class ExcelParser:
 
         result: dict = {}
         skipped_dates = 0
+        duplicate_dates = 0
         for row in rows:
             raw_date = row.get(date_col, "")
             dt = self._parse_date(raw_date)
@@ -232,10 +233,27 @@ class ExcelParser:
                 "topic":          col("topic_column"),
                 "vista_caption":  col("vista_caption_column"),
             })
-            result[dt.isoformat()] = entry
+            iso = dt.isoformat()
+            # CORR-011: a duplicate/typo date row silently overwrote the
+            # earlier row's metadata (last-write-win) with no signal. Preserve
+            # that behavior but count + surface it so the operator can spot a
+            # sheet mistake instead of losing a day's mapped fields silently.
+            if iso in result:
+                duplicate_dates += 1
+                logger.warning(
+                    "Excel: duplicate row for date %s — keeping the last; the "
+                    "earlier row's mapped fields are dropped", iso,
+                )
+            result[iso] = entry
 
         if skipped_dates:
             logger.info("Excel: skipped %d row(s) with unparseable dates", skipped_dates)
+        if duplicate_dates:
+            logger.info("Excel: %d duplicate date row(s) (last-write-win)", duplicate_dates)
+            self.last_error = (
+                f"{duplicate_dates} duplicate date row(s) in the sheet were "
+                "collapsed (last row wins). Check for repeated dates."
+            )
         self._cache = result
         self._cache_mtime = current_mtime
         return result

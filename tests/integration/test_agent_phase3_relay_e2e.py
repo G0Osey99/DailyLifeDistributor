@@ -296,9 +296,14 @@ def test_happy_path_relays_events_and_records_upload(running_server, monkeypatch
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         try:
-            ev = sse_queue.get(timeout=deadline - time.monotonic())
+            raw = sse_queue.get(timeout=deadline - time.monotonic())
         except Exception:
             break
+        # The per-job SSE queue holds JSON STRINGS (the server emits via
+        # q.put(json.dumps(payload)) — see blueprints/media.py /
+        # core/agent_dispatch.py). Parse before inspecting, mirroring the
+        # json.loads() the relay-frame assertion above already does.
+        ev = json.loads(raw) if isinstance(raw, str) else raw
         seen.append(ev)
         if ev.get("event") == "done":
             break

@@ -53,7 +53,7 @@ def test_window_filters_by_iso_date(temp_db):
 
 def test_window_excludes_deleted_status(temp_db):
     temp_db.upsert_external_items([_make_item(external_id="a")])
-    temp_db.mark_stale_external_items("youtube_video", "2026-05-01", "2026-05-31", seen_ids=set())
+    temp_db.mark_stale_external_items("youtube_video", "2026-05-01", "2026-05-31", seen_ids=set(), org_id=None)
     rows = temp_db.get_external_items_for_window("2026-05-01", "2026-05-31")
     assert rows == []
 
@@ -63,7 +63,7 @@ def test_mark_stale_only_affects_named_platform(temp_db):
         _make_item(platform="youtube_video", external_id="yt1"),
         _make_item(platform="rock", external_id="r1"),
     ])
-    temp_db.mark_stale_external_items("youtube_video", "2026-05-01", "2026-05-31", seen_ids=set())
+    temp_db.mark_stale_external_items("youtube_video", "2026-05-01", "2026-05-31", seen_ids=set(), org_id=None)
     rows = temp_db.get_external_items_for_window("2026-05-01", "2026-05-31")
     assert {r["external_id"] for r in rows} == {"r1"}
 
@@ -74,10 +74,40 @@ def test_mark_stale_keeps_seen_ids_alive(temp_db):
         _make_item(external_id="drop"),
     ])
     temp_db.mark_stale_external_items(
-        "youtube_video", "2026-05-01", "2026-05-31", seen_ids={"keep"}
+        "youtube_video", "2026-05-01", "2026-05-31", seen_ids={"keep"}, org_id=None
     )
     rows = temp_db.get_external_items_for_window("2026-05-01", "2026-05-31")
     assert {r["external_id"] for r in rows} == {"keep"}
+
+
+def test_mark_stale_requires_org_id_keyword(temp_db):
+    """CORR-012: org_id is a required keyword. Omitting it must raise a
+    TypeError at the call site rather than silently defaulting to the
+    system-wide (cross-tenant) delete path."""
+    import pytest
+    temp_db.upsert_external_items([_make_item(external_id="a")], org_id=1)
+    with pytest.raises(TypeError):
+        temp_db.mark_stale_external_items(
+            "youtube_video", "2026-05-01", "2026-05-31", seen_ids=set()
+        )
+
+
+def test_mark_stale_scoped_to_org_leaves_other_tenant_rows(temp_db):
+    """CORR-012 / A6-03: a staleness pass for org 2 must NOT mark org 1's
+    rows deleted. The previous org_id=None default inverted the NULL-
+    inclusion read pattern on the write side and deleted across all tenants."""
+    temp_db.upsert_external_items([_make_item(external_id="org1")], org_id=1)
+    temp_db.upsert_external_items([_make_item(external_id="org2")], org_id=2)
+    # Refresh for org 2 saw nothing this run (seen_ids empty) → marks org 2
+    # stale only.
+    temp_db.mark_stale_external_items(
+        "youtube_video", "2026-05-01", "2026-05-31", seen_ids=set(), org_id=2
+    )
+    org1_rows = temp_db.get_external_items_for_window(
+        "2026-05-01", "2026-05-31", org_id=1)
+    assert {r["external_id"] for r in org1_rows} == {"org1"}, (
+        "org 1's row was deleted by an org-2 staleness pass"
+    )
 
 
 def test_record_upload_stores_external_id(temp_db):

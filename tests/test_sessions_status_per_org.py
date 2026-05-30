@@ -27,8 +27,9 @@ def app(tmp_path, monkeypatch):
     core.db.init_db()
     import app as m; importlib.reload(m)
     # Reset the YT cache between fixtures so values from a sibling test
-    # don't leak across.
-    m._YT_AUTH_CACHE.clear()
+    # don't leak across. The cache moved to core.yt_auth_cache (ARCH-002).
+    import core.yt_auth_cache as _yac
+    _yac._YT_AUTH_CACHE.clear()
     return m.app
 
 
@@ -102,7 +103,7 @@ def test_yt_cache_is_keyed_by_effective_org(app, monkeypatch):
     OAuth credentials in the secret store. The cache layer is what we're
     pinning here, not the credential parser.
     """
-    import app as m
+    import core.yt_auth_cache as _yac
     from core.org_context import effective_org_id
     org_a = org_store.create_org(name="A", slug="a")
     org_b = org_store.create_org(name="B", slug="b")
@@ -115,8 +116,8 @@ def test_yt_cache_is_keyed_by_effective_org(app, monkeypatch):
     # Org A: authed. Org B: not. Anything else: shouldn't be queried.
     def fake_is_authed():
         return effective_org_id() == org_a["id"]
-    monkeypatch.setattr(m, "yt_is_authenticated", fake_is_authed)
-    m._YT_AUTH_CACHE.clear()
+    monkeypatch.setattr(_yac, "yt_is_authenticated", fake_is_authed)
+    _yac._YT_AUTH_CACHE.clear()
 
     client = app.test_client()
     _login_as(client, user["id"], org_a["id"])

@@ -10,14 +10,20 @@ def app():
     return Flask(__name__)
 
 
-def _call(app, headers=None, remote="9.9.9.9"):
+def _call(app, headers=None, remote="9.9.9.9", hosted=True):
     """Invoke _client_ip inside a Flask test_request_context with the given
-    headers + REMOTE_ADDR. Returns the resolved string."""
+    headers + REMOTE_ADDR. Returns the resolved string.
+
+    *hosted* controls is_hosted() — forwarded headers are only trusted on the
+    hosted deploy (SEC-006). The proxy-trust tests run with hosted=True.
+    """
+    from unittest.mock import patch
     from blueprints.agent import _client_ip
     h = headers or {}
-    with app.test_request_context(headers=h, environ_overrides={
-        "REMOTE_ADDR": remote,
-    }):
+    with patch("core.hosted.is_hosted", return_value=hosted), \
+            app.test_request_context(headers=h, environ_overrides={
+                "REMOTE_ADDR": remote,
+            }):
         return _client_ip()
 
 
@@ -67,4 +73,20 @@ def test_empty_cf_falls_through_to_xff(app):
 def test_empty_xff_falls_through_to_remote(app):
     """An empty X-Forwarded-For (or whitespace) doesn't override remote_addr."""
     ip = _call(app, headers={"X-Forwarded-For": "   "}, remote="9.9.9.9")
+    assert ip == "9.9.9.9"
+
+
+def test_cf_ignored_when_not_hosted(app):
+    """SEC-006: off the hosted tunnel, CF-Connecting-IP is attacker-controlled
+    and must be ignored — fall back to remote_addr."""
+    ip = _call(app, headers={"CF-Connecting-IP": "1.2.3.4"}, remote="9.9.9.9",
+               hosted=False)
+    assert ip == "9.9.9.9"
+
+
+def test_xff_ignored_when_not_hosted(app):
+    """SEC-006: off the hosted tunnel, X-Forwarded-For is spoofable and must
+    be ignored — fall back to remote_addr."""
+    ip = _call(app, headers={"X-Forwarded-For": "5.6.7.8"}, remote="9.9.9.9",
+               hosted=False)
     assert ip == "9.9.9.9"

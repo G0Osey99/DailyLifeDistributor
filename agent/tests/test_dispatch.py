@@ -87,6 +87,31 @@ def test_handle_job_plan_stamps_job_id_on_frames_that_already_have_it(monkeypatc
     assert done_frames[0]["job_id"] == "J1"
 
 
+def test_handle_job_plan_malformed_envelope_emits_error_and_done(monkeypatch):
+    """TYPE-001: a malformed/drifted job_plan (missing rows or job_id) must
+    emit an error + terminal done so the dashboard SSE stream closes — not
+    KeyError silently and hang the UI forever. run_batch must NOT run."""
+    ran = {"called": False}
+
+    def _should_not_run(*, envelope, paths, emit, cancel_event=None):
+        ran["called"] = True
+
+    monkeypatch.setattr(dispatch, "_run_batch_run", _should_not_run)
+    monkeypatch.setattr(dispatch, "_resolve_paths", lambda rows: {})
+
+    for bad in (
+        ["not", "a", "dict"],                            # not an object
+        {"type": "job_plan", "rows": []},               # no job_id
+        {"type": "job_plan", "job_id": "J9", "rows": "nope"},  # rows wrong type
+    ):
+        transport = StubTransport()
+        dispatch.handle_job_plan(plan=bad, transport=transport)
+        events = [(f["type"], f.get("event")) for f in transport.sent]
+        assert ("event", "error") in events, f"no error frame for {bad}"
+        assert ("event", "done") in events, f"no terminal done for {bad}"
+    assert not ran["called"], "run_batch ran on a malformed envelope"
+
+
 def test_handle_job_plan_emits_error_and_done_on_run_batch_crash(monkeypatch):
     """If run_batch raises, dispatch catches it, emits error + done."""
     monkeypatch.setattr(dispatch, "_resolve_paths", lambda rows: {})

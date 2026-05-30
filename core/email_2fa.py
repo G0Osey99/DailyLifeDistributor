@@ -20,16 +20,33 @@ log = logging.getLogger(__name__)
 _TTL = timedelta(minutes=10)
 _BCRYPT_ROUNDS = 10
 
+# SEC-005: per-user send rate limit. The send paths (login email-2FA GET,
+# settings send-email-code / enable-email) are otherwise unthrottled, so a
+# held partial token or a logged-in user could spam the victim's inbox and
+# burn Resend quota. Cap the number of codes minted+emailed per window.
+_RATE_MAX = 3
+_RATE_WINDOW = timedelta(minutes=10)
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def generate_login_code(user_id: int) -> str:
+def generate_login_code(user_id: int) -> str | None:
     """Mint a fresh 6-digit code, store hashed, email plaintext to the user.
 
-    Returns the plain code so callers (and tests) can introspect it.
+    Returns the plain code, or ``None`` when the per-user send rate limit
+    (SEC-005) is hit — in which case no new code is minted or emailed and the
+    user falls back to the most recent code already sent within the window.
+    Callers ignore the return value; tests introspect it.
     """
+    since_iso = (_now() - _RATE_WINDOW).isoformat()
+    if _db.count_unused_email_2fa_codes_since(user_id, since_iso) >= _RATE_MAX:
+        log.warning(
+            "email-2FA send rate limit hit for user_id=%s (>=%d unused in %s); "
+            "suppressing extra code", user_id, _RATE_MAX, _RATE_WINDOW,
+        )
+        return None
     code = f"{secrets.randbelow(10**6):06d}"
     h = bcrypt.hashpw(
         code.encode("utf-8"), bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)

@@ -90,8 +90,9 @@ def handle_job_plan(*, plan: dict, transport: Any) -> None:
     This function blocks until the job completes (or crashes).  It is
     intended to be called from a background thread in agent/main.py.
     """
-    job_id = plan["job_id"]
-    _rows = plan.get("rows") or plan.get("payload", {}).get("rows") or []
+    job_id = plan.get("job_id") if isinstance(plan, dict) else None
+    _rows = (plan.get("rows") or plan.get("payload", {}).get("rows") or []
+             ) if isinstance(plan, dict) else []
     _logger.info(
         "dispatch: handling job_plan job=%s rows=%d",
         (job_id or "?")[:8], len(_rows),
@@ -108,6 +109,18 @@ def handle_job_plan(*, plan: dict, transport: Any) -> None:
         except Exception as exc:
             _logger.warning("transport.send failed: %s", exc)
 
+    # TYPE-001: validate the envelope shape before doing any work. A malformed
+    # or schema-drifted frame (not a dict, missing job_id, or rows not a list)
+    # previously KeyError'd on plan["job_id"]/plan["rows"] BEFORE the try below,
+    # was swallowed by agent/main.py with NO error frame emitted, and left the
+    # dashboard's SSE stream hanging forever ("clicked Upload, agent did
+    # nothing"). Emit a clean error + terminal done so the stream closes.
+    if not isinstance(plan, dict) or not job_id or not isinstance(_rows, list):
+        _emit({"type": "event", "event": "error",
+               "error": "malformed job_plan: missing job_id or rows"})
+        _emit({"type": "event", "event": "done"})
+        return
+
     # Install shims fresh for this job — credentials from the envelope.
     shim = _sshim.install_as_core_secrets_store(
         initial=dict(plan.get("credentials") or {}),
@@ -115,7 +128,7 @@ def handle_job_plan(*, plan: dict, transport: Any) -> None:
     )
     _dshim.install_as_core_db(emit=_emit)
 
-    paths = _resolve_paths(plan["rows"])
+    paths = _resolve_paths(_rows)
     cancel_evt = _register_cancel(job_id)
     try:
         _run_batch_run(envelope=plan, paths=paths, emit=_emit,

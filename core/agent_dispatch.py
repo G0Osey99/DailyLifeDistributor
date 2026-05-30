@@ -28,6 +28,11 @@ _PLATFORM_KEYS: dict[str, tuple[str, ...]] = {
     "YouTube Shorts": ("youtube.token", "youtube.client_secrets"),
     "Rock":           ("playwright.rock_session",),
     "Rock Email":     ("playwright.rock_session",),
+    # Canonical platform string is "SimpleCast" (capital C) — the spelling
+    # emitted in the run summary (core/session_state.py) and matched by the
+    # web dispatch (core/upload_jobs.py). "Simplecast" is kept as a defensive
+    # alias so a stray lowercase spelling still resolves the credential.
+    "SimpleCast":     ("playwright.simplecast_session",),
     "Simplecast":     ("playwright.simplecast_session",),
     "Vista Social":   ("playwright.vista_social_session",),
 }
@@ -174,7 +179,16 @@ def on_frame(frame: dict) -> None:
         # bytearray, not dict".
         payload = {k: v for k, v in frame.items() if k not in ("v", "type", "job_id")}
         import json as _json
-        job["queue"].put(_json.dumps(payload))
+        try:
+            # put_nowait, never a blocking put: the SSE queue is bounded
+            # (_QUEUE_MAXSIZE). A closed/stalled dashboard tab stops draining
+            # it; a blocking put would then wedge this relay frame-handler
+            # thread forever (no further agent frames processed, thread leaks).
+            # Mirrors the web path (blueprints/media.py). Dropping a frame
+            # under back-pressure is acceptable; hanging the handler is not.
+            job["queue"].put_nowait(_json.dumps(payload))
+        except Exception as exc:  # noqa: BLE001 — queue.Full or shutdown
+            _logger.debug("agent_dispatch: dropped SSE frame (queue full?): %s", exc)
         return
     elif ftype == "credentials_updated":
         key, value = frame.get("key"), frame.get("value")

@@ -138,6 +138,22 @@ def test_collect_credentials_omits_missing_keys():
     assert agent_dispatch.collect_credentials(platforms_in_use={"Rock"}) == {}
 
 
+def test_collect_credentials_for_simplecast_canonical_string():
+    """Regression (ARCH-001): the canonical platform string emitted in the
+    run summary and matched by the web dispatch is "SimpleCast" (capital C).
+    _PLATFORM_KEYS must key off that exact string, or collect_credentials
+    silently omits the simplecast_session blob from the agent envelope and
+    the agent SimpleCast upload fails with a session-expired error instead
+    of running."""
+    from core import agent_dispatch, secrets_store
+    secrets_store.set_blob("playwright.simplecast_session", b'{"s":1}')
+    creds = agent_dispatch.collect_credentials(platforms_in_use={"SimpleCast"})
+    assert "playwright.simplecast_session" in creds, (
+        "SimpleCast session credential was not collected — _PLATFORM_KEYS "
+        "key does not match the canonical 'SimpleCast' platform string."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Phase 3.5 — _pick_device fallback chain
 # ---------------------------------------------------------------------------

@@ -222,3 +222,15 @@ def reset_all() -> None:
     """Drop every registered breaker. Used by the test suite for isolation."""
     with _registry_lock:
         _registry.clear()
+
+
+def reset_prefix(prefix: str) -> None:
+    """Drop every registered breaker whose name starts with *prefix*.
+
+    Lets a caller reset its own family of breakers (e.g. the ``upload:*``
+    breakers at the start of an upload run) without wiping unrelated ones
+    like ``llm:title`` that other components depend on.
+    """
+    with _registry_lock:
+        for name in [n for n in _registry if n.startswith(prefix)]:
+            del _registry[name]

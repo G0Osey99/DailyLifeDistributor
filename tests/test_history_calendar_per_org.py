@@ -94,6 +94,33 @@ def test_get_history_window_scoped_by_org(app):
     assert titles_b == {"B vid"}
 
 
+def test_get_history_for_sessions_groups_and_scopes(app):
+    """PERF-002: one IN-query returns rows for several sessions, org-scoped,
+    so /history can group in Python instead of issuing a per-session query."""
+    org_a = org_store.create_org(name="A", slug="a")
+    org_b = org_store.create_org(name="B", slug="b")
+    _seed_session("s-a1", "A1", org_a["id"])
+    _seed_session("s-a2", "A2", org_a["id"])
+    _seed_session("s-b1", "B1", org_b["id"])
+    _seed_upload("s-a1", "2026-05-10", "YouTube Video", "A1 vid", org_a["id"])
+    _seed_upload("s-a1", "2026-05-10", "SimpleCast", "A1 pod", org_a["id"])
+    _seed_upload("s-a2", "2026-05-11", "YouTube Video", "A2 vid", org_a["id"])
+    _seed_upload("s-b1", "2026-05-12", "YouTube Video", "B1 vid", org_b["id"])
+
+    rows = _db.get_history_for_sessions(["s-a1", "s-a2"], org_id=org_a["id"])
+    by_session: dict = {}
+    for r in rows:
+        by_session.setdefault(r["session_id"], []).append(r)
+    assert set(by_session) == {"s-a1", "s-a2"}
+    assert len(by_session["s-a1"]) == 2
+    assert len(by_session["s-a2"]) == 1
+    # org B's row must not leak in even if its id were requested.
+    leaked = _db.get_history_for_sessions(["s-b1"], org_id=org_a["id"])
+    assert leaked == []
+    # Empty input → no query, empty list.
+    assert _db.get_history_for_sessions([], org_id=org_a["id"]) == []
+
+
 def test_pre_migration_null_org_rows_visible_to_each_tenant(app):
     """Rows with org_id IS NULL (pre-migration data) must surface to any
     org's view so the migration cutover doesn't make historical data

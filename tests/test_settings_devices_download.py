@@ -63,3 +63,32 @@ def test_settings_download_section_visible_with_devices(app):
     r = client.get("/settings/devices")
     assert r.status_code == 200
     assert b'data-test-id="settings-download-section"' in r.data
+
+
+def test_settings_devices_does_not_leak_other_users_devices(app):
+    """SEC-001: /settings/devices must show only the caller's own devices.
+
+    Previously it rendered the system-wide list_devices(), so any
+    authenticated user saw every other tenant's device inventory. User B
+    (a different, non-program-owner user, even in the same org) must not
+    see user A's device."""
+    from core import db
+    # User A owns a distinctively-named device.
+    _client_a, uid_a = _make_user(app)
+    with db._get_conn() as c:
+        c.execute(
+            "INSERT INTO agent_devices "
+            "(id, name, token_hash, created_at, last_seen_at, revoked, user_id) "
+            "VALUES ('devA', 'STUDIO-LAPTOP-A', 't', datetime('now'), "
+            "datetime('now'), 0, ?)",
+            (uid_a,),
+        )
+        c.commit()
+    # User B is a different user (same org 1) with no devices of their own.
+    client_b, _uid_b = _make_user(app)
+    r = client_b.get("/settings/devices")
+    assert r.status_code == 200
+    assert b"STUDIO-LAPTOP-A" not in r.data, (
+        "cross-tenant device leak: user B saw user A's device name"
+    )
+    assert b"devA" not in r.data

@@ -48,7 +48,10 @@ from core.quota import DAILY_QUOTA, get_quota_used
 from uploaders.youtube_uploader import (
     get_authenticated_service,
 )
-from app import _cached_yt_authenticated, invalidate_yt_auth_cache
+from core.yt_auth_cache import (
+    cached_yt_authenticated as _cached_yt_authenticated,
+    invalidate_yt_auth_cache,
+)
 
 bp = Blueprint("settings", __name__)
 
@@ -752,9 +755,25 @@ def devices_page():
     only time there can be devices to manage).
     """
     from core import devices as _devices
+    from core.org_context import real_user_id
+    from flask import session as _sess
+    # SEC-001: scope to the caller's own devices. list_devices() is the
+    # system-wide admin view; rendering it here leaked every other tenant's
+    # device inventory (id, name, hostname, hwid_hash) to any authenticated
+    # user. Mirror GET /agent/devices: program-owner / legacy single-tenant
+    # session sees all; everyone else sees only the devices they own.
+    uid = real_user_id()
+    legacy = bool(_sess.get("authenticated") and _sess.get("user_id") is None)
+    is_owner = uid is not None and _is_program_owner(uid)
+    if legacy or is_owner:
+        device_list = _devices.list_devices()
+    elif uid is not None:
+        device_list = _devices.list_devices_for_user(uid)
+    else:
+        device_list = []
     return render_template(
         "devices.html",
-        devices=_devices.list_devices(),
+        devices=device_list,
         hybrid_enabled=os.environ.get("HYBRID_AGENT_ENABLED", "").lower()
             in ("1", "true", "yes"),
         device_name_max_len=_devices.DEVICE_NAME_MAX_LEN,

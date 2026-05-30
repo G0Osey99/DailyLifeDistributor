@@ -41,6 +41,25 @@ def _base_url() -> str:
         return "https://autoalert.pro"
 
 
+def _request_expired(rrow: dict) -> bool:
+    """SEC-003: a recovery request has a 48h TTL (recovery_request._REQ_TTL),
+    written to expires_at at submit time but previously never enforced — so an
+    Owner could approve a months-old request and the reset link was bounded
+    only by the 1h token age minted at approval. Treat an unparseable / NULL
+    expires_at (legacy pre-column rows) as not-expired so in-flight requests
+    aren't broken; the approved/consumed guards still apply."""
+    raw = rrow.get("expires_at")
+    if not raw:
+        return False
+    try:
+        exp = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return False
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    return exp < datetime.now(timezone.utc)
+
+
 @bp.get("/recover")
 def recover_form():
     return render_template("recover.html")
@@ -69,6 +88,11 @@ def approve(request_id: int):
         return render_template(
             "recover.html",
             message="This request has already been processed.",
+        )
+    if _request_expired(rrow):
+        return render_template(
+            "recover.html",
+            message="This recovery request has expired. Ask the user to submit a new one.",
         )
     approver_id = session.get("user_id")
     if not approver_id or not _db.user_owns_any_org_with(
@@ -160,6 +184,11 @@ def reset_submit():
             token=token,
             error="Token already used.",
         ), 400
+    # NOTE: the 48h request expiry (_request_expired) is enforced at APPROVE
+    # time, not here. The reset token has its own independent 1-hour max_age
+    # (loads() above), so an approval issued late in the 48h window still
+    # yields a usable 1h reset link; re-checking expires_at here would reject
+    # a legitimately-approved reset whose token is still valid.
     h = hashlib.sha256(token.encode("utf-8")).hexdigest()
     if rrow.get("password_reset_token_hash") != h:
         abort(400)

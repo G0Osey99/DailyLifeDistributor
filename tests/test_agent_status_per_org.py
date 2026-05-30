@@ -100,10 +100,13 @@ def test_agent_status_youtube_reads_resolved_org(app, monkeypatch):
     # under token auth; without the override the check sees no org and
     # returns False.
     from core.org_context import effective_org_id
+    # The YT-auth cache + its yt_is_authenticated seam moved to
+    # core.yt_auth_cache (ARCH-002); patch it there.
+    import core.yt_auth_cache as _yac
     def fake_is_authed():
         return effective_org_id() == org["id"]
-    monkeypatch.setattr(app_module, "yt_is_authenticated", fake_is_authed)
-    app_module._YT_AUTH_CACHE.clear()
+    monkeypatch.setattr(_yac, "yt_is_authenticated", fake_is_authed)
+    _yac._YT_AUTH_CACHE.clear()
 
     token = _pair_and_get_token(user["id"])
     client = app.test_client()

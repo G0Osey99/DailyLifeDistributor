@@ -67,10 +67,13 @@ _JOB_RETENTION_SECONDS = 300
 _REAPER_INTERVAL_SECONDS = 60
 # Bound the queue so a closed-tab SSE consumer can't pin GBs of progress
 # events in memory. 1000 entries is ~5 GB of upload at 5 MB chunk granularity
-# — well past anything realistic. Lossy events (progress) drop on full;
-# milestone events (start/success/error/done) always block-put.
+# — well past anything realistic. Emitters use put_nowait (see
+# blueprints/media.py and core/agent_dispatch.py), so ANY event — including
+# milestones like 'done' — drops when the queue is full rather than blocking
+# the producer; terminal completion is conveyed out-of-band via job["done"]
+# (set BEFORE the done event is emitted), so the SSE consumer still terminates
+# even if the 'done' frame itself is dropped.
 _QUEUE_MAXSIZE = 1000
-_LOSSY_EVENT_TYPES = {"upload_progress", "progress", "phase_change"}
 
 _log = logging.getLogger(__name__)
 
@@ -219,7 +222,11 @@ def _resolve_youtube_watch_url(iso_date, emit_phase):
     deadline = time.time() + timeout_s
     emit_phase("waiting_for_youtube")
     while time.time() < deadline:
-        res = session.upload_results.get(iso_date, {}).get("YouTube Video")
+        # CONC-006: read the two-level dict under the same RLock record_result
+        # writes through, so a concurrent setdefault()+assign can't expose a
+        # half-updated inner dict to this poller.
+        with session._lock:
+            res = session.upload_results.get(iso_date, {}).get("YouTube Video")
         if res is not None:
             if res.get("skipped"):
                 return "", "YouTube Video was skipped for this date."
@@ -494,6 +501,15 @@ def run_batch(
 
     yt_video_expected = _build_yt_video_expected(batch_summary, skip_set)
 
+    # MAINT-001: the web run_batch was nearly silent in logs (only emit/DB
+    # failures) while the agent path logs every step — a failed web run was
+    # almost untriageable. Log run start + per-row outcomes with session_id
+    # correlation, mirroring agent/run_batch.
+    logger.info(
+        "run_batch start: session=%s dates=%d rows=%d skipped=%d max_workers=%d",
+        session_id, len(set(dates)), len(batch_summary), len(skip_set), max_workers,
+    )
+
     def emit_safe(payload):
         try:
             emit(payload)
@@ -542,8 +558,21 @@ def run_batch(
             return idx, item, result
 
     future_to_item: dict = {}
+    # CONC-003: submit Rock Email rows LAST. An email row blocks in
+    # _resolve_youtube_watch_url waiting on the same date's YouTube Video
+    # result; if email waiters fill every worker slot before the YouTube rows
+    # are picked up, the pool deadlocks (waiters hold all slots while the YT
+    # futures sit queued). Submitting every non-email row first means each
+    # YouTube Video row is started (or finished) before any waiter can take the
+    # last slot — its dependency always has a worker, so it always progresses.
+    # idx is the ORIGINAL enumerate index, preserved through the reorder, so
+    # dashboard row identity (the "row" field on every event) is unchanged.
+    submission_order = sorted(
+        enumerate(batch_summary),
+        key=lambda pair: pair[1].get("platform") == "Rock Email",
+    )
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for idx, item in enumerate(batch_summary):
+        for idx, item in submission_order:
             # Pre-submit cancel check: if cancel was signalled while we were
             # submitting earlier rows, short-circuit the rest of this loop
             # rather than queueing N more workers that'll each emit their
@@ -604,6 +633,13 @@ def run_batch(
                 continue
 
             session.record_result(iso_date, item["platform"], result)
+            logger.info(
+                "run_batch row done: session=%s date=%s platform=%s success=%s%s",
+                session_id, item["date"], item["platform"],
+                bool(result.get("success")),
+                "" if result.get("success") else
+                f" error={result.get('error') or 'unknown'}",
+            )
             if result.get("skipped"):
                 emit_safe({"type": "skip", "row": idx, "date": item["date"], "platform": item["platform"]})
             elif result.get("success"):
@@ -617,6 +653,23 @@ def run_batch(
                            "message": result.get("error") or "Unknown error"})
 
             if session_id:
+                # CONC-002: the skip_set was built once at batch start. Under a
+                # concurrent run for the same session, a (date, platform) can
+                # pass that check in both runs and reach here twice. Re-check
+                # immediately before the write so a successful row isn't
+                # duplicated in upload_history / the History view. (This keeps
+                # the persistence idempotent; fully preventing the concurrent
+                # double *upload* to the platform would need a per-(session,
+                # date, platform) claim — the PerUserRunLock already blocks the
+                # common same-user trigger.)
+                if (result.get("success")
+                        and _db.has_successful_upload(session_id, iso_date, item["platform"])):
+                    logger.info(
+                        "CONC-002: skipping duplicate upload_history write for "
+                        "(%s, %s, %s) — already recorded success",
+                        session_id, iso_date, item["platform"],
+                    )
+                    continue
                 try:
                     _db.record_upload(
                         session_id=session_id, iso_date=iso_date,

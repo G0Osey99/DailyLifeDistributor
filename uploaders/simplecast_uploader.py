@@ -28,7 +28,7 @@ Environment variables (all optional):
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
@@ -255,6 +255,16 @@ def _compute_schedule_targets(schedule_dt) -> dict:
             schedule_dt, exc_info=True,
         )
 
+    # Snap to the nearest 5-minute mark by rounding the WHOLE datetime, so an
+    # overflow carries into the hour (and day/month/year) instead of wrapping
+    # the minute back to :00 of the same hour. Previously
+    # ``(round(min/5)*5) % 60`` turned 10:58 into 10:00 — publishing ~58 min
+    # EARLY — and 23:58 into 23:00. Rounding the datetime keeps day_id / aria /
+    # header consistent with the snapped time across an hour or midnight roll.
+    snapped_minutes = round(target.minute / 5) * 5
+    target = (target.replace(minute=0, second=0, microsecond=0)
+              + timedelta(minutes=snapped_minutes))
+
     # The widget renders day cells with two handy hooks:
     #   * <div class="vc-day id-2026-05-13 ...">
     #   * <span aria-label="Wednesday, May 13, 2026" role="button" ...>
@@ -267,7 +277,7 @@ def _compute_schedule_targets(schedule_dt) -> dict:
                          f"{target.day}, {target.year}"),
         "header":       f"{target.strftime('%B')} {target.year}",
         "hour_value":   f"{target.hour % 12:02d}",
-        "minute_value": f"{(round(target.minute / 5) * 5) % 60:02d}",
+        "minute_value": f"{target.minute:02d}",
         "ampm_value":   "pm" if target.hour >= 12 else "am",
     }
 

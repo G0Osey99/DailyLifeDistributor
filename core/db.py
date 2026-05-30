@@ -293,6 +293,17 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_audit_actor_time "
             "ON audit_log(actor_user_id, created_at)"
         )
+        # PERF-010: the archive is the table that grows unboundedly over years;
+        # list_audit_archive orders by created_at DESC and the nightly rollover
+        # selects audit_log WHERE created_at<? — give both a created_at index.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_archive_time "
+            "ON audit_log_archive(created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_created_at "
+            "ON audit_log(created_at)"
+        )
         # Phase per-org-creds: every audit row carries the impersonated org
         # (NULL when the actor was acting as themselves) so an investigator
         # can answer "what did the program owner do while acting as org N?"
@@ -429,6 +440,20 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_upload_history_user "
             "ON upload_history(user_id)"
+        )
+        # PERF-001: the two query shapes that run most often and grow with the
+        # table — the idempotent-skip lookup (has_successful_upload, filters on
+        # session_id+iso_date+platform) and the calendar/history window
+        # (get_history_for_window / get_history, filter+ORDER BY on iso_date) —
+        # had no covering index and were full table scans. upload_history grows
+        # one row per (date,platform) forever, so add covering indexes.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_uh_skip "
+            "ON upload_history(session_id, iso_date, platform)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_uh_iso_date "
+            "ON upload_history(iso_date)"
         )
         # Multi-tenant phase δ: per-org per-platform soft mutex used by the
         # web upload dispatch. Primary key (org_id, platform) gives us a
@@ -710,14 +735,17 @@ def upsert_external_items(items: list[dict], *, org_id: int | None = None) -> No
 
 def mark_stale_external_items(
     platform: str, iso_start: str, iso_end: str, seen_ids: set[str],
-    *, org_id: int | None = None,
+    *, org_id: int | None,
 ) -> int:
     """Flip status='deleted' for rows in [iso_start, iso_end] for this platform
     whose external_id is NOT in `seen_ids`. Returns affected row count.
 
     *org_id* scopes the staleness pass so a refresh for org A doesn't mark
-    org B's items as deleted. None preserves the legacy (system-wide)
-    behavior for callers that haven't been migrated.
+    org B's items as deleted. ``org_id`` is a REQUIRED keyword (CORR-012):
+    passing ``None`` is an explicit opt-in to the legacy system-wide behavior
+    (marks across ALL tenants). Making it required means a hosted caller that
+    forgets to thread the tenant's org_id fails loudly with a TypeError at the
+    call site instead of silently deleting another org's scheduled items.
     """
     org_clause = ""
     org_args: tuple = ()
@@ -845,6 +873,34 @@ def get_history(session_id: str | None = None, limit: int = 100,
         return [dict(r) for r in rows]
 
 
+def get_history_for_sessions(session_ids, *, org_id: int | None = None,
+                             limit: int = 5000) -> list[dict]:
+    """Fetch upload_history rows for several sessions in ONE query (PERF-002).
+
+    Replaces the /history N+1 (a per-session get_history in a loop). Ordered
+    by uploaded_at DESC like get_history; the caller groups by session_id.
+    Uses idx_uh_skip (leading session_id). org_id scopes to one tenant,
+    including pre-migration NULL-org rows.
+    """
+    ids = list(session_ids)
+    if not ids:
+        return []
+    qmarks = ",".join("?" for _ in ids)
+    clauses = [f"session_id IN ({qmarks})"]
+    args: list = list(ids)
+    if org_id is not None:
+        clauses.append("(org_id = ? OR org_id IS NULL)")
+        args.append(int(org_id))
+    sql = (
+        "SELECT * FROM upload_history WHERE " + " AND ".join(clauses)
+        + " ORDER BY uploaded_at DESC LIMIT ?"
+    )
+    args.append(limit)
+    with _get_conn() as conn:
+        rows = conn.execute(sql, args).fetchall()
+        return [dict(r) for r in rows]
+
+
 # ---------- Phase γ: 2FA + audit log helpers ----------
 # Thin pass-throughs so blueprints can call `core.db.get_user_by_id(...)`
 # without importing `core.user_store` — the plan and the new modules
@@ -940,6 +996,25 @@ def insert_email_2fa_code(*, user_id: int, code_hash: str, expires_at: str, crea
         return cur.lastrowid
 
 
+def count_unused_email_2fa_codes_since(user_id: int, since_iso: str) -> int:
+    """Count UNUSED email-2FA codes minted for *user_id* at/after *since_iso*.
+
+    Powers the per-user send rate limit (SEC-005). Counting only *unused* codes
+    is deliberate: an attacker spamming the victim's inbox can't consume the
+    codes, so they pile up unused and trip the cap — while a legitimate user
+    who actually receives and *uses* each code never accumulates enough unused
+    codes to lock themselves out of the factor (the consumed codes drop out of
+    the count via used_at).
+    """
+    with _get_conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM email_2fa_codes "
+            "WHERE user_id=? AND created_at>=? AND used_at IS NULL",
+            (user_id, since_iso),
+        ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 def get_unused_email_2fa_codes(user_id: int) -> list[dict]:
     with _get_conn() as c:
         rows = c.execute(
@@ -1013,12 +1088,16 @@ def archive_audit_batch(cutoff_iso: str, batch_size: int) -> int:
         if not ids:
             return 0
         placeholders = ",".join("?" * len(ids))
+        # acting_as_org_id MUST be copied: it records the org a program owner
+        # was impersonating when the action happened. Dropping it on archive
+        # (the previous 10-column copy) silently lost impersonation provenance
+        # the moment a row aged out — exactly the audit trail it exists for.
         c.execute(
             f"INSERT INTO audit_log_archive "
             f"  (id, org_id, actor_user_id, action, target_type, target_id, "
-            f"   metadata, ip, user_agent, created_at) "
+            f"   metadata, ip, user_agent, created_at, acting_as_org_id) "
             f"SELECT id, org_id, actor_user_id, action, target_type, target_id, "
-            f"       metadata, ip, user_agent, created_at "
+            f"       metadata, ip, user_agent, created_at, acting_as_org_id "
             f"FROM audit_log WHERE id IN ({placeholders})",
             ids,
         )

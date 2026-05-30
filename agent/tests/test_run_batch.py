@@ -57,7 +57,7 @@ def test_rock_email_waits_for_youtube_video_result(monkeypatch):
             time.sleep(0.05)
             emit({"type": "event", "event": "success", "platform": "YouTube Video",
                   "row_idx": row["row_idx"], "iso_date": row["iso_date"],
-                  "payload": {"watch_url": "https://yt/x"}})
+                  "payload": {"url": "https://yt/x"}})
             yt_done_evt.set()
             return {"success": True}
         if platform == "Rock Email":
@@ -81,6 +81,46 @@ def test_rock_email_waits_for_youtube_video_result(monkeypatch):
         emit=emitted.append,
     )
     assert seen["watch_url_at_email_start"] == "https://yt/x"
+
+
+def test_session_expired_is_infra_failure_and_trips_breaker(monkeypatch):
+    """Regression (ARCH-005): a Playwright SessionExpiredError is an INFRA
+    failure (like the web path). It must trip the breaker so the agent fails
+    fast instead of re-launching Chrome and burning the login timeout on
+    every remaining date. Before the fix it was caught by the generic
+    'data failure' handler (neutral to the breaker), so all 5 rows ran."""
+    from core import circuit_breaker
+    from core.playwright_session import SessionExpiredError
+    circuit_breaker.reset_all()
+
+    calls = {"n": 0}
+
+    def _disp(*, platform, row, emit, paths, **_):
+        calls["n"] += 1
+        raise SessionExpiredError("rock session expired")
+
+    monkeypatch.setattr(run_batch, "_dispatch_upload", _disp)
+    rows = [
+        {"row_idx": i, "iso_date": f"2026-05-{20 + i:02d}",
+         "platforms": ["Rock"],
+         "entry": {"date": f"2026-05-{20 + i:02d}", "display_date": f"May {20 + i}, 2026"},
+         "elements": {}}
+        for i in range(5)
+    ]
+    run_batch.run(
+        envelope={
+            "rows": rows,
+            "config": {"max_workers": 1,
+                       "circuit_breaker": {"failure_threshold": 3,
+                                           "recovery_timeout_seconds": 60}},
+        },
+        paths={r["iso_date"]: {} for r in rows},
+        emit=lambda f: None,
+    )
+    assert calls["n"] == 3, (
+        f"SessionExpiredError did not trip the breaker (ran {calls['n']} rows)"
+    )
+    circuit_breaker.reset_all()
 
 
 def test_circuit_breaker_short_circuits_after_threshold(monkeypatch):
@@ -205,7 +245,7 @@ def test_sequential_runs_do_not_leak_yt_state(monkeypatch):
         if platform == "YouTube Video":
             emit({"type": "event", "event": "success", "platform": "YouTube Video",
                   "row_idx": row["row_idx"], "iso_date": row["iso_date"],
-                  "payload": {"watch_url": f"https://yt/{row['iso_date']}"}})
+                  "payload": {"url": f"https://yt/{row['iso_date']}"}})
             return {"success": True}
         if platform == "Rock Email":
             seen_watch_urls.append(row.get("yt_watch_url"))
@@ -281,6 +321,89 @@ def test_run_resets_circuit_breakers_so_a_tripped_breaker_does_not_block(monkeyp
     assert calls == ["Rock"], (
         f"breaker was not reset; dispatch was blocked. calls={calls}"
     )
+
+
+def test_rock_email_receives_real_youtube_url_key(monkeypatch, tmp_path):
+    """Regression (CORR-001): the bundled YouTube uploader returns the watch
+    link under result key ``"url"`` (not ``"watch_url"``). The agent's
+    success-event payload is built from ``result.items()``, so the payload
+    key is ``"url"`` too. _run_one must extract ``url`` to feed yt_state;
+    otherwise a same-date Rock Email row resolves ``None`` and aborts.
+
+    This drives the REAL _dispatch_upload (no monkeypatch on it) so the
+    uploader-result-key -> payload-key -> _run_one-extraction chain is
+    exercised end to end. Fails when _run_one reads "watch_url".
+    """
+    from uploaders import youtube_uploader
+    from uploaders.rock import email as rock_email
+
+    def _fake_yt(entry, is_short=False, dry_run=False, elements=None,
+                 progress_callback=None, event_callback=None):
+        # Mirror the real uploader's success contract: link under "url".
+        return {"success": True, "url": "https://yt/REAL", "video_id": "v"}
+
+    schedule_calls = []
+
+    def _fake_schedule(entry, *, youtube_watch_url, elements=None,
+                       progress_callback=None):
+        schedule_calls.append(youtube_watch_url)
+        return {"success": True}
+
+    monkeypatch.setattr(youtube_uploader, "upload_video", _fake_yt)
+    monkeypatch.setattr(rock_email, "schedule_email", _fake_schedule)
+
+    run_batch.run(
+        envelope={
+            "rows": [{"row_idx": 0, "iso_date": "2026-05-22",
+                      "platforms": ["YouTube Video", "Rock Email"],
+                      "entry": {"date": "2026-05-22", "display_date": "May 22, 2026"},
+                      "elements": {}}],
+            "config": {"max_workers": 4},
+        },
+        paths={"2026-05-22": {}}, emit=lambda f: None,
+    )
+
+    assert schedule_calls == ["https://yt/REAL"], (
+        "Rock Email did not receive the YouTube watch URL — the agent read the "
+        f"wrong payload key. schedule_calls={schedule_calls}"
+    )
+
+
+def test_run_does_not_reset_non_upload_breakers(monkeypatch):
+    """Regression (CONC-004): run() must reset only the upload:* breakers,
+    not the whole registry. A non-run breaker like llm:title (used by the
+    title generator) must survive a run so its tripped state isn't wiped out
+    from under another component."""
+    from core import circuit_breaker
+    circuit_breaker.reset_all()
+    # Trip a non-upload breaker.
+    llm = circuit_breaker.get_breaker("llm:title", failure_threshold=1,
+                                      recovery_timeout=999999.0)
+    llm.record_failure()
+    assert not llm.allow(), "precondition: llm:title should be OPEN"
+
+    def _disp(*, platform, row, emit, paths, **_):
+        emit({"type": "event", "event": "success", "platform": platform,
+              "row_idx": row["row_idx"], "iso_date": row["iso_date"], "payload": {}})
+        return {"success": True}
+
+    monkeypatch.setattr(run_batch, "_dispatch_upload", _disp)
+    run_batch.run(
+        envelope={
+            "rows": [{"row_idx": 0, "iso_date": "2026-05-22",
+                      "platforms": ["Rock"],
+                      "entry": {"date": "2026-05-22", "display_date": "May 22, 2026"},
+                      "elements": {}}],
+            "config": {"max_workers": 1},
+        },
+        paths={"2026-05-22": {}}, emit=lambda f: None,
+    )
+    # The llm:title breaker must still be the same tripped instance.
+    llm_after = circuit_breaker.get_breaker("llm:title")
+    assert llm_after is llm and not llm_after.allow(), (
+        "run() wiped the llm:title breaker — reset_prefix scoping failed"
+    )
+    circuit_breaker.reset_all()
 
 
 def test_rock_email_aborts_when_yt_failed_no_url(monkeypatch):

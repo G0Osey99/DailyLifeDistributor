@@ -21,8 +21,22 @@ def history():
     org_id = effective_org_id()
     sessions = _db.list_sessions(limit=50, org_id=org_id)
 
+    # PERF-002: one IN-query for all shown sessions, grouped in Python, instead
+    # of a per-session get_history (the old N+1 = up to 51 separate-connection
+    # full-table scans to render one page).
+    records_by_session: dict = {}
+    session_ids = [s["id"] for s in sessions]
+    # Budget = the old per-session limit (1000) × #sessions shown, so the
+    # single IN-query preserves the previous per-session row ceiling in
+    # aggregate (the old loop gave each session its own 1000). Bounded: at most
+    # 50 sessions → ≤50k rows, one query.
+    all_records = _db.get_history_for_sessions(
+        session_ids, org_id=org_id, limit=max(5000, len(session_ids) * 1000))
+    for r in all_records:
+        records_by_session.setdefault(r.get("session_id"), []).append(r)
+
     for s in sessions:
-        records = _db.get_history(session_id=s["id"], limit=1000, org_id=org_id)
+        records = records_by_session.get(s["id"], [])
         s["total_uploads"] = len(records)
         s["total_success"] = sum(1 for r in records if r.get("success"))
         s["records"] = records

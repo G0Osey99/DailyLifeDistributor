@@ -47,37 +47,41 @@ def try_acquire(
     now = _now()
     expires = now + timedelta(seconds=max(1, int(ttl_seconds)))
     with _get_conn() as c:
-        # 1. Clear any expired lease for this (org, platform).
+        # 1. Clear any expired lease for this (org, platform) so a stuck
+        #    worker can't block the next caller past its TTL.
         c.execute(
             "DELETE FROM platform_locks "
             "WHERE org_id = ? AND platform = ? AND expires_at <= ?",
             (org_id, platform, _iso(now)),
         )
-        # 2. Look at the current holder (if any).
+        # 2. Atomic claim-or-extend (CONC-001). The previous SELECT-then-
+        #    INSERT was a TOCTOU: two concurrent callers for the same
+        #    (org, platform) could both read "no holder" and both INSERT —
+        #    the loser hit an IntegrityError that bubbled up as an exception
+        #    while the winner had already started its upload, defeating the
+        #    mutex. A single INSERT ... ON CONFLICT serializes against
+        #    concurrent writers (SQLite is single-writer): insert if free; on
+        #    PK conflict extend the lease ONLY if we are already the holder,
+        #    leaving a different holder's row untouched.
+        c.execute(
+            "INSERT INTO platform_locks "
+            "(org_id, platform, locked_by_user_id, locked_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(org_id, platform) DO UPDATE SET "
+            "  locked_by_user_id = excluded.locked_by_user_id, "
+            "  locked_at = excluded.locked_at, "
+            "  expires_at = excluded.expires_at "
+            "WHERE platform_locks.locked_by_user_id = excluded.locked_by_user_id",
+            (org_id, platform, user_id, _iso(now), _iso(expires)),
+        )
+        c.commit()
+        # 3. Whoever owns the row now is the winner.
         row = c.execute(
             "SELECT locked_by_user_id FROM platform_locks "
             "WHERE org_id = ? AND platform = ?",
             (org_id, platform),
         ).fetchone()
-        if row is None:
-            c.execute(
-                "INSERT INTO platform_locks "
-                "(org_id, platform, locked_by_user_id, locked_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (org_id, platform, user_id, _iso(now), _iso(expires)),
-            )
-            c.commit()
-            return True
-        if int(row["locked_by_user_id"]) == int(user_id):
-            # Same user re-acquiring: extend the lease.
-            c.execute(
-                "UPDATE platform_locks SET locked_at = ?, expires_at = ? "
-                "WHERE org_id = ? AND platform = ?",
-                (_iso(now), _iso(expires), org_id, platform),
-            )
-            c.commit()
-            return True
-        return False
+        return row is not None and int(row["locked_by_user_id"]) == int(user_id)
 
 
 def release(org_id: int, platform: str, user_id: int) -> None:

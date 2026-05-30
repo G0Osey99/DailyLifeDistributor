@@ -11,6 +11,12 @@ from datetime import datetime, timedelta, timezone
 
 from core import db as _db
 
+# 365-day hot-table retention is deliberate (reconciled with the docs during
+# the 2026-05 audit, SEC-002): the rollover MOVES rows to audit_log_archive
+# rather than deleting them, so a longer window just keeps more history
+# immediately queryable in the main audit views at negligible cost given the
+# low audit-write volume. Lower this only if the hot table grows enough to
+# matter — the archive view (list_audit_archive) always holds the long tail.
 _RETENTION = timedelta(days=365)
 
 

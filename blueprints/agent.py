@@ -411,16 +411,24 @@ def _client_ip() -> str:
     "what the agent sees" and "what the browser sees" — Cloudflare
     routes both through the same CF-Connecting-IP normalization, so a
     browser + agent on the same LAN match on the egress IP.
+
+    SEC-006: forwarded headers are only trusted on the hosted deploy
+    (behind Cloudflare), mirroring blueprints/auth.py:_client_ip. Off the
+    tunnel any client can set CF-Connecting-IP / X-Forwarded-For freely;
+    trusting them ungated let a caller spoof same_network and nudge intra-
+    org device selection. When not hosted, use request.remote_addr only.
     """
-    cf = (request.headers.get("CF-Connecting-IP") or "").strip()
-    if cf:
-        return cf
-    xff = (request.headers.get("X-Forwarded-For") or "").strip()
-    if xff:
-        # First entry is the original client; the rest are proxies.
-        first = xff.split(",", 1)[0].strip()
-        if first:
-            return first
+    from core.hosted import is_hosted
+    if is_hosted():
+        cf = (request.headers.get("CF-Connecting-IP") or "").strip()
+        if cf:
+            return cf
+        xff = (request.headers.get("X-Forwarded-For") or "").strip()
+        if xff:
+            # First entry is the original client; the rest are proxies.
+            first = xff.split(",", 1)[0].strip()
+            if first:
+                return first
     return request.remote_addr or "unknown"
 
 

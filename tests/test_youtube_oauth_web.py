@@ -99,12 +99,20 @@ def logged_in_client(temp_db):
 
 
 def test_invalidate_yt_auth_cache_forces_recheck():
+    # The cache moved out of app.py into core/yt_auth_cache.py (ARCH-002);
+    # app re-exports invalidate_yt_auth_cache for callers. The cache is keyed
+    # by effective org id, so invalidate must clear the per-org entries (the
+    # old version set sibling 'value'/'checked_at' keys that no reader sees,
+    # leaving the real org entry stale — a no-op).
+    from core import yt_auth_cache as y
     import app as a
-    a._YT_AUTH_CACHE["value"] = True
-    a._YT_AUTH_CACHE["checked_at"] = 10_000_000.0
+    # Seed a realistic per-org entry (as cached_yt_authenticated would).
+    y._YT_AUTH_CACHE[42] = {"value": True, "checked_at": 10_000_000.0}
+    y._YT_AUTH_CACHE["__no_org__"] = {"value": True, "checked_at": 10_000_000.0}
     a.invalidate_yt_auth_cache()
-    assert a._YT_AUTH_CACHE["value"] is None
-    assert a._YT_AUTH_CACHE["checked_at"] == 0.0
+    # Every org entry is gone, so the next read re-checks the store.
+    assert 42 not in y._YT_AUTH_CACHE
+    assert "__no_org__" not in y._YT_AUTH_CACHE
 
 
 def test_callback_rejects_state_mismatch(logged_in_client):

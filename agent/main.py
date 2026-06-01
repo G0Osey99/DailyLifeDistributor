@@ -456,6 +456,27 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
     except Exception:
         log.debug("update check raised; continuing", exc_info=True)
 
+    # Bundled Chromium: point Playwright at our writable browsers dir now
+    # (cheap; flags bundled mode if a prior run already downloaded it), then
+    # pre-fetch the browser in the background so the first upload doesn't
+    # stall on a ~150 MB download. run_batch also ensures it defensively
+    # before launching, so a job that beats the prewarm still works — it just
+    # blocks on the download once. Best-effort: a blocked download degrades
+    # to the old channel='chrome' path (see agent/chromium.py).
+    try:
+        from agent import chromium as _chromium
+        _chromium.prepare_env()
+
+        def _prewarm() -> None:
+            try:
+                _chromium.ensure_chromium(progress=lambda m: log.info("chromium: %s", m))
+            except Exception:
+                log.debug("chromium prewarm raised; continuing", exc_info=True)
+
+        threading.Thread(target=_prewarm, name="chromium-prewarm", daemon=True).start()
+    except Exception:
+        log.debug("chromium prepare/prewarm setup raised; continuing", exc_info=True)
+
     print(f"Connecting to {server_url}...")
     print("Press Ctrl+C to stop.")
 
@@ -652,10 +673,32 @@ def _run_selfcheck() -> int:
             pw.stop()
         return "Playwright driver started + stopped"
 
+    def _bundled_chromium():
+        # Download (first run, ~150 MB) + actually launch the bundled Chromium
+        # headless. This is the real proof the agent can drive a browser
+        # without the user's system Chrome or the macOS Automation permission.
+        from agent import chromium as _chromium
+        if not _chromium.ensure_chromium(progress=lambda m: print(f"    {m}")):
+            raise RuntimeError(
+                "bundled Chromium unavailable (download blocked?) — would fall "
+                "back to system Chrome"
+            )
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            b = pw.chromium.launch(headless=True)
+            try:
+                ver = b.version
+                pg = b.new_page()
+                pg.goto("about:blank")
+            finally:
+                b.close()
+        return f"launched bundled Chromium {ver} headless"
+
     _check("core dataclasses (no Flask/PyYAML)", _import_dataclasses)
     _check("YouTube engine", _import_youtube)
     _check("Playwright uploaders import", _import_playwright_uploaders)
     _check("Playwright driver", _playwright_driver)
+    _check("Bundled Chromium download + launch", _bundled_chromium)
 
     ok = True
     for label, passed, detail in results:

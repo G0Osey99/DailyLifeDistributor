@@ -51,6 +51,10 @@ a = Analysis(
            + _playwright_data + _googleapi_data),
     hiddenimports=[
         'core.file_scanner',
+        # Imported function-level from agent/main.py + agent/run_batch.py
+        # (bundled-Chromium download/launch), which the static analysis can
+        # miss — list it so the frozen binary always carries it.
+        'agent.chromium',
         # The agent dispatch path imports these FUNCTION-LEVEL (run_batch
         # _make_elements / _entry_obj build ReviewEntry/UploadElements, and
         # _dispatch_upload imports the uploaders), which PyInstaller's static

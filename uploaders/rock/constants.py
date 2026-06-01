@@ -36,6 +36,11 @@ _CHROME_PATH = os.environ.get("ROCK_CHROME_PATH")
 # uploads can stall behind antivirus on the first byte.
 _NAV_TIMEOUT_MS = 30_000
 _UPLOAD_TIMEOUT_MS = 5 * 60_000
+# Image uploads are small (thumbnails); confirm the BinaryFile id flipped
+# within a short window rather than holding a full 5-min Save timeout. On
+# timeout the caller logs and proceeds to Save (non-fatal) instead of failing
+# the whole item — see RockBrowserClient._upload_image_by_selector.
+_IMAGE_UPLOAD_TIMEOUT_MS = 45_000
 
 
 # ---- Content Channels (captured during recon, 2026-04-27) ----

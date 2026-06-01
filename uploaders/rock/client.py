@@ -43,6 +43,7 @@ from .constants import (
     _CHANNEL_NAME_SPOTLIGHT,
     _CHANNEL_NAME_VISTA,
     _HOME_URL,
+    _IMAGE_UPLOAD_TIMEOUT_MS,
     _ITEM_URL_RE,
     _NAV_TIMEOUT_MS,
     _PROJECT_ROOT,
@@ -392,22 +393,53 @@ class RockBrowserClient:
     def _upload_image_by_selector(self, file_sel: str, hf_sel: str, path: Path) -> None:
         """Upload into an image-uploader addressed by explicit selectors.
 
-        Mirrors `_upload_image` but for widgets we target by id suffix
-        rather than by label. Waits until the widget's hidden binary-file id
-        flips from "0" to the new BinaryFile id — the value Save actually
-        posts — so we never click Save before the bytes have landed.
+        Mirrors `_upload_image` but for widgets we target by id suffix.
+        Waits until the widget's hidden binary-file id flips from "0" to the
+        new BinaryFile id — the value Save actually posts — so we don't click
+        Save before the bytes have landed.
+
+        Readiness detection: instead of the rigid ``hf_sel`` (an exact-id CSS
+        match that broke the Rock-Email thumbnail — it polled the full 5-min
+        timeout and failed the whole email), walk up from the file input to
+        the uploader container and look for the hidden BinaryFile field by
+        ``name`` OR ``id`` — the same resilient approach `_upload_image` uses.
+        Non-fatal: if readiness can't be confirmed in time we LOG and proceed
+        to Save anyway (the upload has very likely finished; Rock posts
+        whatever the hidden field holds — so a slow/undetected upload yields
+        an email without the thumbnail rather than a 5-minute hard failure).
         """
         page = self._page
         assert page is not None
         page.locator(file_sel).set_input_files(str(path))
-        page.wait_for_function(
-            """(sel) => {
-                const hf = document.querySelector(sel);
-                return !!(hf && hf.value && hf.value !== '0');
-            }""",
-            arg=hf_sel,
-            timeout=_UPLOAD_TIMEOUT_MS,
-        )
+        try:
+            page.wait_for_function(
+                """([fileSel, hfSel]) => {
+                    // Primary: the explicit hidden-field selector, if it matches.
+                    const direct = document.querySelector(hfSel);
+                    if (direct && direct.value && direct.value !== '0') return true;
+                    // Resilient: from the file input, walk up to the uploader
+                    // container and find the BinaryFile hidden input by name OR id.
+                    const fu = document.querySelector(fileSel);
+                    let c = fu ? fu.parentElement : null;
+                    for (let i = 0; i < 5 && c; i++) {
+                        const hf = c.querySelector(
+                            'input[name*="hfBinaryFileId"],input[id*="hfBinaryFileId"]');
+                        if (hf && hf.value && hf.value !== '0') return true;
+                        c = c.parentElement;
+                    }
+                    return false;
+                }""",
+                arg=[file_sel, hf_sel],
+                timeout=_IMAGE_UPLOAD_TIMEOUT_MS,
+            )
+        except PlaywrightTimeout:
+            log.warning(
+                "Rock image upload (%s) not confirmed within %ss; proceeding to "
+                "Save anyway — the email/item is created but may lack the image. "
+                "If the thumbnail is consistently missing, re-recon the widget "
+                "selectors (scripts/rock_email_recon.py).",
+                file_sel, _IMAGE_UPLOAD_TIMEOUT_MS // 1000,
+            )
 
     # -- link -------------------------------------------------------------
     #

@@ -203,10 +203,17 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
         if platform == "YouTube Video":
             yt_state.record(row["row_idx"], None)
     else:
+        ok = any(f.get("event") == "success" for f in captured)
+        # When an uploader returns {"success": False, ...} (a clean DATA
+        # failure, no exception) the reason is only in the emitted error frame
+        # — surface it in the log too, or a failed row is invisible here
+        # (just "success=False") and undiagnosable without the dashboard.
+        err = None if ok else next(
+            (f.get("error") for f in captured if f.get("event") == "error"), None)
         _logger.info(
-            "run_batch._run_one finished platform=%s row_idx=%s emits=%d success=%s",
-            platform, row.get("row_idx"), len(captured),
-            any(f.get("event") == "success" for f in captured),
+            "run_batch._run_one finished platform=%s row_idx=%s emits=%d success=%s%s",
+            platform, row.get("row_idx"), len(captured), ok,
+            f" error={err!r}" if err else "",
         )
 
 
@@ -376,6 +383,18 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
           "row_idx": row["row_idx"], "iso_date": iso})
 
     e = _entry_obj(row)
+
+    # Backfill the Wistia ref from the agent-resolved Shorts filename. On the
+    # agent path the SERVER builds the entry with no media (files live here),
+    # so its build_entry can't infer wistia_ref from the Shorts name and leaves
+    # it "" — which makes Rock's Spotlight fail pre-flight with
+    # "Rock can't run — missing: wistia_ref". The agent DOES have the Shorts
+    # file, so infer it here (the ref is the "app YYMMDD" label from the name).
+    if not getattr(e, "wistia_ref", ""):
+        _short = p.get("short_video")
+        if _short:
+            from core.session_state import infer_wistia_ref
+            e.wistia_ref = infer_wistia_ref(_short)
 
     if platform == "YouTube Video":
         e.youtube_video_path = p.get("video")

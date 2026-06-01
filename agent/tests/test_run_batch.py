@@ -83,6 +83,32 @@ def test_rock_email_waits_for_youtube_video_result(monkeypatch):
     assert seen["watch_url_at_email_start"] == "https://yt/x"
 
 
+def test_rock_dispatch_backfills_wistia_ref_from_shorts_path(monkeypatch):
+    """Regression: on the agent path the server builds the entry with no media,
+    so wistia_ref is "" and Rock's Spotlight fails pre-flight with
+    'missing: wistia_ref'. The agent has the Shorts file, so _dispatch_upload
+    must infer the ref ('app YYMMDD') from the resolved short_video path."""
+    from uploaders.rock import orchestrator as rock_orch
+    captured = {}
+
+    def _fake_rock(entry, *, elements=None, progress_callback=None):
+        captured["wistia_ref"] = getattr(entry, "wistia_ref", "")
+        return {"success": True, "url": "https://rock/x"}
+
+    monkeypatch.setattr(rock_orch, "upload_daily_experience", _fake_rock)
+    emitted = []
+    run_batch._dispatch_upload(
+        platform="Rock",
+        row={"row_idx": 0, "iso_date": "2026-06-02",
+             "entry": {"date": "2026-06-02", "display_date": "June 2, 2026",
+                       "wistia_ref": ""}},
+        emit=emitted.append,
+        paths={"2026-06-02": {"short_video": "/m/App_Shorts/app 260602.mp4",
+                              "video": "/m/v.mp4", "thumbnail": "/m/t.jpg"}},
+    )
+    assert captured["wistia_ref"] == "app 260602", captured
+
+
 def test_entry_obj_parses_iso_schedule_datetimes():
     """Regression: JSON has no datetime type, so schedule datetimes cross the
     job envelope as ISO strings. _entry_obj must parse them back to datetime

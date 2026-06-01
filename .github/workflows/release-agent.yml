@@ -117,7 +117,8 @@ jobs:
           # approach as the cffi/cryptography step above — so the one
           # universal2 agent drives Chrome on BOTH Apple Silicon and Intel.
           set -euxo pipefail
-          PW_VER=$(python -c "import playwright,sys;sys.stdout.write(playwright.__version__)")
+          # playwright has no __version__ attr; read the installed dist version.
+          PW_VER=$(python -c "import importlib.metadata as m,sys; sys.stdout.write(m.version('playwright'))")
           PW_DIR=$(python -c "import playwright,os,sys;sys.stdout.write(os.path.dirname(playwright.__file__))")
           NODE="$PW_DIR/driver/node"
           echo "runner-installed node:"; file "$NODE"

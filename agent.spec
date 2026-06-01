@@ -41,6 +41,13 @@ a = Analysis(
     datas=[('agent/release_pubkey.pem', 'agent')] + _ctk_data + _certifi_data,
     hiddenimports=[
         'core.file_scanner',
+        # The agent dispatch path imports these FUNCTION-LEVEL (run_batch
+        # _make_elements / _entry_obj build ReviewEntry/UploadElements), which
+        # PyInstaller's static analysis misses — so without listing them the
+        # bundle dropped the chain and the agent crashed on first dispatch.
+        'core.session_state',
+        'core.config',
+        'core.circuit_breaker',
         'keyring.backends.Windows',
         'keyring.backends.macOS',
         # GUI deps — explicit so an analysis-time miss doesn't surface

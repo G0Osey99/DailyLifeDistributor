@@ -72,6 +72,12 @@ _NETWORK_YOUTUBE = "youtube"
 
 _DEFAULT_TIMEOUT = 30_000      # 30 s
 _UPLOAD_TIMEOUT = 600_000      # 10 min for video upload + processing
+# How long to keep re-clicking "Next" while a connected network (Instagram)
+# is still validating the just-uploaded video. The operator confirms IG
+# accepts these Shorts videos when posted by hand, so a content-validation
+# toast here means "video not finished processing yet", not "rejected" —
+# we retry until the date picker mounts or this budget is spent.
+_SCHEDULE_ADVANCE_TIMEOUT_S = int(os.environ.get("VISTA_SCHEDULE_ADVANCE_TIMEOUT", "180"))
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +99,85 @@ _VS_SESSION_CONFIG = SessionConfig(
     default_timeout_ms=_DEFAULT_TIMEOUT,
     no_login_recovery=is_hosted(),
 )
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+def _vista_debug_dir() -> str:
+    """Directory for schedule-step DOM dumps. Prefers the persistent /data
+    volume on the hosted VPS (survives container restarts, readable over SSH)
+    and falls back to a repo-local .vista-debug elsewhere."""
+    base = "/data/vista-debug" if os.path.isdir("/data") else os.path.join(
+        _PROJECT_ROOT, ".vista-debug")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _capture_debug(page, label: str) -> str:
+    """Dump a screenshot + HTML + a compact triage JSON of the current page.
+
+    Best-effort — never raises (a failing capture must not mask the real
+    error). Returns the directory written, or "" on total failure. Used to
+    root-cause the Vista schedule step blind, where we can't see the live DOM:
+    one re-run leaves a full snapshot on disk we can read back.
+    """
+    try:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        out = os.path.join(_vista_debug_dir(), f"{label}-{stamp}")
+        os.makedirs(out, exist_ok=True)
+        try:
+            page.screenshot(path=os.path.join(out, "screenshot.png"), full_page=True)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("vista debug screenshot failed: %s", e)
+        try:
+            with open(os.path.join(out, "page.html"), "w", encoding="utf-8") as fh:
+                fh.write(page.content())
+        except Exception as e:  # noqa: BLE001
+            logger.debug("vista debug html failed: %s", e)
+        # Compact triage: URL, every enabled+visible button's text, whether a
+        # react-datepicker input is in the DOM, and which "Schedule" controls
+        # look selected. This single JSON usually pinpoints the root cause
+        # (radio not toggled vs. inline picker vs. disabled Next).
+        try:
+            info = page.evaluate(
+                """() => {
+                    const vis = (el) => !!el.offsetParent;
+                    const btns = Array.from(document.querySelectorAll('button'))
+                        .filter(vis)
+                        .map(b => ({text: (b.innerText||'').trim(), disabled: b.disabled}));
+                    const pickers = document.querySelectorAll(
+                        '.react-datepicker__input-container input');
+                    const dateInputs = Array.from(
+                        document.querySelectorAll('input'))
+                        .filter(i => /date|schedule|datepicker/i.test(
+                            (i.className||'') + ' ' + (i.name||'') + ' ' +
+                            (i.placeholder||'')))
+                        .map(i => ({name: i.name, cls: i.className,
+                                    ph: i.placeholder, type: i.type}));
+                    const checked = Array.from(
+                        document.querySelectorAll('input[type=radio],input[type=checkbox]'))
+                        .filter(i => i.checked)
+                        .map(i => ({name: i.name, value: i.value,
+                                    aria: i.getAttribute('aria-label')}));
+                    return {url: location.href,
+                            buttons: btns,
+                            react_datepicker_count: pickers.length,
+                            date_like_inputs: dateInputs,
+                            checked_inputs: checked};
+                }"""
+            )
+            import json as _json
+            with open(os.path.join(out, "info.json"), "w", encoding="utf-8") as fh:
+                _json.dump(info, fh, indent=2)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("vista debug triage failed: %s", e)
+        logger.error("Vista Social: saved schedule-step diagnostics to %s", out)
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.debug("vista debug capture failed entirely: %s", e)
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -224,14 +309,18 @@ def _wait_for_media_upload(page, timeout_ms: int) -> None:
             r"""() => {
                 const all = Array.from(document.querySelectorAll('*'))
                   .filter(el => el.offsetParent !== null);
-                const matches = all.filter(el => /^Attached (videos?|images?|media)$/i.test((el.innerText || '').trim()));
-                if (matches.length > 0) return 'attached';
-                // Vista shows "Video processing" / "Processing" while the
-                // server transcodes — treat as still-uploading but reachable.
+                // Check processing FIRST: a video can show the "Attached
+                // videos" header while Vista is still transcoding it. Returning
+                // 'attached' then lets us click Next before the network
+                // (Instagram) can validate the media, which blocks scheduling.
+                // So while anything reads "processing", keep waiting.
                 const processing = all.some(el =>
                     /\bprocessing\b/i.test((el.innerText || '').trim().slice(0, 60))
                 );
-                return processing ? 'processing' : 'idle';
+                if (processing) return 'processing';
+                const matches = all.filter(el => /^Attached (videos?|images?|media)$/i.test((el.innerText || '').trim()));
+                if (matches.length > 0) return 'attached';
+                return 'idle';
             }"""
         )
         if state == "attached":
@@ -253,36 +342,101 @@ def _select_schedule_radio(page) -> None:
     page.locator("label", has_text="Schedule").first.click()
 
 
-def _click_next_to_schedule_step(page) -> None:
-    """Advance the wizard to the date/time picker step and wait for the
-    react-datepicker input to mount. If Vista didn't advance (e.g. an
-    autosave modal intercepted the click, or media validation is still
-    running), we retry once after dismissing any open dialog and after
-    a short settle.
+_PICKER_SEL = ".react-datepicker__input-container input"
+
+
+def _detect_network_validation_error(page) -> str:
+    """Return Vista's content-validation toast text if it's showing, else "".
+
+    When a connected network rejects the post's media (e.g. Instagram won't
+    accept the Shorts video's length/aspect/format), Vista shows a toast like
+    "Please check your content on the following social networks: Instagram"
+    and refuses to advance past Next. Detecting it lets us raise an actionable
+    error instead of blindly waiting out the date-picker timeout. Confirmed
+    against the live DOM via scripts/vista_schedule_recon.py.
     """
-    next_btn = page.locator("button", has_text="Next").first
-    next_btn.wait_for(state="visible", timeout=_DEFAULT_TIMEOUT)
-    next_btn.click()
-
-    picker_sel = ".react-datepicker__input-container input"
     try:
-        page.wait_for_selector(picker_sel, timeout=15_000)
-        return
-    except PlaywrightTimeout:
-        pass
+        return (page.evaluate(
+            r"""() => {
+                const els = Array.from(document.querySelectorAll('*'))
+                  .filter(el => el.offsetParent !== null);
+                for (const el of els) {
+                    const t = (el.innerText || '').trim();
+                    if (!t || t.length > 220) continue;
+                    if (/check your content on the following social network/i.test(t)
+                        || /can.?t be (scheduled|published|posted)/i.test(t)) {
+                        return t;
+                    }
+                }
+                return '';
+            }"""
+        ) or "").strip()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Vista Social: validation-toast probe failed: %s", e)
+        return ""
 
-    # Retry path: dismiss any lingering modal (autosave / confirm), wait,
-    # then click Next again.
-    _dismiss_autosave_prompt(page, timeout_ms=2_000)
-    page.wait_for_timeout(1_000)
-    try:
-        page.locator("button", has_text="Next").first.click()
-    except Exception as e:
-        # M6: log the retry failure so a stuck Next-button doesn't disappear
-        # — the wait_for_selector below will surface a generic timeout that
-        # would otherwise be hard to root-cause.
-        logger.debug("Vista Social: Next-click retry failed: %s", e)
-    page.wait_for_selector(picker_sel, timeout=30_000)
+
+def _picker_visible(page) -> bool:
+    picker = page.locator(_PICKER_SEL)
+    return bool(picker.count()) and picker.first.is_visible()
+
+
+def _click_next_to_schedule_step(page) -> None:
+    """Advance the wizard to the date/time picker step.
+
+    Vista blocks "Next" with a content-validation toast ("check your content
+    on the following social networks: Instagram") while the just-uploaded
+    Shorts video is still being processed/validated for a connected network.
+    The operator confirms Instagram *does* accept these videos when posted by
+    hand, so that toast means "not finished yet", not "rejected". So we keep
+    re-clicking Next (dismissing the toast / any autosave modal between
+    attempts) until the date picker mounts — mirroring the human flow of
+    waiting for the upload to settle before scheduling — up to
+    ``_SCHEDULE_ADVANCE_TIMEOUT_S``. Only if that whole budget is spent do we
+    surface an actionable error (run() also captures a DOM snapshot).
+    """
+    deadline = time.time() + _SCHEDULE_ADVANCE_TIMEOUT_S
+    attempt = 0
+    last_toast = ""
+    while time.time() < deadline:
+        attempt += 1
+        _dismiss_autosave_prompt(page, timeout_ms=1_000)
+        try:
+            nb = page.locator("button", has_text="Next").first
+            nb.wait_for(state="visible", timeout=_DEFAULT_TIMEOUT)
+            nb.click()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Vista Social: Next click (attempt %d) failed: %s", attempt, e)
+
+        # Give the picker a chance to mount after this click.
+        picker_deadline = time.time() + 8.0
+        while time.time() < picker_deadline:
+            if _picker_visible(page):
+                if attempt > 1:
+                    logger.info("Vista Social: advanced to schedule step on attempt %d", attempt)
+                return
+            page.wait_for_timeout(400)
+
+        toast = _detect_network_validation_error(page)
+        if toast:
+            last_toast = toast
+            logger.info(
+                "Vista Social: 'Next' blocked while media validates (attempt %d): "
+                "%s — waiting, will retry", attempt, toast,
+            )
+            page.wait_for_timeout(5_000)  # let the video finish processing
+        else:
+            page.wait_for_timeout(2_000)  # transient: re-click shortly
+
+    if last_toast:
+        raise RuntimeError(
+            "Vista Social: could not reach the schedule step within "
+            f"{_SCHEDULE_ADVANCE_TIMEOUT_S}s — a connected network kept blocking "
+            f"\"Next\": \"{last_toast}\". The Shorts video likely never finished "
+            "uploading/processing in Vista."
+        )
+    # No toast ever seen either — surface the explicit picker timeout.
+    page.wait_for_selector(_PICKER_SEL, timeout=5_000)
 
 
 def _set_schedule_datetime(page, schedule_dt: datetime) -> None:
@@ -521,11 +675,18 @@ def upload_post(entry, elements=None, progress_callback=None) -> dict:
             _wait_for_media_upload(page, _UPLOAD_TIMEOUT)
 
             _emit(progress_callback, "scheduling")
-            _select_schedule_radio(page)
-            _click_next_to_schedule_step(page)
-            _set_schedule_datetime(page, schedule_dt)
-            _click_schedule_confirm(page)
-            _confirm_schedule_committed(page)
+            try:
+                _select_schedule_radio(page)
+                _click_next_to_schedule_step(page)
+                _set_schedule_datetime(page, schedule_dt)
+                _click_schedule_confirm(page)
+                _confirm_schedule_committed(page)
+            except Exception:
+                # On any schedule-step failure, leave a DOM + screenshot
+                # snapshot (under /data/vista-debug on the VPS) so the exact
+                # blocker is recoverable instead of a blind timeout.
+                _capture_debug(page, "schedule-fail")
+                raise
 
             _emit(progress_callback, "done")
             # Vista's calendar URL is the best landing page we can offer —

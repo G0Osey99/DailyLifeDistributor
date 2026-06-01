@@ -24,6 +24,15 @@ block_cipher = None
 # functional GUI binary.
 from PyInstaller.utils.hooks import collect_data_files
 _ctk_data = collect_data_files('customtkinter')
+# Upload engines (Phase 3 — the agent runs the bundled uploaders locally):
+#   * Playwright ships a node driver under playwright/driver/ that
+#     sync_playwright() spawns. It MUST be collected or every Playwright
+#     upload dies with "Playwright is not installed". (pyinstaller-hooks-
+#     contrib also auto-collects it; we add it explicitly so a build env
+#     without that hook still produces a working binary.)
+#   * google-api-python-client ships discovery cache JSON used by build().
+_playwright_data = collect_data_files('playwright')
+_googleapi_data = collect_data_files('googleapiclient')
 # certifi ships cacert.pem next to its __init__.py. PyInstaller's auto-
 # discovery picks it up via the `requests` import chain on most builds,
 # but agent/transport.py imports certifi DIRECTLY now (to build the SSL
@@ -38,16 +47,37 @@ a = Analysis(
     ['agent/main.py'],
     pathex=['.'],
     binaries=[],
-    datas=[('agent/release_pubkey.pem', 'agent')] + _ctk_data + _certifi_data,
+    datas=([('agent/release_pubkey.pem', 'agent')] + _ctk_data + _certifi_data
+           + _playwright_data + _googleapi_data),
     hiddenimports=[
         'core.file_scanner',
         # The agent dispatch path imports these FUNCTION-LEVEL (run_batch
-        # _make_elements / _entry_obj build ReviewEntry/UploadElements), which
-        # PyInstaller's static analysis misses — so without listing them the
-        # bundle dropped the chain and the agent crashed on first dispatch.
+        # _make_elements / _entry_obj build ReviewEntry/UploadElements, and
+        # _dispatch_upload imports the uploaders), which PyInstaller's static
+        # analysis misses — so without listing them the bundle dropped the
+        # chain and the agent crashed on first dispatch.
         'core.session_state',
         'core.config',
         'core.circuit_breaker',
+        'core.org_context',
+        'core.playwright_session',
+        'core.hosted',
+        'core.image_gatherer',
+        # The bundled uploaders (run on the agent's own machine, Phase 3).
+        'uploaders.youtube_uploader',
+        'uploaders.simplecast_uploader',
+        'uploaders.vista_social_uploader',
+        'uploaders.rock.orchestrator',
+        'uploaders.rock.email',
+        'uploaders.rock.client',
+        # Upload engines — function/try-guarded imports the analysis misses.
+        'playwright.sync_api',
+        'googleapiclient.discovery',
+        'googleapiclient.http',
+        'googleapiclient.errors',
+        'google_auth_oauthlib.flow',
+        'google.oauth2.credentials',
+        'httplib2',
         'keyring.backends.Windows',
         'keyring.backends.macOS',
         # GUI deps — explicit so an analysis-time miss doesn't surface
@@ -62,7 +92,12 @@ a = Analysis(
     ],
     hookspath=[],
     runtime_hooks=[],
-    excludes=['playwright', 'flask', 'flask_sock', 'openpyxl'],  # server-side; agent doesn't need them
+    # flask/flask_sock are server-only (org_context is now Flask-optional so
+    # the agent imports it without them). openpyxl is server-only too — the
+    # agent builds ReviewEntry from the job envelope, never parses a sheet.
+    # playwright was previously excluded here, which is exactly why agent
+    # uploads were impossible; it is now bundled (see _playwright_data).
+    excludes=['flask', 'flask_sock', 'openpyxl'],
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(

@@ -6,3 +6,15 @@ py-machineid>=0.6,<1
 # expected to land breaking changes on widget APIs (per the project's
 # semver policy in its README).
 customtkinter>=5.2,<6
+
+# Upload engines — the agent runs the bundled uploaders locally (Phase 3),
+# so the binary must carry the same runtime deps the server uses. Pins mirror
+# requirements.txt so the agent and server behave identically.
+#   YouTube: google-api-python-client + google-auth-oauthlib (+ google-auth,
+#            transitive) + httplib2 (resumable upload; <0.31 for the 308 fix).
+#   SimpleCast / Vista Social / Rock: Playwright, which drives the user's
+#            SYSTEM Chrome (channel="chrome") — no Chromium download needed.
+google-api-python-client>=2.120.0,<3
+google-auth-oauthlib>=1.2.0,<2
+httplib2>=0.22.0,<0.31
+playwright>=1.40.0,<2

@@ -603,6 +603,69 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
     print("Goodbye!")
 
 
+def _run_selfcheck() -> int:
+    """Verify the bundled binary can actually run uploads, and exit 0/1.
+
+    Catches the class of failure that shipped silently before — the agent
+    binary missing the upload engines (PyYAML, Playwright, google-api) so
+    every dispatch crashed with ModuleNotFoundError on first use. Run it on a
+    fresh install with `dld-agent --selfcheck`. Importing the uploaders proves
+    the dependency chain (core.session_state -> core.config, core.org_context,
+    google-api, playwright) is present; starting the Playwright driver proves
+    its node binary was bundled and is runnable (no Chrome needed for that).
+    """
+    print(f"dld-agent {__version__} self-check")
+    results: list[tuple[str, bool, str]] = []
+
+    def _check(label, fn):
+        try:
+            detail = fn() or "ok"
+            results.append((label, True, str(detail)))
+        except Exception as exc:  # noqa: BLE001 — report every failure
+            results.append((label, False, f"{type(exc).__name__}: {exc}"))
+
+    def _import_dataclasses():
+        from core.session_state import ReviewEntry, UploadElements  # noqa: F401
+        from core import org_context  # noqa: F401 — must import without Flask
+        return "core.session_state + core.org_context import"
+
+    def _import_youtube():
+        from uploaders import youtube_uploader  # noqa: F401
+        import googleapiclient.discovery  # noqa: F401
+        import google_auth_oauthlib.flow  # noqa: F401
+        import httplib2  # noqa: F401
+        return "youtube_uploader + google-api + httplib2"
+
+    def _import_playwright_uploaders():
+        from uploaders import simplecast_uploader, vista_social_uploader  # noqa: F401
+        from uploaders.rock import orchestrator, email, client  # noqa: F401
+        return "simplecast + vista + rock uploaders"
+
+    def _playwright_driver():
+        from playwright.sync_api import sync_playwright
+        pw = sync_playwright().start()
+        try:
+            # Touching .chromium proves the driver process answered; no browser
+            # launch (and therefore no Chrome) is required for this check.
+            _ = pw.chromium
+        finally:
+            pw.stop()
+        return "Playwright driver started + stopped"
+
+    _check("core dataclasses (no Flask/PyYAML)", _import_dataclasses)
+    _check("YouTube engine", _import_youtube)
+    _check("Playwright uploaders import", _import_playwright_uploaders)
+    _check("Playwright driver", _playwright_driver)
+
+    ok = True
+    for label, passed, detail in results:
+        print(f"  [{'PASS' if passed else 'FAIL'}] {label}: {detail}")
+        ok = ok and passed
+    print("RESULT:", "OK — agent can run uploads" if ok
+          else "FAILED — agent is NOT in an uploading state")
+    return 0 if ok else 1
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="DLD hybrid upload agent",
@@ -637,7 +700,17 @@ def main() -> None:
              "is to launch the GUI; use this for headless servers or "
              "scripted automation.",
     )
+    ap.add_argument(
+        "--selfcheck",
+        action="store_true",
+        help="Verify the binary can run uploads (engines + Playwright "
+             "driver) and exit 0/1. Use after install/update to confirm "
+             "the agent is in an uploading state.",
+    )
     args = ap.parse_args()
+
+    if args.selfcheck:
+        raise SystemExit(_run_selfcheck())
 
     # v0.6.6: the PyInstaller spec sets console=False so the GUI launches
     # without a background terminal window. For --no-gui mode on Windows,

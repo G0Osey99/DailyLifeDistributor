@@ -83,6 +83,32 @@ def test_rock_email_waits_for_youtube_video_result(monkeypatch):
     assert seen["watch_url_at_email_start"] == "https://yt/x"
 
 
+def test_entry_obj_parses_iso_schedule_datetimes():
+    """Regression: JSON has no datetime type, so schedule datetimes cross the
+    job envelope as ISO strings. _entry_obj must parse them back to datetime
+    or the uploaders call schedule_dt.strftime(...) on a str and die with
+    "'str' object has no attribute 'strftime'" (Vista/SimpleCast/YouTube)."""
+    from datetime import datetime
+    row = {
+        "row_idx": 0,
+        "iso_date": "2026-06-02",
+        "entry": {
+            "date": "2026-06-02",
+            "display_date": "June 2, 2026",
+            "vista_schedule_dt": "2026-06-02T09:00:00-04:00",
+            "youtube_schedule_dt": "2026-06-02T08:00:00-04:00",
+            "podcast_schedule_dt": None,   # unset stays None
+        },
+    }
+    e = run_batch._entry_obj(row)
+    assert isinstance(e.vista_schedule_dt, datetime), e.vista_schedule_dt
+    assert e.vista_schedule_dt.hour == 9
+    # strftime must now work (the exact call that crashed).
+    assert e.vista_schedule_dt.strftime("%b") == "Jun"
+    assert isinstance(e.youtube_schedule_dt, datetime)
+    assert e.podcast_schedule_dt is None
+
+
 def test_session_expired_is_infra_failure_and_trips_breaker(monkeypatch):
     """Regression (ARCH-005): a Playwright SessionExpiredError is an INFRA
     failure (like the web path). It must trip the breaker so the agent fails

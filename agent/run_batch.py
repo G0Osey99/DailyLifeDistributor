@@ -242,6 +242,16 @@ def run(*, envelope: dict, paths: dict, emit,
     # component.
     circuit_breaker.reset_prefix("upload:")
 
+    # Run the Playwright uploaders headless by default on the agent. It's a
+    # background process on the user's machine with cached sessions — a Chrome
+    # window popping up (and the macOS "control Chrome" prompt) is unwanted.
+    # First-ever login is always headed regardless (core/playwright_session),
+    # so this only affects the valid-session path. setdefault so an operator
+    # can still force headed for debugging (e.g. SIMPLECAST_HEADLESS=false).
+    import os as _os
+    for _hl in ("SIMPLECAST_HEADLESS", "VISTA_SOCIAL_HEADLESS", "ROCK_HEADLESS"):
+        _os.environ.setdefault(_hl, "true")
+
     yt_state = _YtState()
 
     rows = envelope["rows"]
@@ -325,6 +335,20 @@ def _entry_obj(row: dict):
     # Remove the nested elements dict if it slipped in (ReviewEntry can't
     # accept a plain dict for its UploadElements field).
     entry_data.pop("elements", None)
+    # JSON has no datetime type, so the schedule datetimes cross the job
+    # envelope as ISO strings. Parse them back to datetime (matching
+    # ReviewEntry.from_dict) — otherwise the uploaders call
+    # schedule_dt.strftime(...) on a str and die with
+    # "'str' object has no attribute 'strftime'" (Vista/SimpleCast/YouTube
+    # scheduling). Covers every datetime field via _DATETIME_FIELDS.
+    from datetime import datetime as _dt
+    for _f in getattr(ReviewEntry, "_DATETIME_FIELDS", ()):
+        v = entry_data.get(_f)
+        if isinstance(v, str) and v:
+            try:
+                entry_data[_f] = _dt.fromisoformat(v)
+            except ValueError:
+                entry_data[_f] = None
     # Drop any keys not in ReviewEntry's dataclass fields to avoid TypeError.
     known = set(ReviewEntry.__dataclass_fields__.keys())
     filtered = {k: v for k, v in entry_data.items() if k in known}

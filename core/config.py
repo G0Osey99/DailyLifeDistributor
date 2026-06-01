@@ -7,10 +7,21 @@ is should import from here.
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import threading
 
-import yaml
+# NOTE: PyYAML is imported lazily inside load_config(), NOT at module level.
+# The bundled hybrid agent (agent/requirements.txt) does not ship PyYAML and
+# has no config.yaml on disk — it gets its config from the job envelope. But
+# core.session_state instantiates its SessionState singleton at import time,
+# which calls load_config(); a top-level `import yaml` therefore crashed the
+# agent's whole dispatch path with ModuleNotFoundError the moment it imported
+# session_state to build a ReviewEntry. Keeping the import lazy lets the module
+# import cleanly without PyYAML, and load_config() degrades to {} when there's
+# no config file (the agent's case) instead of needing the parser at all.
+
+_log = logging.getLogger(__name__)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
@@ -35,8 +46,24 @@ def load_config() -> dict:
     with _CACHE_LOCK:
         if _CACHE is not None and _CACHE_MTIME == mtime:
             return copy.deepcopy(_CACHE)
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
+        data: dict = {}
+        if mtime is not None:
+            # config.yaml exists → parse it. yaml is imported here (lazily) so
+            # environments without PyYAML and without a config file (the
+            # bundled agent) never need the parser.
+            try:
+                import yaml
+                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+            except FileNotFoundError:
+                data = {}  # raced: deleted between stat and open
+            except ModuleNotFoundError:
+                # config.yaml present but PyYAML missing — surface it (a real
+                # misconfiguration on a server) but don't hard-crash callers
+                # that only need defaults.
+                _log.warning("config.yaml present but PyYAML is not installed; "
+                             "using empty config defaults")
+                data = {}
         _CACHE = data
         _CACHE_MTIME = mtime
         return copy.deepcopy(_CACHE)

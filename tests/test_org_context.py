@@ -35,6 +35,20 @@ def test_effective_org_id_returns_none_outside_session(app_ctx):
     assert org_context.effective_org_id() is None
 
 
+def test_org_helpers_no_request_context_return_none():
+    """The agent runs the uploaders with NO Flask request context. The
+    org-resolution helpers must degrade to None (the secrets shim ignores
+    org_id anyway) instead of raising — and the module must have imported
+    even where Flask is absent (ARCH-007). Here Flask IS installed but no
+    context is pushed, which exercises the same has_request_context()==False
+    branch the agent hits."""
+    assert org_context.effective_org_id() is None
+    assert org_context.real_user_id() is None
+    assert org_context.current_org_id() is None
+    assert org_context.acting_as_org_id() is None
+    assert org_context.is_impersonating() is False
+
+
 def test_effective_org_id_returns_current_when_not_acting(app_ctx):
     from flask import session
     session["current_org_id"] = 3

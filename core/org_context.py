@@ -22,7 +22,24 @@ from contextlib import contextmanager
 from functools import wraps
 from typing import Iterator, Optional
 
-from flask import abort, has_request_context, session
+try:
+    from flask import abort, has_request_context, session
+except ModuleNotFoundError:  # pragma: no cover - exercised only in the agent bundle
+    # The bundled hybrid agent ships no Flask, but it still imports this module:
+    # the uploaders call effective_org_id() to scope credential reads. Off the
+    # server there is never a request context, so the helpers below degrade to
+    # None — and the agent's secrets shim ignores org_id anyway, returning the
+    # envelope's credentials. ARCH-007: a core module must not hard-require
+    # Flask just to be imported.
+    def has_request_context() -> bool:  # type: ignore
+        return False
+
+    session = None  # type: ignore
+
+    def abort(*_a, **_k):  # type: ignore
+        # Only reachable via forbidden_during_impersonation, a route decorator
+        # that never runs off-server. Fail loud if it somehow does.
+        raise RuntimeError("flask.abort() called but Flask is not installed")
 
 
 # Thread-local org override. Used by worker threads that ran originally

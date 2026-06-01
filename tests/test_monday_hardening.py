@@ -201,3 +201,29 @@ def test_vista_social_row_present_even_without_shorts_file():
     assert len(rows) == 1, (
         "Vista Social must not silently vanish from the summary when enabled"
     )
+
+
+def test_summary_includes_all_platforms_without_server_side_files():
+    """Hybrid-agent regression: the browser uploads NO files to the server on
+    the agent path, so entry.youtube_video_path / youtube_shorts_path /
+    podcast_path are all None. get_summary previously gated YouTube Video,
+    YouTube Shorts, and SimpleCast on those paths, so the rows vanished and
+    those platforms were never dispatched to the agent (only Rock/RockEmail/
+    Vista survived). They must now appear from the platform flag alone, like
+    Vista/Rock."""
+    from core.session_state import SessionState
+    s = SessionState()
+    entry = s.build_entry(
+        "2026-06-02", media=None, meta={},
+        global_platforms={
+            "youtube_video": True, "youtube_shorts": True, "simplecast": True,
+            "rock": True, "rock_email": True, "vista_social": True,
+        },
+    )
+    s.entries["2026-06-02"] = entry
+    s.selected_dates = ["2026-06-02"]
+    platforms = {r["platform"] for r in s.get_summary()}
+    assert {"YouTube Video", "YouTube Shorts", "SimpleCast",
+            "Rock", "Rock Email", "Vista Social"} <= platforms, (
+        f"platforms missing from summary on the agent (no-server-file) path: {platforms}"
+    )

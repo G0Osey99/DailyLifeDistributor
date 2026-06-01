@@ -106,6 +106,38 @@ jobs:
               --target /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
               "cryptography==${CRY_VER}"
           fi
+      - name: Fuse universal2 Playwright node driver (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          # PyInstaller bundles playwright/driver/node as a DATA file in the
+          # runner's arch (macos-latest = arm64), so on an Intel Mac it dies
+          # with "OSError [Errno 86] Bad CPU type in executable: .../node".
+          # Fuse it to a universal2 fat binary from both arch wheels — same
+          # approach as the cffi/cryptography step above — so the one
+          # universal2 agent drives Chrome on BOTH Apple Silicon and Intel.
+          set -euxo pipefail
+          PW_VER=$(python -c "import playwright,sys;sys.stdout.write(playwright.__version__)")
+          PW_DIR=$(python -c "import playwright,os,sys;sys.stdout.write(os.path.dirname(playwright.__file__))")
+          NODE="$PW_DIR/driver/node"
+          echo "runner-installed node:"; file "$NODE"
+          # Grab the x86_64 macOS wheel (the runner already has arm64). pip
+          # accepts several --platform tags and picks a compatible wheel.
+          mkdir -p /tmp/pw-x86 /tmp/pw-x86-extract
+          pip download --no-deps --only-binary=:all: \
+            --platform macosx_10_13_x86_64 \
+            --platform macosx_11_0_x86_64 \
+            --platform macosx_12_0_x86_64 \
+            --dest /tmp/pw-x86 "playwright==${PW_VER}"
+          unzip -o /tmp/pw-x86/playwright-*.whl -d /tmp/pw-x86-extract
+          X86_NODE="/tmp/pw-x86-extract/playwright/driver/node"
+          echo "downloaded x86_64 node:"; file "$X86_NODE"
+          lipo -create "$NODE" "$X86_NODE" -output /tmp/node-universal
+          chmod +x /tmp/node-universal
+          cp /tmp/node-universal "$NODE"
+          echo "fused node (expect 2 architectures):"; file "$NODE"
+          lipo -archs "$NODE"
+
       - name: Extract version from tag
         id: ver
         shell: bash

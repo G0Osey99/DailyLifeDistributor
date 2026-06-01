@@ -259,6 +259,17 @@ def run(*, envelope: dict, paths: dict, emit,
     for _hl in ("SIMPLECAST_HEADLESS", "VISTA_SOCIAL_HEADLESS", "ROCK_HEADLESS"):
         _os.environ.setdefault(_hl, "true")
 
+    # Guarantee a usable browser before any uploader launches. Normally the
+    # startup prewarm has already finished, so this is an instant no-op; on a
+    # first job that beats the prewarm it blocks once on the ~150 MB download.
+    # Best-effort — a failed download leaves DLD_USE_BUNDLED_CHROMIUM unset and
+    # the uploaders fall back to system Chrome (channel='chrome').
+    try:
+        from agent import chromium as _chromium
+        _chromium.ensure_chromium(progress=lambda m: _logger.info("chromium: %s", m))
+    except Exception:
+        _logger.debug("chromium ensure raised; continuing", exc_info=True)
+
     yt_state = _YtState()
 
     rows = envelope["rows"]

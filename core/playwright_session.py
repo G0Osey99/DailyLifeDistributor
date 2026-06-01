@@ -212,17 +212,32 @@ class SessionExpiredError(RuntimeError):
 def chromium_launch_kwargs(chrome_path_env: str = "", *, headless: bool) -> dict:
     """Build ``chromium.launch`` kwargs that respect a per-service Chrome path.
 
-    If ``chrome_path_env`` names an env var that's set (e.g. the VPS points
-    ROCK_CHROME_PATH at /usr/bin/chromium because arm64 has no Google Chrome),
-    launch that binary via ``executable_path``; otherwise fall back to the
-    system Google Chrome via ``channel='chrome'``. Shared by
-    ``PlaywrightSession._launch`` and the calendar-refresh sources so neither
-    path can drift back to a hardcoded ``channel='chrome'``.
+    Precedence:
+      1. ``chrome_path_env`` set (e.g. the VPS points ROCK_CHROME_PATH at
+         /usr/bin/chromium because arm64 has no Google Chrome) → launch that
+         binary via ``executable_path``. Kept first so the hosted server's
+         behaviour is never changed by the agent-only bundled path below.
+      2. ``DLD_USE_BUNDLED_CHROMIUM`` truthy → launch with neither channel nor
+         executable_path. The hybrid agent sets this after downloading
+         Playwright's own Chromium (into PLAYWRIGHT_BROWSERS_PATH) on first
+         run, so it no longer depends on the user's system Google Chrome — and
+         macOS never shows the "control Chrome" Automation prompt because we
+         drive our own browser, not Chrome.app. ``core`` only reads the env
+         here; the agent owns setting it (no core→agent import).
+      3. otherwise → system Google Chrome via ``channel='chrome'`` (the USB /
+         single-tenant build).
+
+    Shared by ``PlaywrightSession._launch`` and the calendar-refresh sources so
+    no path can drift back to a hardcoded ``channel='chrome'``.
     """
     kwargs: dict = {"headless": headless}
     path = (os.environ.get(chrome_path_env, "") or "").strip() if chrome_path_env else ""
     if path:
         kwargs["executable_path"] = path
+    elif (os.environ.get("DLD_USE_BUNDLED_CHROMIUM", "") or "").strip() not in ("", "0", "false", "False"):
+        # Bundled Chromium: leave channel + executable_path unset so Playwright
+        # resolves its own browser from PLAYWRIGHT_BROWSERS_PATH.
+        pass
     else:
         kwargs["channel"] = "chrome"
     return kwargs

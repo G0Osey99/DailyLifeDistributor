@@ -372,7 +372,15 @@ class SessionState:
             elems = entry.elements
 
             # YouTube Video row
-            if entry.platforms_enabled.get("youtube_video") and entry.youtube_video_path:
+            # Gate on the platform flag ALONE, not on youtube_video_path —
+            # same reasoning as Vista Social below. On the hybrid-agent path
+            # the browser uploads NO files to the server, so youtube_video_path
+            # is None here and the row would silently vanish (no success, no
+            # error, no skip) even though the agent has the file locally. When
+            # the file is genuinely missing the YouTube uploader returns a
+            # clean "video file not found" error — a visible row beats silent
+            # disappearance.
+            if entry.platforms_enabled.get("youtube_video"):
                 skipped = not elems.yt_video_enabled
                 elements_info = self._elements_summary(
                     enabled=elems.yt_video_enabled,
@@ -393,15 +401,17 @@ class SessionState:
                             if entry.youtube_schedule_dt
                             else "Immediate"
                         ),
-                        "file": entry.youtube_video_path,
+                        "file": entry.youtube_video_path or "—",
                         "thumbnail": entry.thumbnail_path or "—",
                         "elements": elements_info,
                         "skipped": skipped,
                     }
                 )
 
-            # YouTube Shorts row
-            if entry.platforms_enabled.get("youtube_shorts") and entry.youtube_shorts_path:
+            # YouTube Shorts row — flag-alone gate (see YouTube Video above);
+            # otherwise it vanishes on the agent path where the server has no
+            # youtube_shorts_path.
+            if entry.platforms_enabled.get("youtube_shorts"):
                 skipped = not elems.yt_shorts_enabled
                 elements_info = self._elements_summary(
                     enabled=elems.yt_shorts_enabled,
@@ -422,7 +432,7 @@ class SessionState:
                             if entry.shorts_schedule_dt
                             else "Immediate"
                         ),
-                        "file": entry.youtube_shorts_path,
+                        "file": entry.youtube_shorts_path or "—",
                         "thumbnail": entry.thumbnail_path or "—",
                         "elements": elements_info,
                         "skipped": skipped,
@@ -525,8 +535,11 @@ class SessionState:
                     }
                 )
 
-            # SimpleCast row
-            if entry.platforms_enabled.get("simplecast") and entry.podcast_path:
+            # SimpleCast row — flag-alone gate (see YouTube Video above);
+            # otherwise it vanishes on the agent path where the server has no
+            # podcast_path. The SimpleCast uploader surfaces a clean
+            # "audio file not found" error if it's genuinely missing.
+            if entry.platforms_enabled.get("simplecast"):
                 skipped = not elems.sc_enabled
                 elements_info = self._elements_summary_sc(
                     enabled=elems.sc_enabled,
@@ -545,7 +558,7 @@ class SessionState:
                             if entry.podcast_schedule_dt
                             else "Immediate"
                         ),
-                        "file": entry.podcast_path,
+                        "file": entry.podcast_path or "—",
                         "thumbnail": "—",
                         "elements": elements_info,
                         "skipped": skipped,

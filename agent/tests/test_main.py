@@ -34,6 +34,10 @@ def test_on_message_job_plan_routes_to_dispatch_handle_job_plan(monkeypatch):
     monkeypatch.setattr(dispatch, "handle_job_plan", _fake_handle)
 
     conn = MagicMock()
+    # In production the run() loop sets _current_conn to the live connection
+    # after connect; the job transport emits through it (so events survive a
+    # mid-job reconnect). Mirror that here so the wrapper has a live target.
+    monkeypatch.setattr(main, "_current_conn", conn)
     plan = {
         "v": 1,
         "type": "job_plan",
@@ -56,6 +60,49 @@ def test_on_message_job_plan_routes_to_dispatch_handle_job_plan(monkeypatch):
             if main._active_job_id is None:
                 break
         threading.Event().wait(0.05)
+
+
+def test_job_transport_follows_current_conn_across_reconnect(monkeypatch):
+    """A job's transport must emit through the CURRENT connection, so events
+    survive a mid-job WebSocket reconnect (the old conn is replaced, not
+    repopulated). Regression for the 'NoneType has no attribute send' flood."""
+    import threading
+    from agent import dispatch, main
+
+    with main._active_job_lock:
+        main._active_job_id = None
+
+    captured = {}
+    done = threading.Event()
+
+    def _capture_handle(*, plan, transport):
+        captured["transport"] = transport
+        done.set()
+
+    monkeypatch.setattr(dispatch, "handle_job_plan", _capture_handle)
+
+    conn1 = MagicMock(name="conn1")
+    conn2 = MagicMock(name="conn2")
+    monkeypatch.setattr(main, "_current_conn", conn1)
+
+    main._on_message(conn1, {"type": "job_plan", "job_id": "JR",
+                             "rows": [], "credentials": {}, "config": {}})
+    assert done.wait(2.0)
+    transport = captured["transport"]
+
+    # First emit goes to the live conn1.
+    transport.send({"type": "event", "event": "start"})
+    assert conn1.send.call_count == 1
+
+    # Simulate a reconnect: run() swaps _current_conn to a brand-new conn2.
+    monkeypatch.setattr(main, "_current_conn", conn2)
+    transport.send({"type": "event", "event": "done"})
+    # The post-reconnect frame must land on conn2, NOT the dead conn1.
+    assert conn2.send.call_count == 1
+    assert conn1.send.call_count == 1
+
+    with main._active_job_lock:
+        main._active_job_id = None
 
 
 def test_on_message_job_plan_catches_exception_without_crashing(monkeypatch):

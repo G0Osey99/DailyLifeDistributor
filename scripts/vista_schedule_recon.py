@@ -105,9 +105,48 @@ def main() -> int:
         V._dismiss_autosave_prompt(page)
         _triage(page, "composer-opened")
 
+        # Dump the profile picker rows + their default checked state, so we
+        # can see exactly which networks Vista pre-selects for @dailylife.
         try:
-            # Production keeps Facebook + Instagram (only YouTube unchecked).
-            V._set_profile_selection(page, [V._NETWORK_YOUTUBE])
+            profiles = page.evaluate(
+                """() => {
+                    const ws = Array.from(document.querySelectorAll(
+                        '.Checkbox__Wrapper-sc-1at1571-0')).filter(e => e.offsetParent);
+                    return ws.map(w => {
+                        const imgs = Array.from(w.querySelectorAll('img'))
+                            .map(i => (i.src||'').split('/').pop());
+                        const checked = !!w.querySelector('svg path[d^="M8.925"]');
+                        const label = (w.innerText||'').trim().slice(0, 40);
+                        return {imgs, checked, label};
+                    });
+                }"""
+            )
+            print("\n===== PROFILE ROWS (default selection) =====", flush=True)
+            print(json.dumps(profiles, indent=2), flush=True)
+        except Exception as e:  # noqa: BLE001
+            print("profile dump failed:", e, flush=True)
+
+        try:
+            # Ensure Facebook + Instagram checked, YouTube unchecked.
+            V._set_profile_selection(
+                page, [V._NETWORK_FACEBOOK, V._NETWORK_INSTAGRAM], [V._NETWORK_YOUTUBE])
+            page.wait_for_timeout(800)
+            after = page.evaluate(
+                """() => {
+                    const ws = Array.from(document.querySelectorAll(
+                        '.Checkbox__Wrapper-sc-1at1571-0')).filter(e => e.offsetParent);
+                    const seen = {};
+                    for (const w of ws) {
+                        const net = (Array.from(w.querySelectorAll('img'))
+                            .map(i => (i.src||'')).join(' ').match(/(facebook|instagram|youtube)\\.svg/)||[])[1];
+                        if (net && !(net in seen))
+                            seen[net] = !!w.querySelector('svg path[d^="M8.925"]');
+                    }
+                    return seen;
+                }"""
+            )
+            print("\n===== PROFILES AFTER SELECTION =====", flush=True)
+            print(json.dumps(after, indent=2), flush=True)
         except Exception as e:  # noqa: BLE001
             print("profile selection raised:", e, flush=True)
         try:

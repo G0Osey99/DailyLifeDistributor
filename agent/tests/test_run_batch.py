@@ -91,8 +91,10 @@ def test_rock_dispatch_backfills_wistia_ref_from_shorts_path(monkeypatch):
     from uploaders.rock import orchestrator as rock_orch
     captured = {}
 
-    def _fake_rock(entry, *, elements=None, progress_callback=None):
+    def _fake_rock(entry, *, elements=None, progress_callback=None,
+                   pregathered_image=None):
         captured["wistia_ref"] = getattr(entry, "wistia_ref", "")
+        captured["pregathered_image"] = pregathered_image
         return {"success": True, "url": "https://rock/x"}
 
     monkeypatch.setattr(rock_orch, "upload_daily_experience", _fake_rock)

@@ -237,6 +237,55 @@ def _strip_paths(entry_dict: dict) -> dict:
     return {k: v for k, v in entry_dict.items() if k not in _STRIPPED_PATH_FIELDS}
 
 
+def _gather_rock_image_for_agent(entry, elements: dict, platforms) -> dict | None:
+    """Resolve the Rock Vista background image server-side for the agent path.
+
+    Returns a JSON-safe dict (credit metadata + base64 image bytes) the agent
+    rehydrates into a ``GatheredImage``, or None when this row doesn't need a
+    Rock image or the gather fails (best-effort — the agent then surfaces the
+    usual "no usable image" error rather than silently posting without one).
+    """
+    if "Rock" not in (platforms or []):
+        return None
+    if not (elements.get("rock_vista", True) and elements.get("rock_image", True)):
+        return None
+    scripture = (getattr(entry, "scripture", "") or "").strip()
+    if not scripture:
+        return None
+    try:
+        from datetime import datetime as _dt
+        publish_date = _dt.strptime(entry.date, "%Y-%m-%d").date()
+        gi = _img.gather_image_for_verse(
+            scripture, publish_date,
+            topic_hint=(getattr(entry, "topic_hint", "") or ""),
+        )
+        if gi is None:
+            return None
+        import base64 as _b64
+        with open(gi.file_path, "rb") as fh:
+            image_b64 = _b64.b64encode(fh.read()).decode("ascii")
+        # The server's temp download is no longer needed once encoded.
+        try:
+            import os as _os
+            _os.unlink(gi.file_path)
+        except OSError:
+            pass
+        return {
+            "photo_id": gi.photo_id,
+            "source": gi.source,
+            "topic": gi.topic,
+            "photographer": gi.photographer,
+            "photo_url": gi.photo_url,
+            "image_b64": image_b64,
+        }
+    except Exception:
+        _logger.warning(
+            "build_envelope: server-side Rock image gather failed for %s",
+            getattr(entry, "date", "?"), exc_info=True,
+        )
+        return None
+
+
 def build_envelope(
     *,
     job_id: str,
@@ -254,13 +303,22 @@ def build_envelope(
     for r in rows:
         iso = r["iso_date"]
         entry = entries[iso]
-        out_rows.append({
+        out_row = {
             "row_idx": r["row_idx"],
             "iso_date": iso,
             "platforms": list(r["platforms"]),
             "elements": r["elements"],
             "entry": _strip_paths(entry.to_dict()),
-        })
+        }
+        # Rock's Vista background image needs the LLM-driven gatherer, which
+        # the agent's machine doesn't have. Resolve it here (the server has
+        # the LLM + Unsplash/Pexels keys) and ship it in the row so the
+        # agent's orchestrator uses it verbatim instead of gathering.
+        rock_image = _gather_rock_image_for_agent(
+            entry, r.get("elements") or {}, r["platforms"])
+        if rock_image is not None:
+            out_row["rock_image"] = rock_image
+        out_rows.append(out_row)
     return {
         "v": _PROTOCOL_VERSION,
         "type": "job_plan",

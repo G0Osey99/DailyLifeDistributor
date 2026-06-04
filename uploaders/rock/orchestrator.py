@@ -36,11 +36,16 @@ from .text import normalize_vista_content, parent_title, reflection_title
 log = logging.getLogger(__name__)
 
 
-def upload_daily_experience(entry, *, elements=None, progress_callback=None) -> dict:
+def upload_daily_experience(entry, *, elements=None, progress_callback=None,
+                            pregathered_image=None) -> dict:
     """Build one Rock Daily Experience for a ReviewEntry.
 
     `elements` is the ReviewEntry's UploadElements; per-component flags
-    let the user disable individual children. `progress_callback(phase)`
+    let the user disable individual children. `pregathered_image` is an
+    optional ``GatheredImage`` resolved upstream (the hybrid agent has no
+    local LLM, so the server gathers the Vista background image at dispatch
+    time and ships it in the job plan); when given we use it verbatim and
+    skip the local image-gatherer call. `progress_callback(phase)`
     is called with short string phases for the SSE stream.
 
     Result dict shape (matches the YouTube/SimpleCast uploaders):
@@ -113,7 +118,13 @@ def upload_daily_experience(entry, *, elements=None, progress_callback=None) -> 
     image_temp_path: Optional[str] = None
     image_meta = None  # GatheredImage, used for record_image_use on success
     try:
-        if rock_vista_on and rock_image_on:
+        if rock_vista_on and rock_image_on and pregathered_image is not None:
+            # Server already resolved the image (agent path — no local LLM).
+            # Use it as-is; record_image_use/credits still fire after success
+            # below, exactly as for an inline gather.
+            image_meta = pregathered_image
+            image_temp_path = image_meta.file_path
+        elif rock_vista_on and rock_image_on:
             _emit("gathering_image")
             from core.image_gatherer import gather_image_for_verse
             image_meta = gather_image_for_verse(

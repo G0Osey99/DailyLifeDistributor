@@ -17,6 +17,7 @@ Phase 3: per-run YT state (no module-level mutation between runs),
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -373,6 +374,39 @@ def _entry_obj(row: dict):
     return ReviewEntry(**filtered)
 
 
+def _rehydrate_rock_image(payload: "dict | None"):
+    """Rebuild a ``GatheredImage`` from the server-shipped Rock image payload.
+
+    The server (which has the LLM) gathered the Vista background image and
+    base64-encoded its bytes into the job plan. Write them to a temp file and
+    return a GatheredImage so the orchestrator treats it exactly like a local
+    gather. Returns None when no image was shipped or the payload is malformed
+    (the orchestrator then falls back to its own gather, which surfaces the
+    usual error on a machine without an LLM).
+    """
+    if not isinstance(payload, dict) or not payload.get("image_b64"):
+        return None
+    try:
+        import base64 as _b64
+        import tempfile as _tf
+        from core.image_gatherer import GatheredImage
+        data = _b64.b64decode(payload["image_b64"])
+        fd, path = _tf.mkstemp(prefix="rock_bg_", suffix=".jpg")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        return GatheredImage(
+            file_path=path,
+            photo_id=str(payload.get("photo_id", "")),
+            source=str(payload.get("source", "")),
+            topic=str(payload.get("topic", "")),
+            photographer=str(payload.get("photographer", "")),
+            photo_url=str(payload.get("photo_url", "")),
+        )
+    except Exception:
+        _logger.warning("Rock: failed to rehydrate server-gathered image", exc_info=True)
+        return None
+
+
 def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> None:
     """Dispatch one (platform, row) to the appropriate bundled uploader.
 
@@ -443,7 +477,12 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
     elif platform == "Rock":
         e.youtube_video_path = p.get("video")
         e.thumbnail_path = p.get("thumbnail")
-        result = rock_orch.upload_daily_experience(e, elements=elements)
+        # The server pre-gathers the Vista background image (the agent has no
+        # local LLM for the image gatherer) and ships it in the row. Rehydrate
+        # it into a GatheredImage so the orchestrator uses it verbatim.
+        pregathered = _rehydrate_rock_image(row.get("rock_image"))
+        result = rock_orch.upload_daily_experience(
+            e, elements=elements, pregathered_image=pregathered)
 
     elif platform == "Rock Email":
         e.email_thumbnail_path = p.get("email_thumbnail")

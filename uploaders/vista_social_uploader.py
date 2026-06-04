@@ -111,11 +111,22 @@ _VS_SESSION_CONFIG = SessionConfig(
 # ---------------------------------------------------------------------------
 
 def _vista_debug_dir() -> str:
-    """Directory for schedule-step DOM dumps. Prefers the persistent /data
-    volume on the hosted VPS (survives container restarts, readable over SSH)
-    and falls back to a repo-local .vista-debug elsewhere."""
-    base = "/data/vista-debug" if os.path.isdir("/data") else os.path.join(
-        _PROJECT_ROOT, ".vista-debug")
+    """Directory for schedule-step DOM dumps, picked for the runtime context:
+
+      * hosted VPS web path -> /data/vista-debug (persistent volume, readable
+        over SSH);
+      * hybrid agent -> ~/.dld-agent/vista-debug, next to the agent's logs +
+        config. Crucially NOT the repo-relative fallback: in the frozen
+        PyInstaller agent that path is inside the bundle's temp extraction dir
+        (sys._MEIPASS), which is wiped on exit, so the snapshot would be lost;
+      * dev / USB Flask -> repo-local .vista-debug.
+    """
+    if os.path.isdir("/data"):
+        base = "/data/vista-debug"
+    else:
+        agent_home = os.path.join(os.path.expanduser("~"), ".dld-agent")
+        base = (os.path.join(agent_home, "vista-debug") if os.path.isdir(agent_home)
+                else os.path.join(_PROJECT_ROOT, ".vista-debug"))
     os.makedirs(base, exist_ok=True)
     return base
 
@@ -358,10 +369,10 @@ def _wait_for_media_upload(page, timeout_ms: int) -> None:
         page.wait_for_timeout(500)
     # Timed out: snapshot the media panel so we can see why neither the
     # "Attached" header nor a processing indicator was ever detected.
-    _capture_debug(page, "media-wait-timeout")
+    _capture_debug(page, "media-wait-timeout")  # logs the snapshot dir it wrote
     logger.warning(
         "Vista Social: media-ready signal never appeared after %d s "
-        "— proceeding anyway (see /data/vista-debug snapshot)",
+        "— proceeding anyway (DOM snapshot saved; see the path logged above)",
         timeout_ms // 1000,
     )
 

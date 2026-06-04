@@ -59,6 +59,26 @@ def test_detect_returns_empty_when_no_toast():
     assert V._detect_network_validation_error(_Page(toast="")) == ""
 
 
+def test_debug_dir_prefers_data_then_agent_home_then_repo(monkeypatch, tmp_path):
+    import os
+
+    # 1) Hosted VPS: /data exists -> /data/vista-debug.
+    monkeypatch.setattr(os.path, "isdir", lambda p: p == "/data")
+    monkeypatch.setattr(os, "makedirs", lambda *a, **k: None)
+    assert V._vista_debug_dir() == "/data/vista-debug"
+
+    # 2) Agent: no /data, ~/.dld-agent exists -> under it (NOT the bundle temp).
+    home = str(tmp_path)
+    agent_home = os.path.join(home, ".dld-agent")
+    monkeypatch.setattr(os.path, "expanduser", lambda p: home if p == "~" else p)
+    monkeypatch.setattr(os.path, "isdir", lambda p: p == agent_home)
+    assert V._vista_debug_dir() == os.path.join(agent_home, "vista-debug")
+
+    # 3) Dev/USB: neither -> repo-local .vista-debug.
+    monkeypatch.setattr(os.path, "isdir", lambda p: False)
+    assert V._vista_debug_dir().endswith(".vista-debug")
+
+
 def test_detect_swallows_evaluate_errors():
     class _Boom(_Page):
         def evaluate(self, _js):

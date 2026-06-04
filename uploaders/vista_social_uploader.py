@@ -234,45 +234,53 @@ def _dismiss_autosave_prompt(page, timeout_ms: int = 8_000) -> bool:
         return False
 
 
-def _set_profile_selection(page, networks_to_uncheck: list[str]) -> None:
-    """Uncheck every profile row whose overlay is one of `networks_to_uncheck`.
+def _set_profile_selection(page, networks_to_check: list[str],
+                           networks_to_uncheck: list[str]) -> None:
+    """Force each target network's profile row into the desired checked state.
 
-    Vista's profile picker uses custom div-based checkboxes (no <input>),
-    nested under `.Checkbox__Wrapper-sc-1at1571-0`. A row is "checked" iff
-    it contains the checkmark <svg path d="M8.925 ...">. The picker can
-    render the same logical row twice (sidebar list + an open dropdown
-    panel above it), so we click ALL visible matches — clicking already-
-    unchecked ones is a no-op for our purposes since both copies share
-    the same React state and end up consistent after the click cascade.
+    Vista remembers the last-used profile selection PER SESSION, so the
+    automation's stored session can default to a different set than the
+    operator sees interactively (observed: the automation defaulted to
+    Facebook-only, so Instagram silently dropped). We therefore *ensure*
+    Facebook+Instagram are checked and YouTube unchecked, rather than relying
+    on the default — the old "only uncheck YouTube" approach left IG off.
+
+    Picker mechanics (confirmed via scripts/vista_schedule_recon.py): rows are
+    `.Checkbox__Wrapper-sc-1at1571-0` with an `<img src=".../<network>.svg">`;
+    a row is checked iff it has the checkmark `svg path[d^="M8.925"]`. The same
+    logical row renders twice (sidebar list + open dropdown) and both copies
+    share React state, so we toggle each network at most ONCE (dedupe by
+    network) — clicking both copies would toggle the shared state twice and
+    cancel out.
     """
-    if not networks_to_uncheck:
-        return
-
     result = page.evaluate(
-        """(networks) => {
+        """(args) => {
+            const toCheck = args.toCheck, toUncheck = args.toUncheck;
             const wrappers = Array.from(
                 document.querySelectorAll('.Checkbox__Wrapper-sc-1at1571-0')
             ).filter(el => el.offsetParent !== null);
-            let clicked = 0;
+            const seen = new Set();
+            const changed = [];
             for (const w of wrappers) {
-                const imgs = Array.from(w.querySelectorAll('img'));
-                const matches = networks.some(net =>
-                    imgs.some(img => (img.src || '').includes('/' + net + '.svg'))
-                );
-                if (!matches) continue;
-                // Only click if currently checked.
+                const imgs = Array.from(w.querySelectorAll('img'))
+                    .map(i => i.src || '');
+                const netOf = (list) => list.find(n =>
+                    imgs.some(s => s.includes('/' + n + '.svg')));
+                const net = netOf(toCheck) || netOf(toUncheck);
+                if (!net || seen.has(net)) continue;  // dedupe + ignore others
+                seen.add(net);
+                const want = toCheck.includes(net);
                 const isChecked = !!w.querySelector('svg path[d^="M8.925"]');
-                if (!isChecked) continue;
-                const target = w.querySelector('.Checkbox__StyledFlex-sc-1at1571-1') || w;
-                target.click();
-                clicked += 1;
+                if (isChecked === want) continue;
+                (w.querySelector('.Checkbox__StyledFlex-sc-1at1571-1') || w).click();
+                changed.push((want ? '+' : '-') + net);
             }
-            return clicked;
+            return changed;
         }""",
-        networks_to_uncheck,
+        {"toCheck": networks_to_check, "toUncheck": networks_to_uncheck},
     )
-    logger.info("Vista Social: unchecked %d profile row(s) for %s",
-                result, networks_to_uncheck)
+    logger.info("Vista Social: profile selection adjusted: %s (want +%s -%s)",
+                result or "none", networks_to_check, networks_to_uncheck)
 
 
 def _fill_caption(page, caption: str) -> None:
@@ -313,65 +321,44 @@ def _wait_for_media_upload(page, timeout_ms: int) -> None:
 
     Readiness signal: the composer renders an "Attached videos" header
     (or "Attached video" / "Attached image" depending on file type) in
-    the main panel once Vista has registered the upload. The "Click to
-    edit media" string in the right-side per-network panel is a
-    persistent override placeholder, NOT a readiness indicator — keying
-    off its disappearance was the original bug.
+    the main panel once Vista has registered the upload.
+
+    Two persistent strings on this panel are NOT readiness signals and must
+    not be keyed off:
+      * "Click to edit media" — a per-network override placeholder.
+      * "Video processing." / "Image processing." — feature labels (each
+        with a Learn-more link), always present once media is attached. An
+        earlier attempt waited while ANY element read "processing", which
+        matched these permanent labels and wedged the wait for the full
+        timeout even though the video was already attached. We gate ONLY on
+        the "Attached …" header; any genuinely not-yet-finalized media is
+        caught downstream by the schedule step's retry-Next loop, which
+        re-clicks until the date picker mounts.
     """
     deadline = time.time() + (timeout_ms / 1000.0)
-    last_state = None
-    saw_processing = False
-    idle_after_processing = 0
+    announced_wait = False
     while time.time() < deadline:
-        state = page.evaluate(
+        attached = page.evaluate(
             r"""() => {
                 const all = Array.from(document.querySelectorAll('*'))
                   .filter(el => el.offsetParent !== null);
-                // Check processing FIRST: a video can show the "Attached
-                // videos" header while Vista is still transcoding it. Returning
-                // 'attached' then lets us click Next before the network
-                // (Instagram) can validate the media, which blocks scheduling.
-                // So while anything reads "processing", keep waiting.
-                const processing = all.some(el =>
-                    /\bprocessing\b/i.test((el.innerText || '').trim().slice(0, 60))
-                );
-                if (processing) return 'processing';
-                // Broadened from an exact ^Attached videos$ match: allow a
-                // trailing count/suffix (e.g. "Attached videos (1)") — an
-                // anchored-to-end match silently missed the header on the
-                // agent and burned the whole timeout. Still excludes the
-                // "Click to edit media" placeholder (different prefix).
-                const matches = all.filter(el => /^Attached (videos?|images?|media)\b/i.test((el.innerText || '').trim()));
-                if (matches.length > 0) return 'attached';
-                return 'idle';
+                // Allow a trailing count/suffix (e.g. "Attached videos (1)").
+                return all.some(el =>
+                    /^Attached (videos?|images?|media)\b/i.test((el.innerText || '').trim()));
             }"""
         )
-        if state == "attached":
+        if attached:
+            logger.info("Vista Social: media attached")
             return
-        if state == "processing":
-            saw_processing = True
-            idle_after_processing = 0
-        elif state == "idle" and saw_processing:
-            # Transcode finished (processing cleared) but our header matcher
-            # didn't catch the "attached" label. After it stays idle briefly,
-            # treat the upload as done rather than waiting out the timeout —
-            # the schedule step's _click_next retry loop is the backstop if
-            # the media truly isn't ready.
-            idle_after_processing += 1
-            if idle_after_processing >= 4:  # ~2s settled
-                logger.info(
-                    "Vista Social: media processing finished (header text "
-                    "unmatched) — treating as attached")
-                return
-        if state != last_state:
-            logger.info("Vista Social: media state = %s", state)
-            last_state = state
+        if not announced_wait:
+            logger.info("Vista Social: waiting for media to attach")
+            announced_wait = True
         page.wait_for_timeout(500)
-    # Timed out: snapshot the media panel so we can see why neither the
-    # "Attached" header nor a processing indicator was ever detected.
+    # Timed out: snapshot the media panel so we can see why the "Attached"
+    # header never appeared.
     _capture_debug(page, "media-wait-timeout")  # logs the snapshot dir it wrote
     logger.warning(
-        "Vista Social: media-ready signal never appeared after %d s "
+        "Vista Social: 'Attached …' header never appeared after %d s "
         "— proceeding anyway (DOM snapshot saved; see the path logged above)",
         timeout_ms // 1000,
     )
@@ -684,7 +671,11 @@ def upload_post(entry, elements=None, progress_callback=None) -> dict:
                      "uploader does not publish immediately)",
         }
 
-    # Per the user's spec: only Instagram + Facebook should remain selected.
+    # Per the user's spec: only Instagram + Facebook should be posted to.
+    # Vista's per-session default can drift (the automation's session defaulted
+    # to Facebook-only), so we actively CHECK both and uncheck YouTube rather
+    # than trusting the default.
+    networks_to_check = [_NETWORK_FACEBOOK, _NETWORK_INSTAGRAM]
     networks_to_uncheck = [_NETWORK_YOUTUBE]
 
     try:
@@ -706,7 +697,7 @@ def upload_post(entry, elements=None, progress_callback=None) -> dict:
             _dismiss_autosave_prompt(page)
 
             _emit(progress_callback, "configuring_profiles")
-            _set_profile_selection(page, networks_to_uncheck)
+            _set_profile_selection(page, networks_to_check, networks_to_uncheck)
 
             _emit(progress_callback, "filling_caption")
             _fill_caption(page, caption)

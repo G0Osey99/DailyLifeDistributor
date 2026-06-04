@@ -207,6 +207,15 @@ _AUTH_ERR_CODES = {401, 403}
 _active_job_lock = threading.Lock()
 _active_job_id: str | None = None
 
+# The currently-live AgentConnection. run() creates a NEW connection on every
+# reconnect (see the loop in run()), so a long-running job that captured the
+# connection it started with would emit into a dead socket after any
+# mid-upload WebSocket drop (`'NoneType' object has no attribute 'send'`,
+# repeated for the rest of the job). The job's transport reads THIS instead,
+# so events resume flowing the moment the new connection is up. Assignment is
+# atomic in CPython; a brief stale read just fails one send (caught upstream).
+_current_conn: "AgentConnection | None" = None
+
 
 def _device_name() -> str:
     return socket.gethostname() or "device"
@@ -356,7 +365,14 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
 
         class _T:
             def send(self, frame):
-                conn.send(frame)
+                # Emit through the CURRENTLY-live connection, not the one this
+                # job_plan arrived on — that original connection is replaced by
+                # a fresh AgentConnection on every reconnect, so using it
+                # directly would dead-letter every event after a mid-job drop.
+                live = _current_conn
+                if live is None:
+                    raise RuntimeError("transport offline (reconnecting)")
+                live.send(frame)
 
         transport_wrapper = _T()
 
@@ -372,7 +388,10 @@ def _on_message(conn: AgentConnection, msg: dict) -> None:
                     _active_job_id[:8] if _active_job_id else "?",
                 )
                 try:
-                    transport_wrapper.send({
+                    # Synchronous reply on the connection we're servicing —
+                    # send via conn directly (it's live; only the long-running
+                    # job thread needs the _current_conn indirection).
+                    conn.send({
                         "v": 1,
                         "type": "event",
                         "event": "error",
@@ -483,13 +502,18 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
     consecutive_auth_failures = 0
     consecutive_connect_failures = 0
 
+    global _current_conn
     while not shutdown_event.is_set():
         if _state is not None:
             _state.set_connection(_st.CONN_CONNECTING)
+        # Offline during the (re)connect attempt: a job emitting in this window
+        # should fail fast (and be caught) rather than write to a dead socket.
+        _current_conn = None
         conn = AgentConnection(server_url, token, shutdown_event=shutdown_event)
         try:
             log.info("agent: opening WebSocket to %s", server_url)
             conn.connect()
+            _current_conn = conn  # in-flight jobs emit through this live conn
             log.info("agent: WebSocket connected as %s", _device_name())
             print(f"✓ Connected ({_device_name()})")
             if _state is not None:

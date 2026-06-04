@@ -71,7 +71,12 @@ _NETWORK_INSTAGRAM = "instagram"
 _NETWORK_YOUTUBE = "youtube"
 
 _DEFAULT_TIMEOUT = 30_000      # 30 s
-_UPLOAD_TIMEOUT = 600_000      # 10 min for video upload + processing
+# Safety cap on the media-ready wait. With the processing→settled heuristic in
+# _wait_for_media_upload this rarely bites; it only matters if Vista never
+# shows a processing indicator AND our "Attached" header matcher misses. Was
+# 10 min, which left the agent hung for the full duration on a header-text
+# mismatch; 5 min (env-tunable) is plenty for a Shorts upload + transcode.
+_UPLOAD_TIMEOUT = int(os.environ.get("VISTA_MEDIA_TIMEOUT_MS", "300000"))
 # How long to keep re-clicking "Next" while a connected network (Instagram)
 # is still validating the just-uploaded video. The operator confirms IG
 # accepts these Shorts videos when posted by hand, so a content-validation
@@ -304,6 +309,8 @@ def _wait_for_media_upload(page, timeout_ms: int) -> None:
     """
     deadline = time.time() + (timeout_ms / 1000.0)
     last_state = None
+    saw_processing = False
+    idle_after_processing = 0
     while time.time() < deadline:
         state = page.evaluate(
             r"""() => {
@@ -318,20 +325,43 @@ def _wait_for_media_upload(page, timeout_ms: int) -> None:
                     /\bprocessing\b/i.test((el.innerText || '').trim().slice(0, 60))
                 );
                 if (processing) return 'processing';
-                const matches = all.filter(el => /^Attached (videos?|images?|media)$/i.test((el.innerText || '').trim()));
+                // Broadened from an exact ^Attached videos$ match: allow a
+                // trailing count/suffix (e.g. "Attached videos (1)") — an
+                // anchored-to-end match silently missed the header on the
+                // agent and burned the whole timeout. Still excludes the
+                // "Click to edit media" placeholder (different prefix).
+                const matches = all.filter(el => /^Attached (videos?|images?|media)\b/i.test((el.innerText || '').trim()));
                 if (matches.length > 0) return 'attached';
                 return 'idle';
             }"""
         )
         if state == "attached":
             return
+        if state == "processing":
+            saw_processing = True
+            idle_after_processing = 0
+        elif state == "idle" and saw_processing:
+            # Transcode finished (processing cleared) but our header matcher
+            # didn't catch the "attached" label. After it stays idle briefly,
+            # treat the upload as done rather than waiting out the timeout —
+            # the schedule step's _click_next retry loop is the backstop if
+            # the media truly isn't ready.
+            idle_after_processing += 1
+            if idle_after_processing >= 4:  # ~2s settled
+                logger.info(
+                    "Vista Social: media processing finished (header text "
+                    "unmatched) — treating as attached")
+                return
         if state != last_state:
             logger.info("Vista Social: media state = %s", state)
             last_state = state
         page.wait_for_timeout(500)
+    # Timed out: snapshot the media panel so we can see why neither the
+    # "Attached" header nor a processing indicator was ever detected.
+    _capture_debug(page, "media-wait-timeout")
     logger.warning(
-        "Vista Social: 'Attached videos' header never appeared after %d s "
-        "— proceeding anyway",
+        "Vista Social: media-ready signal never appeared after %d s "
+        "— proceeding anyway (see /data/vista-debug snapshot)",
         timeout_ms // 1000,
     )
 

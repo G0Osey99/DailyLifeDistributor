@@ -179,8 +179,8 @@ def test_cache_keyed_to_full_transcript_not_truncated(monkeypatch):
 
 
 def test_both_attempts_empty_returns_empty(monkeypatch):
-    """If the LLM stays broken across both attempts, return [] — the
-    cold-start retry is a safety net, not infinite retry."""
+    """If the LLM stays broken across all warm-up attempts, return [] — the
+    cold-start retry is a bounded safety net, not infinite retry."""
     calls = {"n": 0}
 
     class _EmptyResp:
@@ -197,4 +197,5 @@ def test_both_attempts_empty_returns_empty(monkeypatch):
 
     titles = m.generate_title_suggestions("persistently-broken unique transcript")
     assert titles == []
-    assert calls["n"] == 2, "tried twice (cold-start retry), no more"
+    # 1 initial attempt + 2 bounded warm-up retries, then give up.
+    assert calls["n"] == 3, "bounded warm-up retries (1 + 2), no more"

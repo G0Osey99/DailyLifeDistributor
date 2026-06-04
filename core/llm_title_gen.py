@@ -133,6 +133,11 @@ def generate_title_suggestions(
     model: Optional[str] = None,
 ) -> list[str]:
     if not transcript or not transcript.strip():
+        # Distinguish this from an LLM failure in the log — "no suggestions"
+        # for a date is usually a blank transcript cell, not a model outage.
+        logger.info(
+            "title gen: empty transcript — no suggestions (check the mapped "
+            "transcript column has text for this date)")
         return []
 
     if not is_llamafile_running():
@@ -200,21 +205,29 @@ def generate_title_suggestions(
     # transient network errors (one attempt → one extra on connect/
     # timeout), so this outer loop is strictly for parse / empty
     # failures and the per-call budget remains bounded.
-    _CONTENT_RETRY_DELAY_S = 1.0
+    # Escalating warm-up backoff: an Ollama model that idled out of memory can
+    # take 10-30s to reload, and its FIRST generation while loading often comes
+    # back malformed/empty. A single 1s retry frequently landed before the
+    # model was warm — the scattered "no suggestions" the operator saw. Give it
+    # a few tries with growing gaps; the request-level keep_alive below then
+    # holds the model resident so the rest of the batch stays warm.
+    _CONTENT_RETRY_DELAYS = [2.0, 4.0]
     titles_out: list[str] = []
-    for content_attempt in range(2):
+    total = len(_CONTENT_RETRY_DELAYS) + 1
+    for content_attempt in range(total):
         titles_out = _attempt_generation(prompt, llm_config)
         if titles_out:
             _llm_breaker().record_success()
             _cache_put(cache_key, titles_out)
             return titles_out
-        if content_attempt == 0:
+        if content_attempt < len(_CONTENT_RETRY_DELAYS):
+            delay = _CONTENT_RETRY_DELAYS[content_attempt]
             logger.warning(
-                "llamafile returned no usable titles on attempt 1/2 — "
-                "retrying in %.1fs (likely an Ollama cold-start warm-up)",
-                _CONTENT_RETRY_DELAY_S,
+                "llamafile returned no usable titles (attempt %d/%d) — retrying "
+                "in %.1fs (likely an Ollama cold-start warm-up)",
+                content_attempt + 1, total, delay,
             )
-            time.sleep(_CONTENT_RETRY_DELAY_S)
+            time.sleep(delay)
     return []
 
 
@@ -243,6 +256,11 @@ def _attempt_generation(prompt: str, llm_config: dict) -> list[str]:
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": llm_config.get("temperature", _LLM_TEMPERATURE),
                         "max_tokens": llm_config.get("max_tokens", _LLM_MAX_TOKENS),
+                        # Ollama-only knob (OpenAI-compatible backends ignore the
+                        # extra field): keep the model resident so the next date
+                        # in the batch doesn't pay a cold-start reload. Belt-and-
+                        # suspenders with OLLAMA_KEEP_ALIVE on the server.
+                        "keep_alive": llm_config.get("keep_alive", "30m"),
                     },
                     timeout=llm_config.get("request_timeout_seconds", _LLM_REQUEST_TIMEOUT),
                 )

@@ -135,10 +135,17 @@ class AgentConnection:
         # WebSocket mid-job. The lock covers worker-thread event emission,
         # hello, and the keepalive in ``run_once``.
         self._send_lock = threading.Lock()
-        # Tracks when we last put any frame on the wire so the keepalive
-        # only sends when truly idle (the timer doesn't fire while uploads
-        # are emitting progress events).
         self._last_send_at = 0.0
+        # Tracks when we last sent a PING *control frame* specifically. The
+        # keepalive must fire on a fixed cadence relative to THIS, not to the
+        # last data send: middleboxes (Cloudflare Tunnel) only reset their
+        # idle timers on control frames, so a job that's streaming progress
+        # data frames keeps _last_send_at fresh but sends NO pings — and the
+        # Tunnel then closes the socket ~24s in (the reconnect-storm signature
+        # in the module docstring, but during active jobs). Basing the ping on
+        # _last_ping_at keeps a 15s control-frame heartbeat going regardless
+        # of data traffic.
+        self._last_ping_at = 0.0
 
     def connect(self, pending_results: Optional[list] = None) -> None:
         """Open the WebSocket and send the hello frame.
@@ -152,7 +159,11 @@ class AgentConnection:
         self.ws = _connect(_to_ws_url(self.server_url, self.token))
         with self._send_lock:
             self.ws.send(json.dumps(_build_hello(pending_results)))
-            self._last_send_at = _time.monotonic()
+            now = _time.monotonic()
+            self._last_send_at = now
+            # Start the ping clock at connect so the first heartbeat is one
+            # full interval out, not immediate.
+            self._last_ping_at = now
 
     def send(self, message: dict) -> None:
         import time as _time
@@ -176,7 +187,9 @@ class AgentConnection:
         with self._send_lock:
             out = self.ws.ws.send(Ping())
             self.ws.sock.send(out)
-            self._last_send_at = _time.monotonic()
+            now = _time.monotonic()
+            self._last_send_at = now
+            self._last_ping_at = now
 
     def run_once(self, on_message: Callable[[dict], None]) -> bool:
         """Receive one message and dispatch it. Returns False when the
@@ -207,13 +220,16 @@ class AgentConnection:
                     simple_websocket.ConnectionError):
                 # Real disconnect — caller will reconnect.
                 return False
-            # App-level keepalive — emit a tiny frame whenever the last
-            # send (any send, including upload events) was longer ago than
-            # _PING_INTERVAL_S. Runs on this single receive thread so it
+            # Keepalive: emit a PING control frame whenever the last PING was
+            # longer ago than _PING_INTERVAL_S — NOT the last data send.
+            # Middleboxes only honor control frames, so a job streaming
+            # progress data frames must still get a steady 15s ping cadence or
+            # the Cloudflare Tunnel closes the socket ~24s in (the in-field
+            # reconnect storm). Runs on this single receive thread so it
             # serializes naturally with worker-thread sends through
             # ``_send_lock``. Avoids the simple_websocket ping-thread race
             # that produced ``[SSL] internal error`` in the field.
-            _idle = _time.monotonic() - self._last_send_at
+            _idle = _time.monotonic() - self._last_ping_at
             if _idle >= _PING_INTERVAL_S:
                 try:
                     self._send_ping()

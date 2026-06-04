@@ -20,6 +20,10 @@ services:
     restart: unless-stopped
     environment:
       OLLAMA_HOST: "0.0.0.0:11434"
+      # Keep the title-suggestion model resident for 30m after each call so a
+      # multi-date title-gen session doesn't hit cold-start reloads (default is
+      # 5m, which produced scattered "no suggestions" mid-batch).
+      OLLAMA_KEEP_ALIVE: "30m"
     volumes:
       - ollama-models:/root/.ollama
     networks: [dld-net]

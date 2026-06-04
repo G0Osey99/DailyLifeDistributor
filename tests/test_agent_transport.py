@@ -219,8 +219,10 @@ def test_run_once_emits_ping_control_frame_when_idle(monkeypatch):
     fake.sent.clear()
     fake.ws.events_sent.clear()
     fake.sock.sent_bytes.clear()
-    # Pretend the last send was long enough ago to trigger keepalive.
-    conn._last_send_at = _time.monotonic() - (transport._PING_INTERVAL_S + 1)
+    # Pretend the last PING was long enough ago to trigger keepalive. The
+    # cadence is gated on the last control-frame ping (not the last data send),
+    # so an active job streaming data frames still gets a steady heartbeat.
+    conn._last_ping_at = _time.monotonic() - (transport._PING_INTERVAL_S + 1)
 
     # run_once will receive None (timeout) then loop. Set shutdown after
     # one poll so the test doesn't block.

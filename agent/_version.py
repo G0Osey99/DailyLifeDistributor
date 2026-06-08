@@ -1,2 +1,2 @@
 """Single source of truth for the agent version. Bumped per release."""
-__version__ = "0.7.23"
+__version__ = "0.7.24"

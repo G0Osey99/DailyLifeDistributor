@@ -71,12 +71,15 @@ _NETWORK_INSTAGRAM = "instagram"
 _NETWORK_YOUTUBE = "youtube"
 
 _DEFAULT_TIMEOUT = 30_000      # 30 s
-# Safety cap on the media-ready wait. With the processing→settled heuristic in
-# _wait_for_media_upload this rarely bites; it only matters if Vista never
-# shows a processing indicator AND our "Attached" header matcher misses. Was
-# 10 min, which left the agent hung for the full duration on a header-text
-# mismatch; 5 min (env-tunable) is plenty for a Shorts upload + transcode.
-_UPLOAD_TIMEOUT = int(os.environ.get("VISTA_MEDIA_TIMEOUT_MS", "300000"))
+# Cap on the media-ready wait. The "Attached videos" header only appears once
+# Vista has fully ingested the upload, and on the agent that upload competes
+# for the home connection's upstream with the concurrent YouTube video uploads
+# (1.4 GB+). A 300 MB Shorts video routinely needed ~5 min to land in that
+# contended case — right at the old 5-min cap, so the wait timed out a beat
+# before the header appeared and the schedule step then ran against not-ready
+# media. 15 min (env-tunable) gives comfortable headroom; the detector itself
+# is correct (verified against the captured DOM).
+_UPLOAD_TIMEOUT = int(os.environ.get("VISTA_MEDIA_TIMEOUT_MS", "900000"))
 # How long to keep re-clicking "Next" while a connected network (Instagram)
 # is still validating the just-uploaded video. The operator confirms IG
 # accepts these Shorts videos when posted by hand, so a content-validation
@@ -335,8 +338,10 @@ def _wait_for_media_upload(page, timeout_ms: int) -> None:
         caught downstream by the schedule step's retry-Next loop, which
         re-clicks until the date picker mounts.
     """
-    deadline = time.time() + (timeout_ms / 1000.0)
+    started = time.time()
+    deadline = started + (timeout_ms / 1000.0)
     announced_wait = False
+    next_heartbeat = started + 30.0
     while time.time() < deadline:
         attached = page.evaluate(
             r"""() => {
@@ -348,11 +353,19 @@ def _wait_for_media_upload(page, timeout_ms: int) -> None:
             }"""
         )
         if attached:
-            logger.info("Vista Social: media attached")
+            logger.info("Vista Social: media attached after %.0fs", time.time() - started)
             return
         if not announced_wait:
-            logger.info("Vista Social: waiting for media to attach")
+            logger.info(
+                "Vista Social: waiting for media to finish uploading to Vista "
+                "(can take several minutes for a large video sharing upstream "
+                "with the YouTube uploads)")
             announced_wait = True
+        # Heartbeat so a multi-minute upload isn't a silent gap in the log.
+        if time.time() >= next_heartbeat:
+            logger.info("Vista Social: still waiting for media (%.0fs elapsed)",
+                        time.time() - started)
+            next_heartbeat += 30.0
         page.wait_for_timeout(500)
     # Timed out: snapshot the media panel so we can see why the "Attached"
     # header never appeared.

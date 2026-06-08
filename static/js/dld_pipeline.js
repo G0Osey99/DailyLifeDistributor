@@ -904,6 +904,57 @@
         };
     }
 
+    // Per-(date, platform) outcomes accumulated across every batch of a run,
+    // so we can print a single what-worked / what-didn't summary at the end.
+    let _runOutcomes = [];
+
+    function _recordOutcome(date, platform, status, message) {
+        if (!date && !platform) return;  // batch-level frame, not a row
+        _runOutcomes.push({ date: date || "", platform: platform || "", status, message: message || "" });
+    }
+
+    function renderRunSummary() {
+        if (!_runOutcomes.length) return;
+        // De-dupe by date|platform — a re-run/retry reports the latest outcome.
+        const byKey = new Map();
+        for (const o of _runOutcomes) byKey.set(`${o.date}|${o.platform}`, o);
+        const rows = Array.from(byKey.values());
+        const counts = { success: 0, error: 0, skip: 0, needs_manual: 0, cancelled: 0 };
+        for (const o of rows) counts[o.status] = (counts[o.status] || 0) + 1;
+        const icon = (s) =>
+            s === "success" ? '<span style="color:var(--ok)">✓</span>' :
+            s === "skip" ? '<span class="text-dim">↷</span>' :
+            s === "needs_manual" ? '<span style="color:var(--warn)">⚠</span>' :
+            s === "cancelled" ? '<span class="text-dim">⊘</span>' :
+            '<span style="color:var(--err)">✗</span>';
+        const byDate = new Map();
+        for (const o of rows) {
+            if (!byDate.has(o.date)) byDate.set(o.date, []);
+            byDate.get(o.date).push(o);
+        }
+        let html = '<div class="card" style="margin-top:12px"><div style="font-weight:700;margin-bottom:6px">Upload summary</div>';
+        html += '<div class="text-sm" style="margin-bottom:8px">';
+        html += `<span style="color:var(--ok)">${counts.success} succeeded</span>`;
+        if (counts.error) html += ` · <span style="color:var(--err)">${counts.error} failed</span>`;
+        if (counts.needs_manual) html += ` · <span style="color:var(--warn)">${counts.needs_manual} need manual</span>`;
+        if (counts.skip) html += ` · <span class="text-dim">${counts.skip} skipped</span>`;
+        if (counts.cancelled) html += ` · <span class="text-dim">${counts.cancelled} cancelled</span>`;
+        html += '</div>';
+        for (const date of Array.from(byDate.keys()).sort()) {
+            const items = byDate.get(date).sort((a, b) => a.platform.localeCompare(b.platform));
+            html += `<div class="text-sm" style="margin-bottom:2px"><b>${esc(date)}</b>: `;
+            html += items.map((o) => `${icon(o.status)}&nbsp;${esc(o.platform)}`).join(" &nbsp;&nbsp; ");
+            html += '</div>';
+            for (const o of items) {
+                if ((o.status === "error" || o.status === "needs_manual") && o.message) {
+                    html += `<div class="text-sm text-dim" style="margin-left:14px">↳ ${esc(o.platform)}: ${esc(o.message)}</div>`;
+                }
+            }
+        }
+        html += '</div>';
+        logProgress(html);
+    }
+
     // Resolves to {ok}. ok is false on a stream/connection error or a
     // batch-level crash (an `error` event with no date/platform). Per-row
     // errors are logged but don't fail the batch (continue-and-report).
@@ -917,14 +968,18 @@
                 try { d = JSON.parse(e.data); } catch (_) { return; }
                 if (d.type === "success") {
                     logProgress(`<div class="text-sm" style="color:var(--ok)">✓ ${esc(d.date)} — ${esc(d.platform)}</div>`);
+                    _recordOutcome(d.date, d.platform, "success");
                 } else if (d.type === "error") {
                     const tag = d.error_type === "cancelled" ? "⊘ cancelled" : "✗";
                     logProgress(`<div class="text-sm" style="color:var(--err)">${tag} ${esc(d.date || "")} — ${esc(d.platform || "")}: ${esc(d.message || "")}</div>`);
                     if (!d.date && !d.platform) batchError = true;  // batch-level crash
+                    _recordOutcome(d.date, d.platform, d.error_type === "cancelled" ? "cancelled" : "error", d.message);
                 } else if (d.type === "skip") {
                     logProgress(`<div class="text-sm text-dim">↷ ${esc(d.date || "")} — ${esc(d.platform || "")} (skipped)</div>`);
+                    _recordOutcome(d.date, d.platform, "skip");
                 } else if (d.type === "needs_manual") {
                     logProgress(`<div class="text-sm" style="color:var(--warn)">⚠ ${esc(d.date || "")} — ${esc(d.platform || "")} needs manual action</div>`);
+                    _recordOutcome(d.date, d.platform, "needs_manual", d.message || "needs manual action");
                 }
                 if (d.type === "done") {
                     es.close();
@@ -1104,6 +1159,7 @@
                 return;
             }
             runId = init.data.run_id;
+            _runOutcomes = [];   // fresh summary per run
             let aborted = false;
             for (let i = 0; i < dates.length; i += BATCH_SIZE) {
                 const batch = dates.slice(i, i + BATCH_SIZE);
@@ -1118,6 +1174,10 @@
             if (!aborted) {
                 logProgress('<div class="text-sm" style="color:var(--ok);margin-top:8px;font-weight:600;">All batches complete.</div>');
             }
+            // Always print the what-worked/what-didn't summary — including
+            // when the run stopped early, so the operator sees exactly which
+            // (date, platform) pairs landed and which still need attention.
+            renderRunSummary();
         } catch (err) {
             logProgress(`<div class="text-sm" style="color:var(--err)">Upload error: ${esc(err.message || err)}</div>`);
         } finally {

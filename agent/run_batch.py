@@ -148,7 +148,13 @@ def _run_one(platform: str, row: dict, emit, paths: dict, cb_cfg: dict,
     yt_expected = (platform == "Rock Email"
                    and "YouTube Video" in row.get("platforms", []))
     if yt_expected:
+        _logger.info(
+            "Rock Email (row %s): waiting for this date's YouTube Video to "
+            "finish before posting", row["row_idx"])
         watch = yt_state.wait(row["row_idx"])
+        _logger.info(
+            "Rock Email (row %s): YouTube wait resolved — watch URL %s",
+            row["row_idx"], "received" if watch else "MISSING (skip/fail/timeout)")
         row = dict(row)   # shallow copy so we don't mutate the shared row
         row["yt_watch_url"] = watch
         row["_yt_expected"] = True
@@ -286,6 +292,13 @@ def run(*, envelope: dict, paths: dict, emit,
     for row in rows:
         for platform in row["platforms"]:
             tasks.append((platform, row))
+    # Submit Rock Email rows LAST. An email row blocks in yt_state.wait()
+    # until its date's YouTube Video records a result; if email rows were
+    # submitted first they could occupy every worker in the bounded pool,
+    # leaving none free to actually run the YouTube Video they're waiting on
+    # (the date's email then times out and posts without a link). Mirrors the
+    # web path's CONC-003. Stable sort: False(0) before True(1).
+    tasks.sort(key=lambda pt: pt[0] == "Rock Email")
 
     # Visibility: when a user reports "the agent did nothing", the absence
     # of this line tells us the dispatch never reached the executor — vs.

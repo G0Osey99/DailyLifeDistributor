@@ -456,6 +456,16 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
     emit({"type": "event", "event": "start", "platform": platform,
           "row_idx": row["row_idx"], "iso_date": iso})
 
+    def _phase(phase):
+        # Mirror core/upload_jobs._dispatch_upload's _phase so the dashboard
+        # gets the same phase_change signals (gathering_image, creating_vista,
+        # scheduling, ...) on the agent path as on the web path. Previously
+        # the agent passed no progress_callback for Rock / Rock Email /
+        # Vista Social, so agent runs showed a silent gap between start and
+        # success/error.
+        emit({"type": "event", "event": "phase_change", "platform": platform,
+              "row_idx": row["row_idx"], "iso_date": iso, "phase": phase})
+
     e = _entry_obj(row)
 
     # Backfill the Wistia ref from the agent-resolved Shorts filename. On the
@@ -511,7 +521,8 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
         # it into a GatheredImage so the orchestrator uses it verbatim.
         pregathered = _rehydrate_rock_image(row.get("rock_image"))
         result = rock_orch.upload_daily_experience(
-            e, elements=elements, pregathered_image=pregathered)
+            e, elements=elements, pregathered_image=pregathered,
+            progress_callback=_phase)
 
     elif platform == "Rock Email":
         e.email_thumbnail_path = p.get("email_thumbnail")
@@ -532,7 +543,8 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
             }
         else:
             result = rock_schedule_email(e, youtube_watch_url=watch_url,
-                                         elements=elements)
+                                         elements=elements,
+                                         progress_callback=_phase)
 
     elif platform == "Vista Social":
         # Vista posts the SHORTS clip (uploader reads youtube_shorts_path),
@@ -540,7 +552,8 @@ def _dispatch_upload(*, platform: str, row: dict, emit, paths: dict, **_) -> Non
         # so the Vista uploader always saw youtube_shorts_path=None and failed
         # file-not-found on the agent path. Match the uploader + the web path.
         e.youtube_shorts_path = p.get("short_video")
-        result = vista_social_uploader.upload_post(e, elements=elements)
+        result = vista_social_uploader.upload_post(e, elements=elements,
+                                                   progress_callback=_phase)
 
     else:
         result = {"success": False, "error": f"unknown platform {platform!r}"}

@@ -161,6 +161,25 @@ class RockBrowserClient:
 
     # -- idempotency ------------------------------------------------------
 
+    def _wait_for_listing_grid(self, timeout_ms: int = 5000) -> None:
+        """Bounded wait for the channel listing's grid rows to be in the DOM.
+
+        The idempotency lookups call ``locator(...).count()`` immediately
+        after a ``domcontentloaded`` navigation. Rock's grids are server-
+        rendered so the rows are normally in the initial HTML, but if the
+        grid ever renders late, a premature ``count() == 0`` reads as "no
+        existing item" and the caller would create a DUPLICATE. A short
+        tolerant wait closes that race; an actually-empty listing just
+        spends the timeout once and proceeds.
+        """
+        page = self._page
+        assert page is not None
+        try:
+            page.wait_for_selector("table tr", state="attached", timeout=timeout_ms)
+        except PlaywrightTimeout:
+            log.debug("listing grid rows not seen within %dms; proceeding "
+                      "(listing may legitimately be empty)", timeout_ms)
+
     def find_existing_parent_for_date(self, publish_date: date) -> Optional[ItemRef]:
         """Search the parent channel's listing for an item with this Active
         date. Returns the first match or None.
@@ -172,6 +191,7 @@ class RockBrowserClient:
         assert page is not None
         url = _CHANNEL_LIST_URL_TMPL.format(guid=_CHANNEL_GUID_PARENT)
         self._goto(url)
+        self._wait_for_listing_grid()
         # Listing renders mm/dd/yyyy without leading zeros (e.g. "4/12/2026").
         target = f"{publish_date.month}/{publish_date.day}/{publish_date.year}"
         rows = page.locator(f'tr:has(td:text-is("{target}"))')
@@ -332,6 +352,7 @@ class RockBrowserClient:
         page = self._page
         assert page is not None
         self._goto(_CHANNEL_LIST_URL_TMPL.format(guid=_CHANNEL_GUID_EMAIL))
+        self._wait_for_listing_grid()
         rows = page.locator(f'tr:has(td:text-is("{fields.title}"))')
         if rows.count() == 0:
             return None
@@ -694,6 +715,7 @@ class RockBrowserClient:
         """
         page = self._page
         assert page is not None
+        self._wait_for_listing_grid()
         rows = page.locator(f'tr:has(td:text-is("{title}"))')
         count = rows.count()
         if count == 0:

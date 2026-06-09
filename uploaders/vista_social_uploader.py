@@ -40,8 +40,11 @@ from datetime import datetime
 
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
-except ImportError:
-    PlaywrightTimeout = Exception
+except ImportError:  # pragma: no cover - playwright always present in prod
+    class PlaywrightTimeout(Exception):  # type: ignore[no-redef]
+        """Placeholder when Playwright isn't importable. A dedicated class
+        (not ``Exception``) so _INFRA_FAILURES doesn't accidentally match
+        every exception in playwright-less test environments."""
 
 from core.hosted import is_hosted
 from core.playwright_session import (
@@ -51,6 +54,15 @@ from core.playwright_session import (
     emit_phase as _emit,
     url_marker_login_check,
 )
+
+# Infra failures (dead session / unresponsive page / network) must PROPAGATE
+# so the dispatch's circuit breaker records them and stops relaunching Chrome
+# on every remaining date. Mirrors uploaders/rock/orchestrator.py — previously
+# only SessionExpiredError propagated here, so a Vista outage (every row a
+# PlaywrightTimeout) never opened the upload:Vista Social breaker and each
+# remaining date burned a full Chrome launch + timeout.
+_INFRA_FAILURES = (SessionExpiredError, PlaywrightTimeout,
+                   ConnectionError, TimeoutError, OSError)
 
 
 # ---------------------------------------------------------------------------
@@ -259,9 +271,16 @@ def _set_profile_selection(page, networks_to_check: list[str],
     result = page.evaluate(
         """(args) => {
             const toCheck = args.toCheck, toUncheck = args.toUncheck;
-            const wrappers = Array.from(
-                document.querySelectorAll('.Checkbox__Wrapper-sc-1at1571-0')
-            ).filter(el => el.offsetParent !== null);
+            // Tolerate styled-components hash drift: prefer the exact class,
+            // fall back to a prefix match on the stable "Checkbox__Wrapper"
+            // component name Vista's build emits before the hash.
+            let wrappers = Array.from(
+                document.querySelectorAll('.Checkbox__Wrapper-sc-1at1571-0'));
+            if (wrappers.length === 0) {
+                wrappers = Array.from(document.querySelectorAll(
+                    '[class*="Checkbox__Wrapper"]'));
+            }
+            wrappers = wrappers.filter(el => el.offsetParent !== null);
             const seen = new Set();
             const changed = [];
             for (const w of wrappers) {
@@ -275,15 +294,71 @@ def _set_profile_selection(page, networks_to_check: list[str],
                 const want = toCheck.includes(net);
                 const isChecked = !!w.querySelector('svg path[d^="M8.925"]');
                 if (isChecked === want) continue;
-                (w.querySelector('.Checkbox__StyledFlex-sc-1at1571-1') || w).click();
+                const flex = w.querySelector('.Checkbox__StyledFlex-sc-1at1571-1')
+                    || w.querySelector('[class*="Checkbox__StyledFlex"]')
+                    || w;
+                flex.click();
                 changed.push((want ? '+' : '-') + net);
             }
-            return changed;
+            return {changed, found: Array.from(seen),
+                    wrapper_count: wrappers.length};
         }""",
         {"toCheck": networks_to_check, "toUncheck": networks_to_uncheck},
     )
     logger.info("Vista Social: profile selection adjusted: %s (want +%s -%s)",
-                result or "none", networks_to_check, networks_to_uncheck)
+                result.get("changed") or "none",
+                networks_to_check, networks_to_uncheck)
+    # Verify, don't trust: if the picker DOM drifted (zero rows matched) or a
+    # required network's row wasn't found, the post would silently go to
+    # whatever profiles Vista last remembered — possibly the wrong networks
+    # entirely. Fail the row loudly instead.
+    missing = [n for n in networks_to_check if n not in (result.get("found") or [])]
+    if missing:
+        raise RuntimeError(
+            "Vista Social: could not find the profile checkbox row(s) for "
+            f"{', '.join(missing)} (matched {result.get('wrapper_count', 0)} "
+            "picker rows). Vista's profile-picker DOM may have changed — "
+            "refusing to post to an unverified profile selection."
+        )
+    # Second pass: confirm the clicks actually landed (React state settled to
+    # the desired values). A click swallowed by an overlay or a re-render
+    # leaves the wrong networks selected with no other signal.
+    page.wait_for_timeout(400)
+    state = page.evaluate(
+        """(args) => {
+            let wrappers = Array.from(
+                document.querySelectorAll('.Checkbox__Wrapper-sc-1at1571-0'));
+            if (wrappers.length === 0) {
+                wrappers = Array.from(document.querySelectorAll(
+                    '[class*="Checkbox__Wrapper"]'));
+            }
+            wrappers = wrappers.filter(el => el.offsetParent !== null);
+            const stateOf = {};
+            for (const w of wrappers) {
+                const imgs = Array.from(w.querySelectorAll('img'))
+                    .map(i => i.src || '');
+                for (const n of args.all) {
+                    if (stateOf[n] === undefined
+                        && imgs.some(s => s.includes('/' + n + '.svg'))) {
+                        stateOf[n] = !!w.querySelector('svg path[d^="M8.925"]');
+                    }
+                }
+            }
+            return stateOf;
+        }""",
+        {"all": networks_to_check + networks_to_uncheck},
+    )
+    wrong = ([n for n in networks_to_check if state.get(n) is not True]
+             + [n for n in networks_to_uncheck
+                if n in state and state.get(n) is not False])
+    if wrong:
+        raise RuntimeError(
+            "Vista Social: profile selection did not settle as requested "
+            f"(wrong state for: {', '.join(wrong)}; want +{networks_to_check} "
+            f"-{networks_to_uncheck}, got {state}). Refusing to post to an "
+            "unverified profile selection."
+        )
+    logger.info("Vista Social: profile selection verified: %s", state)
 
 
 def _fill_caption(page, caption: str) -> None:
@@ -739,12 +814,13 @@ def upload_post(entry, elements=None, progress_callback=None) -> dict:
             # the URL after Schedule (it's a calendar tile, not a route).
             return {"success": True, "url": page.url or _CALENDAR_URL}
 
-    except SessionExpiredError:
-        # Hosted mode: propagate so the orchestrator surfaces the re-Connect
-        # message rather than the generic RuntimeError branch below.
+    except _INFRA_FAILURES:
+        # Propagate infra failures (incl. SessionExpiredError and Playwright
+        # timeouts) so the dispatch circuit breaker records them and fails
+        # Vista fast for the rest of the run instead of relaunching Chrome
+        # and burning the timeout budget on every remaining date. Per-row
+        # data problems surface as RuntimeError below and stay breaker-neutral.
         raise
-    except PlaywrightTimeout as exc:
-        return {"success": False, "error": f"Vista Social timed out: {exc}"}
     except RuntimeError as exc:
         return {"success": False, "error": str(exc)}
     except Exception as exc:

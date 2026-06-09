@@ -838,20 +838,77 @@
         return { ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) };
     }
 
+    // How long a chunk POST may go with ZERO upload progress before we abort
+    // and retry it. Stall-based (not total-duration-based) so a slow-but-
+    // moving link is never killed, while a hung TCP connection is cut in
+    // ~90s instead of wedging the whole run forever (observed in the field:
+    // one chunk POST hung indefinitely mid-run with no error surfaced).
+    const CHUNK_STALL_MS = 90 * 1000;
+    const CHUNK_MAX_ATTEMPTS = 4;
+
+    // POST one chunk via XHR so we get upload.onprogress (fetch can't see
+    // upload progress). Aborts when no bytes have been accepted for
+    // CHUNK_STALL_MS. Resolves {ok, status, data} like postJSON.
+    function postChunkOnce(fd) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            let lastProgress = Date.now();
+            const stallTimer = setInterval(() => {
+                if (Date.now() - lastProgress > CHUNK_STALL_MS) {
+                    clearInterval(stallTimer);
+                    xhr.abort();
+                }
+            }, 5000);
+            xhr.upload.onprogress = () => { lastProgress = Date.now(); };
+            xhr.onload = () => {
+                clearInterval(stallTimer);
+                let data = {};
+                try { data = JSON.parse(xhr.responseText || "{}"); } catch (e) { /* non-JSON */ }
+                resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, data });
+            };
+            xhr.onerror = () => { clearInterval(stallTimer); reject(new Error("network error")); };
+            xhr.onabort = () => { clearInterval(stallTimer); reject(new Error("stalled (no upload progress for " + (CHUNK_STALL_MS / 1000) + "s)")); };
+            xhr.open("POST", "/media/upload/chunk");
+            xhr.send(fd);
+        });
+    }
+
     async function uploadFileChunks(runId, fileId, file) {
         const total = Math.max(1, Math.ceil(file.size / CHUNK_BYTES));
         for (let i = 0; i < total; i++) {
             const blob = file.slice(i * CHUNK_BYTES, Math.min(file.size, (i + 1) * CHUNK_BYTES));
-            const fd = new FormData();
-            fd.append("run_id", runId);
-            fd.append("file_id", fileId);
-            fd.append("chunk_index", String(i));
-            fd.append("total_chunks", String(total));
-            fd.append("data", blob, "chunk");
-            const r = await fetch("/media/upload/chunk", { method: "POST", body: fd });
-            if (!r.ok) {
-                const data = await r.json().catch(() => ({}));
-                throw new Error(data.error || `chunk ${i} failed (${r.status})`);
+            // Retry loop: the server appends in order and idempotently acks a
+            // re-sent earlier chunk ({duplicate: true}), so re-POSTing after a
+            // stall/network error is safe — worst case it's a no-op ack.
+            let lastErr = null;
+            for (let attempt = 1; attempt <= CHUNK_MAX_ATTEMPTS; attempt++) {
+                const fd = new FormData();
+                fd.append("run_id", runId);
+                fd.append("file_id", fileId);
+                fd.append("chunk_index", String(i));
+                fd.append("total_chunks", String(total));
+                fd.append("data", blob, "chunk");
+                try {
+                    const r = await postChunkOnce(fd);
+                    if (r.ok) { lastErr = null; break; }
+                    // 4xx = a real protocol problem (bad index, too large):
+                    // retrying the same request can't help. 5xx/409-out-of-
+                    // order can be transient → retry.
+                    if (r.status >= 400 && r.status < 500 && r.status !== 409) {
+                        throw new Error(r.data.error || `chunk ${i} failed (${r.status})`);
+                    }
+                    lastErr = new Error(r.data.error || `chunk ${i} failed (${r.status})`);
+                } catch (e) {
+                    if (e && /failed \(4\d\d\)/.test(String(e.message || ""))) throw e;
+                    lastErr = e;
+                }
+                if (attempt < CHUNK_MAX_ATTEMPTS) {
+                    logProgress(`<div class="muted">⚠ chunk ${i + 1}/${total} retry ${attempt} (${(lastErr && lastErr.message) || "error"})…</div>`);
+                    await new Promise((res) => setTimeout(res, 2000 * attempt));
+                }
+            }
+            if (lastErr) {
+                throw new Error(`chunk ${i + 1}/${total}: ${(lastErr && lastErr.message) || lastErr} after ${CHUNK_MAX_ATTEMPTS} attempts`);
             }
         }
     }

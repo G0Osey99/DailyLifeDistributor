@@ -68,6 +68,49 @@ PAL = {
 # (color, soft_bg, glyph_kind, title, pulse_on)
 #   glyph_kind ∈ {"check", "spinner", "arrow", "key", "dot"}
 #
+# Routine keepalive/poll chatter — kept quiet (dim grey, no icon) so the
+# meaningful events stand out for a non-technical operator.
+_LOG_NOISE = ("ping control frame", "sessions poll", "websocket",
+              "media roots applied", "whoami", "presence")
+
+
+def classify_log_line(line: str) -> tuple[str, str]:
+    """Map an agent-log line to a (colour-tag, emoji-prefix) for the activity
+    panel, so success/failure/warnings/uploads are scannable at a glance.
+
+    Order matters — most specific + most important first. Tags are configured
+    on the log_box: ok=green, err=red, warn=orange, busy=blue, dim=grey,
+    info=muted.
+    """
+    low = line.lower()
+    # Failures first — these are what the operator most needs to catch.
+    if ("success=false" in low or "error" in low or "traceback" in low
+            or "exceeded" in low or "failed" in low or "could not" in low
+            or "not running" in low or "no usable" in low):
+        return "err", "✗  "
+    # Successes / positive milestones.
+    if ("success=true" in low or "upload complete" in low or "scheduled for" in low
+            or "saved as draft" in low or "thumbnail set" in low or "linked child" in low
+            or "media attached" in low or "resolved newly saved" in low
+            or "browser ready" in low or "paired" in low or "re-linked" in low):
+        return "ok", "✓  "
+    # Warnings / retries / proceeding-anyway.
+    if (" warning" in low or "proceeding anyway" in low or "retry" in low
+            or "re-pair" in low or "reconnect" in low or "still waiting" in low):
+        return "warn", "⚠  "
+    # Routine noise — quiet.
+    if any(s in low for s in _LOG_NOISE):
+        return "dim", "·  "
+    # Work in motion.
+    if ("upload progress" in low or "uploading" in low or "downloading" in low
+            or "attached media" in low or "waiting for media" in low
+            or "received job_plan" in low or "starting job" in low
+            or "_run_one: platform=" in low or "filled " in low
+            or "chromium:" in low or "gathering" in low):
+        return "busy", "↑  "
+    return "info", "•  "
+
+
 # Activity overrides connection's hero painting when uploading — a green
 # "Connected" hero while a noisy upload is in progress hides the more
 # interesting thing the user wants to see.
@@ -448,6 +491,17 @@ class AgentGUI:
             corner_radius=10,
         )
         self.log_box.pack(fill="both", expand=True, padx=14, pady=10)
+        # Colour tags so a non-technical operator can scan outcomes at a glance:
+        # green = something succeeded, red = something failed, orange = a
+        # warning/retry, dim grey = routine keepalive/poll noise, blue = an
+        # upload in motion. Applied per-line in _refresh's log render.
+        self.log_box.tag_config("ok", foreground=PAL["ok"])
+        self.log_box.tag_config("err", foreground=PAL["err"])
+        self.log_box.tag_config("warn", foreground=PAL["warn"])
+        self.log_box.tag_config("busy", foreground=PAL["accent"])
+        self.log_box.tag_config("dim", foreground=PAL["text_dim"])
+        self.log_box.tag_config("info", foreground=PAL["text_muted"])
+        self._last_log_lines: list[str] = []
         self.log_box.configure(state="disabled")
 
     # ─── small helpers ──────────────────────────────────────────────────
@@ -1004,15 +1058,21 @@ class AgentGUI:
                 text="Keep open while uploads run.", text_color=tone,
             )
 
-        # Log tail — diff-based to avoid flickering the textbox every poll.
+        # Log tail — diff against the last raw lines (not the rendered text,
+        # which carries emoji prefixes) to avoid flickering the textbox every
+        # poll. Each line is inserted with an emoji + colour tag so outcomes
+        # read at a glance.
         lines = snap["log_lines"]
-        current = self.log_box.get("1.0", "end-1c").splitlines()
-        if lines != current:
+        if lines != self._last_log_lines:
             self.log_box.configure(state="normal")
             self.log_box.delete("1.0", "end")
-            self.log_box.insert("end", "\n".join(lines))
+            for i, raw in enumerate(lines):
+                tag, emoji = classify_log_line(raw)
+                nl = "" if i == len(lines) - 1 else "\n"
+                self.log_box.insert("end", f"{emoji}{raw}{nl}", tag)
             self.log_box.see("end")
             self.log_box.configure(state="disabled")
+            self._last_log_lines = list(lines)
 
         # Pairing handshake — open the dialog exactly once per request.
         if snap["needs_pairing_code"] and not self._pairing_dialog_open:

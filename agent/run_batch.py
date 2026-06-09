@@ -67,6 +67,14 @@ class _YtState:
     done: dict[int, threading.Event] = field(default_factory=dict)
     url: dict[int, str | None] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    # How long a Rock Email row will block on its date's YouTube Video. YT
+    # records a result on EVERY exit path (success/fail/skip/breaker), so the
+    # wait normally resolves the moment YT finishes; this cap only guards
+    # against a truly hung YT thread. It must therefore exceed any realistic
+    # upload time — a 1.4 GB video on a slow/contended home upstream took
+    # ~31 min in the field and blew the old 30-min cap, so Rock Email gave up
+    # 90s before YT actually finished and errored "no watch URL". 2h is ample.
+    wait_timeout: float = 7200.0
 
     def record(self, row_idx: int, watch_url: str | None) -> None:
         with self.lock:
@@ -74,10 +82,10 @@ class _YtState:
             ev = self.done.setdefault(row_idx, threading.Event())
             ev.set()
 
-    def wait(self, row_idx: int, timeout: float = 1800.0) -> str | None:
+    def wait(self, row_idx: int, timeout: float | None = None) -> str | None:
         with self.lock:
             ev = self.done.setdefault(row_idx, threading.Event())
-        ev.wait(timeout=timeout)
+        ev.wait(timeout=self.wait_timeout if timeout is None else timeout)
         return self.url.get(row_idx)
 
 
@@ -277,12 +285,20 @@ def run(*, envelope: dict, paths: dict, emit,
     except Exception:
         _logger.debug("chromium ensure raised; continuing", exc_info=True)
 
-    yt_state = _YtState()
-
     rows = envelope["rows"]
     config = envelope.get("config", {})
     max_workers = int(config.get("max_workers", 4))
     cb_cfg: dict = config.get("circuit_breaker", {}) or {}
+
+    yt_state = _YtState()
+    # Honor a configured YouTube-wait timeout if the server supplied one
+    # (config.youtube_wait_timeout_seconds), else keep the generous default.
+    try:
+        _wt = config.get("youtube_wait_timeout_seconds")
+        if _wt:
+            yt_state.wait_timeout = float(_wt)
+    except (TypeError, ValueError):
+        pass
 
     # Propagate circuit-breaker config into each row (picked up by _run_one).
     if cb_cfg:

@@ -102,8 +102,16 @@ def test_cancel_unknown_job_returns_404(client):
     assert resp.get_json()["error"] == "job not found"
 
 
-def test_cancel_route_requires_auth():
+def test_cancel_route_requires_auth(tmp_path, monkeypatch):
     """Unauthenticated request is rejected (redirect to login)."""
+    # CRITICAL: reload(db) re-evaluates _DB_PATH from the environment and
+    # discards the conftest isolation patch. Without redirecting
+    # DLD_STATE_DB first (as the `client` fixture above does), this test
+    # reloaded the REAL repo state.db and then auth.set_password() +
+    # the app reload's bootstrap/migrate steps WROTE to it — corrupting
+    # the developer's actual secrets (password hash + imported API keys,
+    # encrypted under this test's throwaway Fernet key).
+    monkeypatch.setenv("DLD_STATE_DB", str(tmp_path / "state.db"))
     import core.db as db
     import core.devices as devices
     importlib.reload(db)

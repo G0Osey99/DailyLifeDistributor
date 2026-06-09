@@ -234,6 +234,23 @@ def _install_signal_handlers() -> None:
         signal.signal(signal.SIGTERM, _handle)
 
 
+def _console(message: str) -> None:
+    """print() that survives legacy Windows consoles.
+
+    On a cp1252 console, printing "✓ Connected" raises
+    UnicodeEncodeError — which, thrown from inside the connection loop,
+    looked like a dropped connection and put the agent into an endless
+    reconnect storm (connect → print crash → reconnect, forever). Fall back
+    to an ASCII-safe rendering instead of letting a status print kill the
+    loop.
+    """
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        enc = (getattr(sys.stdout, "encoding", None) or "ascii")
+        print(message.encode(enc, errors="replace").decode(enc))
+
+
 def _prompt_pairing_code(server_url: str) -> str:
     """Get a pairing code from the user — GUI modal or stdin."""
     if _state is not None:
@@ -264,7 +281,7 @@ def _ensure_paired(server_url: str) -> str:
         msg = f"Re-linked to {prev} (replaced a prior pairing on this hardware)."
     else:
         msg = "Paired successfully."
-    print(f"✓ {msg}")
+    _console(f"✓ {msg}")
     if _state is not None:
         _state.append_log(msg)
     return config.get_token()
@@ -515,7 +532,7 @@ def run(server_url: str, shutdown_event: threading.Event | None = None) -> None:
             conn.connect()
             _current_conn = conn  # in-flight jobs emit through this live conn
             log.info("agent: WebSocket connected as %s", _device_name())
-            print(f"✓ Connected ({_device_name()})")
+            _console(f"✓ Connected ({_device_name()})")
             if _state is not None:
                 _state.set_connection(_st.CONN_ONLINE)
                 _state.append_log(f"Connected as {_device_name()}")

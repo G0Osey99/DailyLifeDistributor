@@ -85,6 +85,11 @@ _ROCK_SESSION_CONFIG = SessionConfig(
     chrome_path_env="ROCK_CHROME_PATH",
     default_timeout_ms=_NAV_TIMEOUT_MS,
     no_login_recovery=is_hosted(),
+    # Hosted container has no X server — headed launches die at startup, so
+    # the web upload path must default headless there (the agent runner sets
+    # ROCK_HEADLESS itself; the web path previously had no equivalent and
+    # failed with "launched a headed browser without having a XServer").
+    default_headless=is_hosted(),
 )
 
 

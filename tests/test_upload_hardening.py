@@ -241,6 +241,52 @@ def test_open_does_not_mutate_shared_config(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# F7 — hosted (no X server) defaults the WEB upload path to headless
+# ---------------------------------------------------------------------------
+
+
+def test_uploader_session_configs_default_headless_on_hosted(monkeypatch):
+    """Live-reproduced on the VPS: the web batch path launched Chrome HEADED
+    in the container ("Looks like you launched a headed browser without
+    having a XServer running") because only the agent runner force-set the
+    *_HEADLESS env vars. The uploader SessionConfigs must default headless
+    whenever HOSTED is set."""
+    import importlib
+    monkeypatch.setenv("HOSTED", "true")
+    import uploaders.vista_social_uploader as v
+    import uploaders.rock.client as rc
+    import uploaders.simplecast_uploader as sc
+    try:
+        v = importlib.reload(v)
+        rc = importlib.reload(rc)
+        sc = importlib.reload(sc)
+        assert v._VS_SESSION_CONFIG.default_headless is True
+        assert rc._ROCK_SESSION_CONFIG.default_headless is True
+        assert sc._SC_SESSION_CONFIG_BASE.default_headless is True
+    finally:
+        # Reload back without HOSTED so later tests see pristine modules.
+        monkeypatch.delenv("HOSTED", raising=False)
+        importlib.reload(v)
+        importlib.reload(rc)
+        importlib.reload(sc)
+
+
+def test_simplecast_per_call_config_carries_all_base_fields(monkeypatch):
+    """The per-call SimpleCast SessionConfig must be a full copy of the base
+    (dataclasses.replace), not a field-by-field rebuild that silently drops
+    newly added fields like default_headless."""
+    import dataclasses
+    import uploaders.simplecast_uploader as sc
+    base = dataclasses.replace(sc._SC_SESSION_CONFIG_BASE,
+                               default_headless=True)
+    monkeypatch.setattr(sc, "_SC_SESSION_CONFIG_BASE", base)
+    cfg = dataclasses.replace(sc._SC_SESSION_CONFIG_BASE, target_url="https://x")
+    assert cfg.default_headless is True
+    assert cfg.target_url == "https://x"
+    assert cfg.login_url == "https://x"  # __post_init__ re-ran
+
+
+# ---------------------------------------------------------------------------
 # F5 — agent dispatch passes phase callbacks to Rock / Rock Email / Vista
 # ---------------------------------------------------------------------------
 

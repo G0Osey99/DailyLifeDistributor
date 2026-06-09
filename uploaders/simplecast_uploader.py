@@ -460,6 +460,10 @@ _SC_SESSION_CONFIG_BASE = SessionConfig(
     chrome_path_env="SIMPLECAST_CHROME_PATH",
     default_timeout_ms=_DEFAULT_TIMEOUT,
     no_login_recovery=is_hosted(),
+    # Hosted container has no X server — the web upload path must default
+    # headless there (mirrors the Rock + Vista configs; the agent runner
+    # sets SIMPLECAST_HEADLESS itself).
+    default_headless=is_hosted(),
 )
 
 
@@ -514,17 +518,12 @@ def upload_episode(entry, elements=None, progress_callback=None) -> dict:
     schedule_dt = getattr(entry, "podcast_schedule_dt", None) if sc_schedule else None
 
     upload_url = _resolve_upload_url()
-    cfg = SessionConfig(
-        name=_SC_SESSION_CONFIG_BASE.name,
-        session_file=_SC_SESSION_CONFIG_BASE.session_file,
-        is_login_url=_SC_SESSION_CONFIG_BASE.is_login_url,
-        target_url=upload_url,
-        headless_env=_SC_SESSION_CONFIG_BASE.headless_env,
-        login_timeout_env=_SC_SESSION_CONFIG_BASE.login_timeout_env,
-        chrome_path_env=_SC_SESSION_CONFIG_BASE.chrome_path_env,
-        default_timeout_ms=_SC_SESSION_CONFIG_BASE.default_timeout_ms,
-        no_login_recovery=_SC_SESSION_CONFIG_BASE.no_login_recovery,
-    )
+    # dataclasses.replace so EVERY base field carries over — the previous
+    # field-by-field copy silently dropped any newly added SessionConfig
+    # field (it lost default_headless when that was introduced, which would
+    # have re-broken the hosted web path for SimpleCast only).
+    import dataclasses as _dc
+    cfg = _dc.replace(_SC_SESSION_CONFIG_BASE, target_url=upload_url)
 
     # ---- Run ----
     try:

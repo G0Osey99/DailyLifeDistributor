@@ -118,6 +118,14 @@ _VS_SESSION_CONFIG = SessionConfig(
     viewport={"width": 1440, "height": 900},
     default_timeout_ms=_DEFAULT_TIMEOUT,
     no_login_recovery=is_hosted(),
+    # Hosted (VPS container) has no X server: a headed launch dies with
+    # "Looks like you launched a headed browser without having a XServer
+    # running" — which broke the WEB upload path for this platform whenever
+    # the compose env didn't set VISTA_SOCIAL_HEADLESS (the agent runner
+    # force-defaults headless, but the web path had no equivalent). Hosted
+    # never waits for interactive login anyway (no_login_recovery), so
+    # headless is always correct there. The env var still wins when set.
+    default_headless=is_hosted(),
 )
 
 

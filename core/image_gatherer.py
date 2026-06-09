@@ -199,7 +199,10 @@ def _topic_terms_for_verse(verse_text: str, *, topic_hint: str = "") -> list[str
         )
         return []
 
-    _MAX_LLM_ATTEMPTS = 2
+    # 3 attempts: a cold Ollama model's first generation after a reload often
+    # comes back malformed/empty; the warm retry then parses cleanly. With the
+    # keep_alive above the model stays resident after the first call.
+    _MAX_LLM_ATTEMPTS = 3
     for attempt in range(1, _MAX_LLM_ATTEMPTS + 1):
         try:
             # Use LLM_MODEL env var (matches llm_title_gen). Hardcoded
@@ -215,6 +218,13 @@ def _topic_terms_for_verse(verse_text: str, *, topic_hint: str = "") -> list[str
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.5,
                     "max_tokens": 120,
+                    # Keep the model resident so this call (and the title
+                    # generator, which shares the model + the llm:title
+                    # breaker) doesn't pay a cold-start reload that returns
+                    # empty terms — which silently shipped NO Rock image to the
+                    # agent and failed the date's Daily Experience. Ollama-only;
+                    # other backends ignore the field. Matches llm_title_gen.
+                    "keep_alive": "30m",
                 },
                 timeout=60,
             )

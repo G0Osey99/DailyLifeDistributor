@@ -453,7 +453,12 @@ def batch_run():
         from core import agent_dispatch
         from core.config import load_config as _load_config
         _cfg = _load_config()
-        _max_workers = (_cfg.get("upload") or {}).get("max_workers", 4)
+        _upl = _cfg.get("upload") or {}
+        _max_workers = _upl.get("max_workers", 4)
+        # Carry the YouTube-wait cap to the agent so the operator can tune how
+        # long a Rock Email row waits for its date's YouTube Video (the agent
+        # defaults to a generous 2h, but config.yaml wins when set).
+        _yt_wait = _upl.get("youtube_wait_timeout_seconds")
         # Phase 3.5 — accept an explicit device picker selection from the
         # dashboard. The browser passes ?device_id=<uuid> when the user
         # has chosen a specific device; absent → fallback chain runs.
@@ -480,7 +485,9 @@ def batch_run():
                     iso: entry.elements.to_dict()
                     for iso, entry in entries_snapshot.items()
                 },
-                config={"max_workers": _max_workers},
+                config={"max_workers": _max_workers,
+                        **({"youtube_wait_timeout_seconds": _yt_wait}
+                           if _yt_wait else {})},
                 device_id=_picked_device,
                 browser_ip=_browser_ip,
                 job_id=job_id,

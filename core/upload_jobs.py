@@ -205,9 +205,13 @@ def reap_stale_jobs() -> None:
 
 
 # How long the Rock Email row will wait for its YouTube Video sibling to
-# finish before giving up. Generous default (a large video upload + processing);
-# overridable via `upload.youtube_wait_timeout_seconds` in config.yaml.
-_YT_WAIT_TIMEOUT_S = 30 * 60
+# finish before giving up. YouTube records a result on every exit path, so this
+# only caps a truly hung upload — it must exceed any realistic upload time. A
+# 1.4 GB video on a slow/contended home upstream took ~31 min in the field and
+# blew the old 30-min cap (Rock Email errored "no watch URL" 90s before YT
+# finished), so the default is now 2h. Overridable via
+# `upload.youtube_wait_timeout_seconds` in config.yaml.
+_YT_WAIT_TIMEOUT_S = 120 * 60
 _YT_POLL_INTERVAL_S = 1.0
 
 

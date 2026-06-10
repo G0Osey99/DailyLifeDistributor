@@ -111,6 +111,36 @@ def classify_log_line(line: str) -> tuple[str, str]:
     return "info", "•  "
 
 
+# Activity-log filter modes shown as segmented chips above the log. Keys are
+# the operator-facing labels (kept short + non-technical); values are the
+# classify_log_line tag sets each mode shows, with None meaning "no filter".
+# "Issues" bundles errors AND warnings because a non-technical operator
+# thinks of both as "something needs my attention".
+LOG_FILTERS: dict[str, "set[str] | None"] = {
+    "All": None,
+    "Issues": {"err", "warn"},
+    "Success": {"ok"},
+    "Working": {"busy"},
+}
+
+
+def filter_log_lines(lines: "list[str]", mode: str) -> "list[tuple[str, str, str]]":
+    """Return ``(raw_line, tag, emoji)`` for every line *mode* keeps.
+
+    Pure helper (no Tk) so the filter behaviour is unit-testable; the GUI's
+    log render iterates this. An unknown *mode* behaves like "All" rather
+    than hiding everything — a stale/renamed chip label must never make the
+    log look empty.
+    """
+    allowed = LOG_FILTERS.get(mode)
+    out = []
+    for raw in lines:
+        tag, emoji = classify_log_line(raw)
+        if allowed is None or tag in allowed:
+            out.append((raw, tag, emoji))
+    return out
+
+
 # Activity overrides connection's hero painting when uploading — a green
 # "Connected" hero while a noisy upload is in progress hides the more
 # interesting thing the user wants to see.
@@ -473,6 +503,37 @@ class AgentGUI:
             border_width=0,
         )
         self.open_log_btn.pack(side="right")
+        # "Copy log" puts the (filtered) log text on the clipboard — much
+        # easier for a non-technical operator to paste into a support chat
+        # than finding agent.log on disk.
+        self.copy_log_btn = ctk.CTkButton(
+            log_header, text="Copy",
+            command=self._copy_log_to_clipboard,
+            fg_color="transparent", hover_color=PAL["shell_sunken"],
+            text_color=PAL["text_dim"], font=(self._font, 11),
+            corner_radius=6, width=50, height=22,
+            border_width=0,
+        )
+        self.copy_log_btn.pack(side="right", padx=(0, 4))
+        # Filter chips: show everything, only problems, only successes, or
+        # only in-flight work. Driven by classify_log_line's tags.
+        self._log_mode = "All"
+        self.log_filter = ctk.CTkSegmentedButton(
+            log_header,
+            values=list(LOG_FILTERS.keys()),
+            command=self._on_log_filter,
+            font=(self._font, 10),
+            height=22,
+            corner_radius=6,
+            fg_color=PAL["shell_sunken"],
+            unselected_color=PAL["shell_sunken"],
+            unselected_hover_color=PAL["shell_border"],
+            selected_color=PAL["accent"],
+            selected_hover_color=PAL["accent_hover"],
+            text_color=PAL["text_muted"],
+        )
+        self.log_filter.set("All")
+        self.log_filter.pack(side="right", padx=(0, 10))
 
         log_frame = ctk.CTkFrame(
             body, fg_color=PAL["shell_panel"],
@@ -1060,19 +1121,11 @@ class AgentGUI:
 
         # Log tail — diff against the last raw lines (not the rendered text,
         # which carries emoji prefixes) to avoid flickering the textbox every
-        # poll. Each line is inserted with an emoji + colour tag so outcomes
-        # read at a glance.
+        # poll. Rendering (filter + emoji + colour tags) lives in _render_log
+        # so the filter chips can re-render without waiting for a poll tick.
         lines = snap["log_lines"]
         if lines != self._last_log_lines:
-            self.log_box.configure(state="normal")
-            self.log_box.delete("1.0", "end")
-            for i, raw in enumerate(lines):
-                tag, emoji = classify_log_line(raw)
-                nl = "" if i == len(lines) - 1 else "\n"
-                self.log_box.insert("end", f"{emoji}{raw}{nl}", tag)
-            self.log_box.see("end")
-            self.log_box.configure(state="disabled")
-            self._last_log_lines = list(lines)
+            self._render_log(lines)
 
         # Pairing handshake — open the dialog exactly once per request.
         if snap["needs_pairing_code"] and not self._pairing_dialog_open:
@@ -1340,18 +1393,68 @@ class AgentGUI:
             log.warning("Failed to launch browser for %s", url, exc_info=True)
 
     def _open_log_file(self) -> None:
-        """Stub — wire to the agent's actual log file path. Falls back
-        to a no-op if the agent isn't writing to a known path."""
+        """Open the agent's log FOLDER in the OS file browser.
+
+        The previous version imported agent.config.LOG_PATH — an attribute
+        that has never existed — so the "Open file" button was a silent
+        no-op since the day it shipped. Resolve the same directory
+        agent.main's configure_logging() writes to (platformdirs, with the
+        ~/.dld-agent fallback) and open the folder rather than the file:
+        the folder view also surfaces boot.log and rotated agent.log.N,
+        which is what a support conversation actually needs.
+        """
         try:
-            from agent.config import LOG_PATH  # type: ignore
+            from agent.main import _default_log_dir
+            log_dir = _default_log_dir()
         except Exception:
-            LOG_PATH = None
-        if not LOG_PATH:
-            return
+            from pathlib import Path
+            log_dir = Path.home() / ".dld-agent" / "logs"
         try:
-            webbrowser.open(f"file://{LOG_PATH}")
+            webbrowser.open(log_dir.as_uri())
         except Exception:
-            log.debug("open log file failed", exc_info=True)
+            log.debug("open log folder failed", exc_info=True)
+
+    # ─── activity-log filter + copy ─────────────────────────────────────
+    def _render_log(self, lines: "list[str]") -> None:
+        """Re-render the log box from *lines* through the active filter."""
+        entries = filter_log_lines(lines, self._log_mode)
+        self.log_box.configure(state="normal")
+        self.log_box.delete("1.0", "end")
+        if not entries:
+            placeholder = (
+                "Nothing logged yet." if self._log_mode == "All" else
+                f"No '{self._log_mode}' entries yet — switch to All to see "
+                "everything."
+            )
+            self.log_box.insert("end", placeholder, "dim")
+        else:
+            last = len(entries) - 1
+            for i, (raw, tag, emoji) in enumerate(entries):
+                nl = "" if i == last else "\n"
+                self.log_box.insert("end", f"{emoji}{raw}{nl}", tag)
+        self.log_box.see("end")
+        self.log_box.configure(state="disabled")
+        self._last_log_lines = list(lines)
+
+    def _on_log_filter(self, mode: str) -> None:
+        """Segmented-button callback: re-render immediately with the new
+        filter instead of waiting for the next state poll."""
+        self._log_mode = mode
+        self._render_log(self._last_log_lines or [])
+
+    def _copy_log_to_clipboard(self) -> None:
+        """Copy the visible (filtered) log text for pasting into support
+        chats — far easier for a non-technical operator than locating
+        agent.log on disk. Flashes the button label as feedback."""
+        try:
+            text = self.log_box.get("1.0", "end-1c")
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.copy_log_btn.configure(text="Copied ✓")
+            self.root.after(
+                1500, lambda: self.copy_log_btn.configure(text="Copy"))
+        except Exception:
+            log.debug("copy log to clipboard failed", exc_info=True)
 
     def _on_close(self) -> None:
         self.shutdown_event.set()

@@ -564,7 +564,42 @@ def start(
         job_id = _uuid.uuid4().hex
     rows = filter_done_rows(session_id=session_id, summary=summary)
     if not rows:
-        _logger.info("agent_dispatch.start(job=%s): nothing to do", job_id)
+        # Every selected row is already recorded successful (idempotent
+        # re-run). Previously this returned WITHOUT sending anything and
+        # WITHOUT emitting any event — the dashboard's pre-registered SSE
+        # job then hung on "dispatching…" forever (no skip frames, no
+        # done, job["done"] never set; and since the stale-job reaper only
+        # collects done jobs, the registry entry leaked too). Live-
+        # reproduced: a Rock-only re-run of an already-uploaded date
+        # showed an indefinite spinner indistinguishable from a lost job.
+        # Emit a skip frame per row plus the terminal done so the
+        # dashboard renders "already done" and the stream closes.
+        _logger.info("agent_dispatch.start(job=%s): nothing to do — all "
+                     "rows already uploaded; emitting skips", job_id)
+        from core import upload_jobs as _uj
+        import json as _json
+        import time as _time
+        job = _uj.get_job(job_id)
+        if job is not None:
+            q = job["queue"]
+            for idx, it in enumerate(summary):
+                try:
+                    q.put_nowait(_json.dumps({
+                        "type": "skip", "row": idx,
+                        "date": it.get("date", it.get("iso_date", "")),
+                        "platform": it.get("platform", ""),
+                    }))
+                except Exception:  # noqa: BLE001 — full queue: done flag still terminates
+                    pass
+            # done flag BEFORE the done frame, mirroring _run_batch_worker:
+            # the SSE consumer's job["done"] poll terminates even if the
+            # frame is dropped by a full queue.
+            job["done"] = True
+            job["finished_at"] = _time.time()
+            try:
+                q.put_nowait(_json.dumps({"type": "done"}))
+            except Exception:  # noqa: BLE001
+                pass
         return job_id
     for r in rows:
         r["elements"] = elements.get(r["iso_date"], {})

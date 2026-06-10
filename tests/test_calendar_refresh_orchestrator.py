@@ -1,9 +1,18 @@
 
+from datetime import date, timedelta
+
 from core.calendar_refresh import (
     ExternalItem,
     SessionExpiredError,
     run_refresh,
 )
+
+# A date guaranteed inside run_refresh's relative window (today-30d .. +60d).
+# The tests that pair run_refresh with get_external_items_for_window used a
+# HARDCODED iso_date; the moment "today" rolled past hardcoded-date + 30 days
+# (2026-06-10T00:00 UTC), the item fell out of the window and CI went red on
+# every branch — a pure calendar flake unrelated to any code change.
+_RECENT = (date.today() - timedelta(days=5)).isoformat()
 
 
 def _ok_source(name, items, platforms=None):
@@ -39,7 +48,7 @@ def test_item_to_dict_roundtrip():
 
 def test_run_refresh_aggregates_per_source(temp_db):
     yt = _ok_source("youtube_video", [
-        ExternalItem("youtube_video", "v1", "2026-05-10", "", "t", "u", "scheduled", "{}")
+        ExternalItem("youtube_video", "v1", _RECENT, "", "t", "u", "scheduled", "{}")
     ])
     rk = _ok_source("rock", [])
     out = run_refresh(sources=[yt, rk], window_days_back=30, window_days_forward=60)
@@ -53,7 +62,7 @@ def test_run_refresh_aggregates_per_source(temp_db):
 
 def test_one_source_failure_does_not_block_others(temp_db):
     good = _ok_source("youtube_video", [
-        ExternalItem("youtube_video", "v1", "2026-05-10", "", "t", "u", "scheduled", "{}")
+        ExternalItem("youtube_video", "v1", _RECENT, "", "t", "u", "scheduled", "{}")
     ])
     bad = _bad_source("simplecast", SessionExpiredError("expired"))
     out = run_refresh(sources=[good, bad], window_days_back=30, window_days_forward=60)

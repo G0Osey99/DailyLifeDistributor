@@ -5,7 +5,7 @@ One row per step of `docs/rebuild/build-guide.md`. Each session fills in its own
 | Step | Name | Status | PR | Log |
 |---|---|---|---|---|
 | 1.1 | Desktop scaffold, `dld doctor`, CI | done (Your check passed 2026-10-14) | [#117](https://github.com/G0Osey99/DailyLifeDistributor/pull/117) | [step-1.1](build-log/step-1.1.md) |
-| 1.2 | Series config, store, task states, secrets | not started | | |
+| 1.2 | Series config, store, task states, secrets | PR open, awaiting Your check | | [step-1.2](build-log/step-1.2.md) |
 | 1.3 | Planner: dates, spreadsheet, media, `dld plan` | not started | | |
 | 1.4 | Runner, connector interface, HTTP, `dld ship` | not started | | |
 | 1.5 | Titles and text templates | not started | | |

@@ -1,9 +1,12 @@
 import { execFile } from 'node:child_process'
-import { constants } from 'node:fs'
+import { constants, existsSync } from 'node:fs'
 import { access, mkdir, rm, statfs, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
+import { seriesHosts } from './config.js'
+import { dbPath, getSeries, listSeries, migrationStatus, open } from './db/index.js'
 import { dataDir } from './paths.js'
+import { KeychainSecrets, KNOWN_SECRETS, type KnownSecret } from './secrets.js'
 import { MIN_NODE_MAJOR } from './version.js'
 
 // `dld doctor`: one small probe per row. Later steps append probes to defaultProbes().
@@ -26,6 +29,14 @@ export interface Probe {
   run(sys: DoctorSystem): Promise<ProbeResult>
 }
 
+/** A stored series, as doctor needs it. */
+export interface SeriesInfo {
+  id: string
+  name: string
+  /** Hosts from its config (Rock, live and drafts): checked like the fixed service hosts. */
+  hosts: Array<{ host: string; service: string }>
+}
+
 /** Everything the probes touch, so tests can replace it. */
 export interface DoctorSystem {
   platform: NodeJS.Platform
@@ -44,18 +55,21 @@ export interface DoctorSystem {
     host: string,
     timeoutMs: number,
   ): Promise<{ ok: true; ms: number } | { ok: false; error: string }>
+  /** Whether the keychain holds the secret; never reads its value. */
+  hasSecret(name: string): Promise<boolean>
+  /** The series stored in the data dir's database; [] when there is none yet. */
+  series(): Promise<SeriesInfo[]>
 }
 
 export const MIN_FREE_BYTES = 10 * 1024 ** 3
 export const REACH_TIMEOUT_MS = 5000
 export const KEYCHAIN_TOOL = '/usr/bin/security'
 
-/** Hosts from guide Part 5 §B. Rock's host moves to the series config in step 1.2. */
+/** Platform hosts from guide Part 5 §B. A church's own hosts (Rock) come from its series (rule 11). */
 export const SERVICE_HOSTS: ReadonlyArray<{ host: string; service: string }> = [
   { host: 'www.googleapis.com', service: 'YouTube' },
   { host: 'upload.wistia.com', service: 'Wistia upload' },
   { host: 'api.wistia.com', service: 'Wistia' },
-  { host: 'rock.lcbcchurch.com', service: 'Rock' },
   { host: 'api.vistasocial.com', service: 'Vista Social' },
   { host: 'creators.spotify.com', service: 'Spotify for Creators' },
   { host: 'api.anthropic.com', service: 'Claude' },
@@ -207,7 +221,53 @@ export function hostProbe(host: string, service: string): Probe {
   }
 }
 
-export function defaultProbes(): Probe[] {
+export function secretProbe(secret: KnownSecret): Probe {
+  return {
+    check: `secret ${secret.name}`,
+    async run(sys) {
+      try {
+        if (await sys.hasSecret(secret.name))
+          return { status: 'ok', detail: `${secret.what}: in the keychain` }
+        return { status: 'warn', detail: `${secret.what}: missing`, fix: secret.fix }
+      } catch (err) {
+        return {
+          status: 'warn',
+          detail: `${secret.what}: can't check (${(err as Error).message})`,
+          fix: 'Unlock the login keychain, then run dld doctor again',
+        }
+      }
+    },
+  }
+}
+
+export const seriesProbe: Probe = {
+  check: 'series',
+  async run(sys) {
+    try {
+      const series = await sys.series()
+      if (series.length === 0) {
+        return {
+          status: 'warn',
+          detail: 'none imported yet',
+          fix: 'dld series import examples/daily-life.series.json',
+        }
+      }
+      return { status: 'ok', detail: series.map((s) => `${s.name} (${s.id})`).join(', ') }
+    } catch (err) {
+      return {
+        status: 'warn',
+        detail: `can't read the database: ${(err as Error).message}`,
+        fix: 'Run dld db status to see what is wrong',
+      }
+    }
+  },
+}
+
+/** Every row, in order. `series` adds its config's hosts (Rock) to the reach rows. */
+export function defaultProbes(series: SeriesInfo[] = []): Probe[] {
+  const hosts = new Map(SERVICE_HOSTS.map(({ host, service }) => [host, service]))
+  for (const s of series)
+    for (const { host, service } of s.hosts) if (!hosts.has(host)) hosts.set(host, service)
   return [
     macosProbe,
     nodeProbe,
@@ -216,7 +276,9 @@ export function defaultProbes(): Probe[] {
     chromeProbe,
     ffprobeProbe,
     keychainProbe,
-    ...SERVICE_HOSTS.map(({ host, service }) => hostProbe(host, service)),
+    ...KNOWN_SECRETS.map(secretProbe),
+    seriesProbe,
+    ...[...hosts].map(([host, service]) => hostProbe(host, service)),
   ]
 }
 
@@ -324,6 +386,21 @@ export function realSystem(): DoctorSystem {
         const e = err as Error & { cause?: { code?: string; message?: string } }
         if (e.name === 'TimeoutError') return { ok: false, error: `no answer in ${timeoutMs} ms` }
         return { ok: false, error: e.cause?.code ?? e.cause?.message ?? e.message }
+      }
+    },
+    hasSecret: (name) => new KeychainSecrets().has(name),
+    async series() {
+      const path = dbPath(process.env)
+      if (!existsSync(path)) return []
+      const db = open(path, { readOnly: true, recover: false })
+      try {
+        if (migrationStatus(db).current < 1) return []
+        return listSeries(db).map(({ id, name }) => {
+          const series = getSeries(db, id)
+          return { id, name, hosts: series ? seriesHosts(series) : [] }
+        })
+      } finally {
+        db.close()
       }
     },
   }

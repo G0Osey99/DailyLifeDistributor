@@ -163,13 +163,18 @@ def test_recovery_approve_blocks_owner_targeting_program_owner(client, app):
     org_store.add_membership(user_id=admin["id"], org_id=o["id"], role="owner")
 
     # Alice files a recovery request *for admin* — direct DB insert (the
-    # /recover form is rate-limited to one per 24h per user).
+    # /recover form is rate-limited to one per 24h per user). Timestamps are
+    # relative to now: a hardcoded expires_at made the request expire on
+    # 2026-12-31, after which approve() short-circuits with a 200 "expired"
+    # page before the program-owner guard ever runs.
     import hashlib
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
     with _db._get_conn() as c:
         c.execute(
             "INSERT INTO recovery_requests (user_id, requested_at, expires_at) "
-            "VALUES (?, '2026-01-01T00:00:00+00:00', '2026-12-31T00:00:00+00:00')",
-            (admin["id"],),
+            "VALUES (?, ?, ?)",
+            (admin["id"], now.isoformat(), (now + timedelta(hours=48)).isoformat()),
         )
         rid = c.execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
         c.commit()

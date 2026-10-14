@@ -21,6 +21,48 @@ if not os.environ.get("RUN_BROWSER_TESTS"):
     collect_ignore = list(_BROWSER_TEST_FILES)
 
 
+def _import_agent_main_off_home():
+    """Import agent.main with its boot log resolved under a throwaway dir.
+
+    agent/main.py appends a boot line to ``<user-log-dir>/boot.log`` and
+    points faulthandler at that file while the module IMPORTS — i.e. during
+    collection, before any fixture can redirect it — so a plain test run
+    wrote the developer's real ~/.dld-agent/logs/boot.log (or platformdirs'
+    log dir). Importing it here first, with both lookups that
+    ``_boot_log_path()`` makes patched to a temp dir, means every later
+    ``import agent.main`` reuses that module and never touches ~.
+    Mirrored in agent/tests/conftest.py (whichever conftest loads first
+    does the import).
+    """
+    import atexit
+    import shutil
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    if "agent.main" in sys.modules:
+        return
+    boot_home = tempfile.mkdtemp(prefix="dld-agent-boot-")
+    atexit.register(shutil.rmtree, boot_home, True)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "home", classmethod(lambda cls: Path(boot_home)))
+        try:
+            import platformdirs
+        except ImportError:
+            pass
+        else:
+            mp.setattr(platformdirs, "user_log_dir",
+                       lambda *a, **k: os.path.join(boot_home, "logs"))
+        try:
+            import agent.main  # noqa: F401
+        except Exception:
+            # Missing agent deps: the tests that need agent.main report it.
+            pass
+
+
+_import_agent_main_off_home()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_state_db(tmp_path, monkeypatch):
     """Redirect every state.db reference to a per-test temp file.
@@ -57,6 +99,22 @@ def temp_db(_isolate_state_db):
     from core import db as _db
     _db.init_db()
     yield _db
+
+
+@pytest.fixture(autouse=True)
+def _isolate_agent_config(tmp_path, monkeypatch):
+    """Point agent.config's JSON file at tmp_path instead of ~/.dld-agent.
+
+    ``agent.config._CONFIG_PATH`` is computed from the real home dir at
+    import, and any code path that reaches ``_save()`` — e.g.
+    ``agent.pair.redeem()`` persisting the server's ``device_id`` — wrote
+    the developer's ~/.dld-agent/agent.json. Tests that patch
+    ``_CONFIG_PATH`` themselves still win (their setattr runs later).
+    Mirrored in agent/tests/conftest.py.
+    """
+    from agent import config as _agent_config
+    monkeypatch.setattr(_agent_config, "_CONFIG_PATH",
+                        str(tmp_path / "dld-agent" / "agent.json"))
 
 
 @pytest.fixture(autouse=True)

@@ -19,6 +19,54 @@ import sys
 
 import pytest
 
+
+def _import_agent_main_off_home():
+    """Import agent.main with its boot log resolved under a throwaway dir.
+
+    agent/main.py writes ``<user-log-dir>/boot.log`` (and opens a
+    faulthandler stream on it) at import time, during collection, before
+    any fixture runs. Same guard as tests/conftest.py (see its docstring);
+    whichever conftest loads first does the import.
+    """
+    import atexit
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    if "agent.main" in sys.modules:
+        return
+    boot_home = tempfile.mkdtemp(prefix="dld-agent-boot-")
+    atexit.register(shutil.rmtree, boot_home, True)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "home", classmethod(lambda cls: Path(boot_home)))
+        try:
+            import platformdirs
+        except ImportError:
+            pass
+        else:
+            mp.setattr(platformdirs, "user_log_dir",
+                       lambda *a, **k: str(Path(boot_home) / "logs"))
+        try:
+            import agent.main  # noqa: F401
+        except Exception:
+            # Missing agent deps: the tests that need agent.main report it.
+            pass
+
+
+_import_agent_main_off_home()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_agent_config(tmp_path, monkeypatch):
+    """Point agent.config's JSON file at tmp_path instead of ~/.dld-agent.
+
+    Same guard as tests/conftest.py (see its docstring).
+    """
+    from agent import config as _agent_config
+    monkeypatch.setattr(_agent_config, "_CONFIG_PATH",
+                        str(tmp_path / "dld-agent" / "agent.json"))
+
+
 _SHIMMED_MODULES = ("core.db", "core.secrets_store")
 
 

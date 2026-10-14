@@ -6,6 +6,9 @@ import time
 import pytest
 
 simple_websocket = pytest.importorskip("simple_websocket")
+# Not simple_websocket.Client: its handshake can strand the first frame
+# the server sends after the upgrade (see _ws_helpers).
+from tests.integration._ws_helpers import HandshakeSafeClient  # noqa: E402
 
 
 @pytest.fixture()
@@ -55,7 +58,7 @@ def test_ping_pong_through_relay(live_server):
     # actually run on the server thread (replacing the fragile 0.3s sleep
     # that races on slow CI runners — that race produced the None →
     # json.loads(None) TypeErrors in run 26363413161).
-    agent = simple_websocket.Client(
+    agent = HandshakeSafeClient(
         f"ws://127.0.0.1:{port}/agent/socket?token={token}")
     from core import relay as _relay
     deadline = time.time() + 10.0
@@ -67,7 +70,7 @@ def test_ping_pong_through_relay(live_server):
         agent.close()
         pytest.fail("agent never registered with relay within 10s")
 
-    browser = simple_websocket.Client(
+    browser = HandshakeSafeClient(
         f"ws://127.0.0.1:{port}/agent/ws",
         headers={"Cookie": cookie})
     try:

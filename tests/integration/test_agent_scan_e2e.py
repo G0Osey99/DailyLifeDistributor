@@ -6,6 +6,9 @@ import time
 import pytest
 
 simple_websocket = pytest.importorskip("simple_websocket")
+# Not simple_websocket.Client: its handshake can strand the first frame
+# the server sends after the upgrade (see _ws_helpers).
+from tests.integration._ws_helpers import HandshakeSafeClient  # noqa: E402
 
 
 def _touch(p):
@@ -73,7 +76,7 @@ def test_scan_request_roundtrip(live, monkeypatch):
     import requests
     s = requests.Session(); s.post(f"{server_url}/login", data={"password": "pw"})
     cookie = "; ".join(f"{k}={v}" for k, v in s.cookies.get_dict().items())
-    browser = simple_websocket.Client(f"ws://127.0.0.1:{port}/agent/ws",
+    browser = HandshakeSafeClient(f"ws://127.0.0.1:{port}/agent/ws",
                                       headers={"Cookie": cookie})
     try:
         for _ in range(5):

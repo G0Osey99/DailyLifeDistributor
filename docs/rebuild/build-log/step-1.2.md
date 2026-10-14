@@ -1,6 +1,6 @@
 # Step 1.2 — Series config, store, task states, secrets
 
-2026-10-14 · PR (link added after opening) · plan "Architecture", "Keep, drop, add"; guide §S2, §S3, §S4, D3, D5, D6, D8, D10, D11
+2026-10-14 · [PR #118](https://github.com/G0Osey99/DailyLifeDistributor/pull/118) · plan "Architecture", "Keep, drop, add"; guide §S2, §S3, §S4, D3, D5, D6, D8, D10, D11
 
 ## Done
 

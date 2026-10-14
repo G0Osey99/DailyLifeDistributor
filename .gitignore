@@ -70,3 +70,9 @@ release_key*
 
 .audit/
 AUDIT.md
+
+# Desktop rebuild (desktop/, docs/rebuild/build-guide.md)
+desktop/node_modules/
+desktop/out/
+desktop/dist/
+desktop/release/

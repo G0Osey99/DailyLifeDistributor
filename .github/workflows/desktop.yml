@@ -1,0 +1,84 @@
+name: desktop
+
+# The desktop rebuild (docs/rebuild/build-guide.md). The legacy app keeps ci.yml (D12).
+on:
+  pull_request:
+    paths:
+      - desktop/**
+      - docs/rebuild/**
+      - scripts/check_prompts.py
+      - .github/workflows/desktop.yml
+  push:
+    branches: [main]
+    paths:
+      - desktop/**
+      - docs/rebuild/**
+      - scripts/check_prompts.py
+      - .github/workflows/desktop.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256_ARM64: b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5
+  GITLEAKS_SHA256_X64: dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the secret scan reads every commit in the diff
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install
+        working-directory: desktop
+        run: npm ci
+
+      - name: Check (biome, tsc, vitest)
+        working-directory: desktop
+        run: npm run check
+
+      - name: Doctor (smoke; host checks only warn)
+        working-directory: desktop
+        env:
+          DLD_DATA_DIR: ${{ runner.temp }}/dld-data
+        run: npm run dld -- doctor
+
+      - name: Check build-guide prompts
+        run: python3 scripts/check_prompts.py
+
+      # gitleaks (MIT), pinned and checksum-verified; no third-party action or licence key.
+      - name: Secret scan of the diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          case "$(uname -m)" in
+            arm64) arch=arm64; sum="$GITLEAKS_SHA256_ARM64" ;;
+            *) arch=x64; sum="$GITLEAKS_SHA256_X64" ;;
+          esac
+          tarball="gitleaks_${GITLEAKS_VERSION}_darwin_${arch}.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tarball"
+          echo "$sum  $RUNNER_TEMP/$tarball" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            range="$HEAD~1..$HEAD"
+          else
+            range="$BASE..$HEAD"
+          fi
+          echo "Scanning $range"
+          "$RUNNER_TEMP/gitleaks" git --log-opts="$range" --redact --verbose --no-banner .

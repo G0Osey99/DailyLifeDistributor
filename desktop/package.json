@@ -1,0 +1,26 @@
+{
+  "name": "daily-life-distributor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Daily Life Distributor: ships each day's devotional to every platform from one Mac.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dld": "tsx src/cli/index.ts",
+    "check": "biome check . && tsc --noEmit && vitest run",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "24.19.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}

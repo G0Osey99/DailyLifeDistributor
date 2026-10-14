@@ -1,5 +1,10 @@
 # CLAUDE.md
 
+> **Rebuild in progress.** New work goes in `desktop/` and follows
+> `docs/rebuild/build-guide.md`. The rest of this file describes the legacy
+> Python app, which keeps running until cutover (guide D12). Where this file
+> and the legacy code disagree, guide Part 5 §A has the checked facts.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Running the App

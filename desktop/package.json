@@ -10,7 +10,9 @@
   "scripts": {
     "dld": "tsx src/cli/index.ts",
     "check": "biome check . && tsc --noEmit && vitest run",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "DLD_INTEGRATION=1 vitest run",
+    "sqlite:check": "node scripts/sqlite-runtime-check.mjs && ELECTRON_RUN_AS_NODE=1 electron scripts/sqlite-runtime-check.mjs"
   },
   "dependencies": {
     "commander": "15.0.0",
@@ -19,6 +21,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@types/node": "24.19.2",
+    "electron": "44.5.1",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.0.3"

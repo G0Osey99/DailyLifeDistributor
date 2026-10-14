@@ -8,5 +8,11 @@
     "formatter": { "quoteStyle": "single", "semicolons": "asNeeded", "trailingCommas": "all" }
   },
   "linter": { "enabled": true, "rules": { "preset": "recommended" } },
-  "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } }
+  "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
+  "overrides": [
+    {
+      "includes": ["examples/**/*.json"],
+      "json": { "formatter": { "expand": "always" } }
+    }
+  ]
 }

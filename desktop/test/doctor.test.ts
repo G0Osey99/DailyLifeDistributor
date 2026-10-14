@@ -10,9 +10,17 @@ import {
   type Probe,
   runDoctor,
   SERVICE_HOSTS,
+  type SeriesInfo,
 } from '../src/engine/doctor.js'
+import { KNOWN_SECRETS } from '../src/engine/secrets.js'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+
+const DAILY_LIFE: SeriesInfo = {
+  id: 'daily-life',
+  name: 'Daily Life',
+  hosts: [{ host: 'rock.example.org', service: 'Rock' }],
+}
 
 /** A Mac where every check passes; override one field to break one probe. */
 function healthyMac(overrides: Partial<DoctorSystem> = {}): DoctorSystem {
@@ -33,11 +41,13 @@ function healthyMac(overrides: Partial<DoctorSystem> = {}): DoctorSystem {
     checkWritable: async () => {},
     freeBytes: async () => 2 * MIN_FREE_BYTES,
     reach: async () => ({ ok: true, ms: 42 }),
+    hasSecret: async () => true,
+    series: async () => [DAILY_LIFE],
     ...overrides,
   }
 }
 
-async function doctor(sys: DoctorSystem, probes?: () => Probe[]) {
+async function doctor(sys: DoctorSystem, probes?: (series: SeriesInfo[]) => Probe[]) {
   let out = ''
   const code = await runCli(['doctor'], {
     io: { out: (text) => (out += text), err: (text) => (out += text) },
@@ -54,8 +64,8 @@ function row(rows: Awaited<ReturnType<typeof runDoctor>>, check: string) {
 }
 
 describe('dld doctor', () => {
-  it('has one row per check, every service host included', async () => {
-    const rows = await runDoctor(defaultProbes(), healthyMac())
+  it("has one row per check, every secret, the series and every host (the series' own last)", async () => {
+    const rows = await runDoctor(defaultProbes([DAILY_LIFE]), healthyMac())
     expect(rows.map((r) => r.check)).toEqual([
       'macOS',
       'Node',
@@ -64,8 +74,51 @@ describe('dld doctor', () => {
       'Google Chrome',
       'ffprobe (optional)',
       'keychain tool',
+      ...KNOWN_SECRETS.map(({ name }) => `secret ${name}`),
+      'series',
       ...SERVICE_HOSTS.map(({ host }) => `reach ${host}`),
+      'reach rock.example.org',
     ])
+  })
+
+  it('takes the Rock host from the series, not from code (rule 11)', async () => {
+    expect(SERVICE_HOSTS.map((h) => h.host)).not.toContain('rock.lcbcchurch.com')
+    const { out } = await doctor(healthyMac())
+    expect(out).toMatch(/^ok\s+reach rock\.example\.org\s+Rock: reachable \(42 ms\)$/m)
+    const none = await doctor(healthyMac({ series: async () => [] }))
+    expect(none.out).not.toContain('reach rock.')
+    expect(none.out).toMatch(/^warn\s+series\s+none imported yet\s+dld series import /m)
+  })
+
+  it('warns, with its fix, for each missing secret, and never fails on one', async () => {
+    const sys = healthyMac({ hasSecret: async (name) => name !== 'wistia.token' })
+    const { code, out } = await doctor(sys)
+    expect(code).toBe(0)
+    expect(out).toMatch(
+      /^warn\s+secret wistia\.token\s+Wistia API token \(upload \+ read\): missing\s+M4: dld secrets set wistia\.token$/m,
+    )
+    expect(out).toMatch(/^ok\s+secret rock\.rest_key\s+Rock REST key: in the keychain$/m)
+    const locked = await runDoctor(
+      defaultProbes(),
+      healthyMac({
+        hasSecret: async () => {
+          throw new Error('keychain locked')
+        },
+      }),
+    )
+    expect(row(locked, 'secret youtube.client')).toMatchObject({ status: 'warn' })
+    expect(doctorExitCode(locked)).toBe(0)
+  })
+
+  it('reports a database it cannot read on the series row', async () => {
+    const sys = healthyMac({
+      series: async () => {
+        throw new Error('database is from a newer dld')
+      },
+    })
+    const { code, out } = await doctor(sys)
+    expect(code).toBe(0)
+    expect(out).toMatch(/^warn\s+series\s+can't read the database: database is from a newer dld/m)
   })
 
   it('exits 0 when every probe is ok', async () => {
@@ -77,7 +130,7 @@ describe('dld doctor', () => {
     expect(out).toMatch(
       /^info\s+ffprobe \(optional\)\s+ffprobe 9\.0 at \/opt\/homebrew\/bin\/ffprobe$/m,
     )
-    expect(out).toContain('15 ok · 0 warn · 0 fail · 1 info')
+    expect(out).toContain('24 ok · 0 warn · 0 fail · 1 info')
   })
 
   it('fails and exits 1 when /usr/bin/security is missing', async () => {

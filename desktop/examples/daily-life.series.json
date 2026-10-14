@@ -1,0 +1,198 @@
+{
+  "id": "daily-life",
+  "name": "Daily Life",
+  "timezone": "America/New_York",
+  "media": {
+    "folder": "TODO",
+    "videoExtensions": [
+      ".mp4",
+      ".mov",
+      ".avi",
+      ".mkv",
+      ".webm"
+    ],
+    "thumbnailExtensions": [
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".webp"
+    ]
+  },
+  "sheet": {
+    "path": "TODO",
+    "sheetName": "TODO",
+    "columns": {
+      "date_column": "TODO",
+      "shorts_title_column": "TODO",
+      "episode_title_column": "Episode Title",
+      "description_column": "TODO",
+      "vista_caption_column": "TODO",
+      "tags_column": "TODO",
+      "passage_column": "Passage",
+      "scripture_column": "Scripture",
+      "prayer_column": "Prayer",
+      "topic_column": "TODO",
+      "transcript_column": "TODO"
+    }
+  },
+  "titles": {
+    "model": "claude-opus-5-5",
+    "count": 5
+  },
+  "templates": {
+    "youtube": {
+      "footer": "Share this daily devotional with someone to encourage and give them hope today!"
+    },
+    "vista": {
+      "footer": "Share this daily devotional with someone to encourage and give them hope today!"
+    },
+    "spotify": {
+      "footer": ""
+    },
+    "rock-daily": {
+      "reflectionPublicTitle": "Pause & Pray",
+      "reflectionPromptTitle": "Personal Reflection",
+      "reflectionPrompt": "What is your takeaway for today?",
+      "vistaTagline": "Verse",
+      "spotlightTagline": "Watch"
+    }
+  },
+  "times": {
+    "youtube": "14:00",
+    "vista": "07:00",
+    "spotify": "TODO"
+  },
+  "destinations": {
+    "youtube": {
+      "enabled": true,
+      "categoryId": "22",
+      "madeForKids": false
+    },
+    "wistia": {
+      "enabled": true,
+      "projectName": "Daily Life App",
+      "projectId": "TODO",
+      "mediaName": "app YYMMDD"
+    },
+    "vista": {
+      "enabled": true,
+      "profiles": [
+        {
+          "network": "facebook"
+        },
+        {
+          "network": "instagram"
+        }
+      ]
+    },
+    "spotify": {
+      "enabled": true,
+      "showUrl": "TODO"
+    },
+    "rock-daily": {
+      "enabled": true,
+      "baseUrl": "https://rock.lcbcchurch.com",
+      "channels": {
+        "parent": {
+          "guid": "5a2ece2c-88b0-47eb-bea0-cbdb50e5c86c",
+          "id": "TODO"
+        },
+        "reflection": {
+          "guid": "5a961ea6-2f47-43c4-9190-8d21fe7c5898",
+          "id": 124
+        },
+        "vista": {
+          "guid": "3c569f1a-d6c0-485f-994e-d993dc5df641",
+          "id": 126
+        },
+        "spotlight": {
+          "guid": "3199ba17-c18a-4a0e-82d6-6ff2160c145c",
+          "id": 125
+        }
+      },
+      "settings": {
+        "enablePrayer": false,
+        "prayerCount": 3,
+        "vistaHasLikes": true,
+        "spotlightOrientation": "Vertical",
+        "spotlightMediaAccount": "Wistia"
+      },
+      "attributeKeys": {
+        "parent": {
+          "enablePrayer": "TODO",
+          "prayerCount": "TODO"
+        },
+        "reflection": {
+          "publicTitle": "TODO",
+          "promptTitle": "TODO",
+          "prompt": "TODO"
+        },
+        "vista": {
+          "tagline": "TODO",
+          "backgroundImage": "TODO",
+          "hasLikesEnabled": "TODO"
+        },
+        "spotlight": {
+          "tagline": "TODO",
+          "videoOrientation": "TODO",
+          "mediaElement": "TODO"
+        }
+      }
+    },
+    "rock-email": {
+      "enabled": true,
+      "baseUrl": "https://rock.lcbcchurch.com",
+      "channel": {
+        "guid": "2182c1f3-8f8c-44f3-987f-75a698fe44a7",
+        "id": 24
+      },
+      "attributeKeys": {
+        "emailMessage": "TODO",
+        "smsMessage": "TODO",
+        "youtubeLink": "TODO",
+        "thumbnail": "TODO",
+        "sent": "TODO"
+      }
+    }
+  },
+  "waits": {
+    "youtube.url": {
+      "pollS": 1,
+      "capS": 7200
+    },
+    "rock.mediaSynced": {
+      "pollS": 300,
+      "capS": 259200
+    }
+  },
+  "limits": {
+    "shortsMaxS": 180,
+    "aspect": {
+      "width": 9,
+      "height": 16,
+      "tolerance": 0.02
+    },
+    "youtubeQuota": {
+      "dailyCap": 10000,
+      "costs": {
+        "videos.insert": 100,
+        "videos.list": 1,
+        "playlistItems.list": 1,
+        "channels.list": 1,
+        "search.list": 100
+      }
+    },
+    "breaker": {
+      "failureThreshold": 3,
+      "recoveryS": 120
+    }
+  },
+  "drafts": {
+    "youtube": "private",
+    "wistia": "TODO",
+    "vista": "TODO",
+    "spotify": "draft",
+    "rock-daily": "TODO",
+    "rock-email": "TODO"
+  }
+}

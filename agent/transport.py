@@ -76,6 +76,27 @@ def _build_ssl_context() -> ssl.SSLContext:
     return ssl.create_default_context(cafile=certifi.where())
 
 
+class _HandshakeSafeClient(simple_websocket.Client):
+    """``simple_websocket.Client`` that doesn't strand a frame sent with the 101.
+
+    ``Client.handshake()`` (simple-websocket 1.1.0) does one ``sock.recv()``,
+    feeds it to wsproto and consumes only the first event — the 101 accept.
+    If the server's first frame lands in that same read (the relay can push
+    a job_plan / whoami_ping the moment it registers the agent, and a proxy
+    like Cloudflare may coalesce writes), the frame stays parsed-but-unread
+    in wsproto. The reader thread then blocks in ``sock.recv()`` and only
+    surfaces it when *more* bytes arrive (the next PING's pong, ≤15s later).
+    """
+
+    def handshake(self):
+        super().handshake()
+        # Base.__init__ starts the reader thread only after handshake()
+        # returns, so draining wsproto here can't race it. Same contract as
+        # the reader loop: a close in the buffered bytes marks us closed and
+        # Base.__init__ raises ConnectionError — the normal connect failure.
+        self.connected = self._handle_events()
+
+
 def _connect(url: str):
     """Seam for tests: real WebSocket client.
 
@@ -96,7 +117,7 @@ def _connect(url: str):
     prev_timeout = socket.getdefaulttimeout()
     socket.setdefaulttimeout(_CONNECT_TIMEOUT_S)
     try:
-        return simple_websocket.Client(url, ssl_context=ssl_context)
+        return _HandshakeSafeClient(url, ssl_context=ssl_context)
     finally:
         socket.setdefaulttimeout(prev_timeout)
 

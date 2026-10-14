@@ -91,7 +91,7 @@ def test_build_ssl_context_uses_certifi_bundle():
 
 
 def test_connect_passes_certifi_ssl_context_for_wss(monkeypatch):
-    """_connect must forward an ssl_context to simple_websocket.Client
+    """_connect must forward an ssl_context to the WebSocket client
     for wss URLs so the bundled certifi CAs are used."""
     captured = {}
 
@@ -100,8 +100,7 @@ def test_connect_passes_certifi_ssl_context_for_wss(monkeypatch):
         captured["ssl_context"] = ssl_context
         return _FakeWS([])
 
-    import simple_websocket
-    monkeypatch.setattr(simple_websocket, "Client", _fake_client)
+    monkeypatch.setattr(transport, "_HandshakeSafeClient", _fake_client)
     transport._connect("wss://autoalert.pro/agent/socket?token=tok-9")
     assert captured["ssl_context"] is not None, \
         "wss connect must build an explicit SSL context"
@@ -119,8 +118,7 @@ def test_connect_skips_ssl_context_for_ws(monkeypatch):
         captured["ssl_context"] = ssl_context
         return _FakeWS([])
 
-    import simple_websocket
-    monkeypatch.setattr(simple_websocket, "Client", _fake_client)
+    monkeypatch.setattr(transport, "_HandshakeSafeClient", _fake_client)
     transport._connect("ws://localhost:5000/agent/socket?token=x")
     assert captured["ssl_context"] is None
 
@@ -140,8 +138,7 @@ def test_connect_does_not_pass_library_ping_interval(monkeypatch):
         captured["kwargs"] = kwargs
         return _FakeWS([])
 
-    import simple_websocket
-    monkeypatch.setattr(simple_websocket, "Client", _fake_client)
+    monkeypatch.setattr(transport, "_HandshakeSafeClient", _fake_client)
     transport._connect("wss://autoalert.pro/agent/socket?token=x")
     assert "ping_interval" not in captured["kwargs"], (
         "must not pass ping_interval — library's ping thread is "
@@ -257,8 +254,7 @@ def test_connect_bounds_handshake_with_socket_default_timeout(monkeypatch):
         seen["timeout_during_call"] = _socket.getdefaulttimeout()
         return _FakeWS([])
 
-    import simple_websocket
-    monkeypatch.setattr(simple_websocket, "Client", _fake_client)
+    monkeypatch.setattr(transport, "_HandshakeSafeClient", _fake_client)
     before = _socket.getdefaulttimeout()
     transport._connect("wss://autoalert.pro/agent/socket?token=x")
     after = _socket.getdefaulttimeout()
@@ -268,3 +264,52 @@ def test_connect_bounds_handshake_with_socket_default_timeout(monkeypatch):
     # aren't affected.
     assert before == after, \
         "_connect must restore the previous socket default timeout"
+
+
+def _serve_101_with_frame(listener, frame_text, done):
+    """One-shot ws server: answers the upgrade with the 101 *and* a text
+    frame in a single sendall, so both reach the client in one recv()."""
+    from wsproto import ConnectionType, WSConnection
+    from wsproto.events import AcceptConnection, Request, TextMessage
+
+    conn, _ = listener.accept()
+    with conn:
+        ws = WSConnection(ConnectionType.SERVER)
+        while True:
+            ws.receive_data(conn.recv(4096))
+            if any(isinstance(e, Request) for e in ws.events()):
+                break
+        conn.sendall(ws.send(AcceptConnection())
+                     + ws.send(TextMessage(data=frame_text)))
+        # Hold the socket open with nothing more to send — the client must
+        # deliver the frame from what it already read, not from later bytes.
+        done.wait(5)
+
+
+def test_connect_delivers_frame_coalesced_with_the_101():
+    """simple_websocket.Client.handshake() consumes only the first wsproto
+    event (the 101). A frame the server sends right after the upgrade that
+    lands in the same recv() stays buffered in wsproto, and the reader
+    thread blocks in sock.recv() until *more* bytes arrive — so a job_plan
+    or whoami_ping sent the moment the relay registers the agent would sit
+    undelivered. _connect must surface it immediately."""
+    import socket as _socket
+    import threading as _threading
+
+    listener = _socket.create_server(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    done = _threading.Event()
+    frame = json.dumps({"v": 1, "type": "whoami_ping",
+                        "payload": {"ping_id": "p1"}})
+    server = _threading.Thread(target=_serve_101_with_frame,
+                               args=(listener, frame, done), daemon=True)
+    server.start()
+    ws = transport._connect(f"ws://127.0.0.1:{port}/agent/socket?token=x")
+    try:
+        assert ws.receive(timeout=2) == frame, \
+            "frame that arrived with the 101 was stranded in wsproto"
+    finally:
+        done.set()
+        ws.close()
+        server.join(5)
+        listener.close()

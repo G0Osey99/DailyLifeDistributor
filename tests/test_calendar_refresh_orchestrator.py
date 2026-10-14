@@ -12,6 +12,9 @@ from core.calendar_refresh import (
 # HARDCODED iso_date; the moment "today" rolled past hardcoded-date + 30 days
 # (2026-06-10T00:00 UTC), the item fell out of the window and CI went red on
 # every branch — a pure calendar flake unrelated to any code change.
+# The stale-mark tests below had the same bug (rows dated 2026-05-10, rot
+# once today passed 2026-07-09) — they seed _RECENT too, and query exactly that
+# day so a row outside the refresh window can't make an assertion vacuous.
 _RECENT = (date.today() - timedelta(days=5)).isoformat()
 
 
@@ -103,36 +106,38 @@ def test_concurrent_refresh_returns_busy(temp_db):
 def test_failed_source_does_not_mark_stale(temp_db):
     """Pre-existing rows for a failed source must keep status='active' (or scheduled/published)."""
     temp_db.upsert_external_items([{
-        "platform": "simplecast", "external_id": "uuid1", "iso_date": "2026-05-10",
+        "platform": "simplecast", "external_id": "uuid1", "iso_date": _RECENT,
         "scheduled_time": "", "title": "old", "url": "u",
         "status": "scheduled", "raw_json": "{}",
     }])
     bad = _bad_source("simplecast", RuntimeError("boom"))
     run_refresh(sources=[bad], window_days_back=30, window_days_forward=60)
-    rows = temp_db.get_external_items_for_window("2026-04-01", "2026-06-30")
+    rows = temp_db.get_external_items_for_window(_RECENT, _RECENT)
     assert any(r["external_id"] == "uuid1" and r["status"] != "deleted" for r in rows)
 
 
 def test_successful_source_marks_missing_items_stale(temp_db):
     temp_db.upsert_external_items([{
-        "platform": "youtube_video", "external_id": "old_vid", "iso_date": "2026-05-10",
+        "platform": "youtube_video", "external_id": "old_vid", "iso_date": _RECENT,
         "scheduled_time": "", "title": "old", "url": "u",
         "status": "scheduled", "raw_json": "{}",
     }])
+    assert temp_db.get_external_items_for_window(_RECENT, _RECENT)
     src = _ok_source("youtube_video", [])  # nothing returned
     run_refresh(sources=[src], window_days_back=60, window_days_forward=60)
-    rows = temp_db.get_external_items_for_window("2026-04-01", "2026-06-30")
+    rows = temp_db.get_external_items_for_window(_RECENT, _RECENT)
     assert all(r["external_id"] != "old_vid" for r in rows)
 
 
 def test_youtube_source_marks_both_platforms_stale(temp_db):
     """A source with PLATFORMS=['youtube_video','youtube_shorts'] should mark stale on both."""
     temp_db.upsert_external_items([
-        {"platform": "youtube_video", "external_id": "old_v", "iso_date": "2026-05-10",
+        {"platform": "youtube_video", "external_id": "old_v", "iso_date": _RECENT,
          "scheduled_time": "", "title": "ov", "url": "u", "status": "scheduled", "raw_json": "{}"},
-        {"platform": "youtube_shorts", "external_id": "old_s", "iso_date": "2026-05-10",
+        {"platform": "youtube_shorts", "external_id": "old_s", "iso_date": _RECENT,
          "scheduled_time": "", "title": "os", "url": "u", "status": "scheduled", "raw_json": "{}"},
     ])
+    assert len(temp_db.get_external_items_for_window(_RECENT, _RECENT)) == 2
 
     class YT:
         NAME = "youtube"
@@ -142,7 +147,7 @@ def test_youtube_source_marks_both_platforms_stale(temp_db):
             return []
 
     run_refresh(sources=[YT], window_days_back=60, window_days_forward=60)
-    rows = temp_db.get_external_items_for_window("2026-04-01", "2026-06-30")
+    rows = temp_db.get_external_items_for_window(_RECENT, _RECENT)
     assert all(r["external_id"] not in {"old_v", "old_s"} for r in rows)
 
 

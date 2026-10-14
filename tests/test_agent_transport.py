@@ -266,11 +266,15 @@ def test_connect_bounds_handshake_with_socket_default_timeout(monkeypatch):
         "_connect must restore the previous socket default timeout"
 
 
-def _serve_101_with_frame(listener, frame_text, done):
-    """One-shot ws server: answers the upgrade with the 101 *and* a text
-    frame in a single sendall, so both reach the client in one recv()."""
+def _serve_ws_once(listener, done, frames, close=False, separately=False):
+    """One-shot ws server. Answers the upgrade with the 101, then *frames*,
+    then (if *close*) a close frame and a TCP close — all in one sendall so
+    they reach the client in the same recv() as the 101, unless *separately*
+    (101 first, the rest 0.2s later)."""
+    import time as _time
     from wsproto import ConnectionType, WSConnection
-    from wsproto.events import AcceptConnection, Request, TextMessage
+    from wsproto.events import (AcceptConnection, CloseConnection, Request,
+                                TextMessage)
 
     conn, _ = listener.accept()
     with conn:
@@ -279,11 +283,39 @@ def _serve_101_with_frame(listener, frame_text, done):
             ws.receive_data(conn.recv(4096))
             if any(isinstance(e, Request) for e in ws.events()):
                 break
-        conn.sendall(ws.send(AcceptConnection())
-                     + ws.send(TextMessage(data=frame_text)))
-        # Hold the socket open with nothing more to send — the client must
-        # deliver the frame from what it already read, not from later bytes.
-        done.wait(5)
+        accept = ws.send(AcceptConnection())
+        rest = b"".join(ws.send(TextMessage(data=f)) for f in frames)
+        if close:
+            rest += ws.send(CloseConnection(code=1000))
+        if separately:
+            conn.sendall(accept)
+            _time.sleep(0.2)
+            conn.sendall(rest)
+        else:
+            conn.sendall(accept + rest)
+        if not close:
+            # Hold the socket open with nothing more to send — the client
+            # must deliver what it already read, not wait for later bytes.
+            done.wait(5)
+
+
+def _start_ws_once(frames, close=False, separately=False):
+    """Run _serve_ws_once on a thread; returns (port, cleanup)."""
+    import socket as _socket
+    import threading as _threading
+
+    listener = _socket.create_server(("127.0.0.1", 0))
+    done = _threading.Event()
+    server = _threading.Thread(
+        target=_serve_ws_once, args=(listener, done, frames),
+        kwargs={"close": close, "separately": separately}, daemon=True)
+    server.start()
+
+    def cleanup():
+        done.set()
+        server.join(5)
+        listener.close()
+    return listener.getsockname()[1], cleanup
 
 
 def test_connect_delivers_frame_coalesced_with_the_101():
@@ -293,23 +325,86 @@ def test_connect_delivers_frame_coalesced_with_the_101():
     thread blocks in sock.recv() until *more* bytes arrive — so a job_plan
     or whoami_ping sent the moment the relay registers the agent would sit
     undelivered. _connect must surface it immediately."""
-    import socket as _socket
-    import threading as _threading
-
-    listener = _socket.create_server(("127.0.0.1", 0))
-    port = listener.getsockname()[1]
-    done = _threading.Event()
     frame = json.dumps({"v": 1, "type": "whoami_ping",
                         "payload": {"ping_id": "p1"}})
-    server = _threading.Thread(target=_serve_101_with_frame,
-                               args=(listener, frame, done), daemon=True)
-    server.start()
+    port, cleanup = _start_ws_once([frame])
     ws = transport._connect(f"ws://127.0.0.1:{port}/agent/socket?token=x")
     try:
         assert ws.receive(timeout=2) == frame, \
             "frame that arrived with the 101 was stranded in wsproto"
     finally:
-        done.set()
         ws.close()
-        server.join(5)
-        listener.close()
+        cleanup()
+
+
+_UNAUTHORIZED = json.dumps({"v": 1, "type": "error",
+                            "payload": {"reason": "unauthorized"}})
+
+
+def _connect_and_read_one(monkeypatch, port, wait_for_close=False):
+    """AgentConnection.connect() then one run_once; returns delivered msgs.
+
+    *wait_for_close* holds _connect's return until the reader thread has
+    seen the server's close, so the hello is sent to an already-closed
+    socket (the race a fast relay close produces in the field)."""
+    import time as _time
+    real_connect = transport._connect
+
+    def _connect(url):
+        ws = real_connect(url)
+        deadline = _time.monotonic() + 3
+        while wait_for_close and ws.connected and _time.monotonic() < deadline:
+            _time.sleep(0.01)
+        return ws
+    monkeypatch.setattr(transport, "_connect", _connect)
+    conn = transport.AgentConnection(f"http://127.0.0.1:{port}", "tok")
+    got = []
+    conn.connect()
+    try:
+        conn.run_once(got.append)
+    finally:
+        conn.close()
+    return got
+
+
+def test_revocation_error_survives_close_coalesced_with_the_101(monkeypatch):
+    """The relay rejects a revoked token in-band — 101, error frame, close —
+    and over a proxy those can arrive in one read. The error frame is the
+    agent's only revocation signal (agent.main._on_message), so connect()
+    must not fail before run_once can deliver it."""
+    port, cleanup = _start_ws_once([_UNAUTHORIZED], close=True)
+    try:
+        got = _connect_and_read_one(monkeypatch, port)
+    finally:
+        cleanup()
+    assert got == [json.loads(_UNAUTHORIZED)]
+
+
+def test_revocation_error_survives_close_before_hello(monkeypatch):
+    """Same in-band rejection, but the error + close arrive after the 101 and
+    are processed before connect() sends its hello, so the hello hits a
+    closed socket. The already-received error frame must still reach
+    run_once instead of connect() failing as a plain connect error."""
+    port, cleanup = _start_ws_once([_UNAUTHORIZED], close=True, separately=True)
+    try:
+        got = _connect_and_read_one(monkeypatch, port, wait_for_close=True)
+    finally:
+        cleanup()
+    assert got == [json.loads(_UNAUTHORIZED)]
+
+
+def test_connect_still_fails_when_relay_closes_without_a_frame():
+    """A close with nothing ahead of it is a plain failed connect: connect()
+    must raise so agent.main.run() backs off, not report "connected" and
+    reset the backoff."""
+    import pytest
+    import simple_websocket
+    port, cleanup = _start_ws_once([], close=True)
+    conn = transport.AgentConnection(f"http://127.0.0.1:{port}", "tok")
+    try:
+        with pytest.raises((simple_websocket.ConnectionClosed,
+                            simple_websocket.ConnectionError)):
+            conn.connect()
+    finally:
+        conn.close()
+        cleanup()

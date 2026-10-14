@@ -86,15 +86,32 @@ class _HandshakeSafeClient(simple_websocket.Client):
     like Cloudflare may coalesce writes), the frame stays parsed-but-unread
     in wsproto. The reader thread then blocks in ``sock.recv()`` and only
     surfaces it when *more* bytes arrive (the next PING's pong, ≤15s later).
+
+    The relay rejects a revoked token *in-band*: 101, then an ``error`` frame,
+    then a close — often all in that first read. So a close seen here must
+    not discard the frames ahead of it: the client stays constructible,
+    ``receive()`` returns them, and ``send()`` raises ``ConnectionClosed``.
     """
+
+    _closed_in_handshake = False
 
     def handshake(self):
         super().handshake()
         # Base.__init__ starts the reader thread only after handshake()
-        # returns, so draining wsproto here can't race it. Same contract as
-        # the reader loop: a close in the buffered bytes marks us closed and
-        # Base.__init__ raises ConnectionError — the normal connect failure.
-        self.connected = self._handle_events()
+        # returns, so draining wsproto here can't race it.
+        self._closed_in_handshake = not self._handle_events()
+        # Stay "connected" even if that drain hit a close, or Base.__init__
+        # raises before the frames sent ahead of it can be read. The reader
+        # thread hits EOF on the closed socket and marks us closed itself.
+        self.connected = True
+
+    def send(self, data):
+        if self._closed_in_handshake:
+            # wsproto would raise LocalProtocolError here; report the close
+            # the same way a normally-closed client does.
+            raise simple_websocket.ConnectionClosed(self.close_reason,
+                                                    self.close_message)
+        super().send(data)
 
 
 def _connect(url: str):
@@ -167,6 +184,9 @@ class AgentConnection:
         # _last_ping_at keeps a 15s control-frame heartbeat going regardless
         # of data traffic.
         self._last_ping_at = 0.0
+        # A frame the relay sent before closing on us during connect(), held
+        # for run_once to deliver first (see connect()).
+        self._early_frame = None
 
     def connect(self, pending_results: Optional[list] = None) -> None:
         """Open the WebSocket and send the hello frame.
@@ -178,13 +198,31 @@ class AgentConnection:
         """
         import time as _time
         self.ws = _connect(_to_ws_url(self.server_url, self.token))
-        with self._send_lock:
-            self.ws.send(json.dumps(_build_hello(pending_results)))
-            now = _time.monotonic()
-            self._last_send_at = now
-            # Start the ping clock at connect so the first heartbeat is one
-            # full interval out, not immediate.
-            self._last_ping_at = now
+        self._early_frame = None
+        # Start the ping clock at connect so the first heartbeat is one full
+        # interval out, not immediate — even if the hello below fails.
+        self._last_ping_at = _time.monotonic()
+        try:
+            with self._send_lock:
+                self.ws.send(json.dumps(_build_hello(pending_results)))
+                self._last_send_at = _time.monotonic()
+        except simple_websocket.ConnectionClosed:
+            # The relay closed before our hello went out. That's how it
+            # rejects a revoked token: 101, {"type":"error",...}, close —
+            # and that error frame is the agent's only revocation signal
+            # (agent.main._on_message). Keep it for run_once to deliver;
+            # with nothing buffered this is a plain failed connect.
+            self._early_frame = self._read_buffered_frame()
+            if self._early_frame is None:
+                raise
+
+    def _read_buffered_frame(self):
+        """Return a frame already received on a closed socket, else None."""
+        try:
+            return self.ws.receive(timeout=0)
+        except (simple_websocket.ConnectionClosed,
+                simple_websocket.ConnectionError):
+            return None
 
     def send(self, message: dict) -> None:
         import time as _time
@@ -235,12 +273,15 @@ class AgentConnection:
         """
         import time as _time
         while not self._shutdown.is_set():
-            try:
-                raw = self.ws.receive(timeout=_RECV_POLL_INTERVAL)
-            except (simple_websocket.ConnectionClosed,
-                    simple_websocket.ConnectionError):
-                # Real disconnect — caller will reconnect.
-                return False
+            if self._early_frame is not None:
+                raw, self._early_frame = self._early_frame, None
+            else:
+                try:
+                    raw = self.ws.receive(timeout=_RECV_POLL_INTERVAL)
+                except (simple_websocket.ConnectionClosed,
+                        simple_websocket.ConnectionError):
+                    # Real disconnect — caller will reconnect.
+                    return False
             # Keepalive: emit a PING control frame whenever the last PING was
             # longer ago than _PING_INTERVAL_S — NOT the last data send.
             # Middleboxes only honor control frames, so a job streaming

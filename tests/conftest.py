@@ -84,6 +84,47 @@ def _isolate_config(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_bundled_chromium_download(request, monkeypatch, tmp_path):
+    """Keep the agent's bundled-Chromium bootstrap off the network and out of ~.
+
+    ``agent.run_batch.run()`` and the agent's startup prewarm
+    (``agent.main.run``) call ``agent.chromium.ensure_chromium()``, which on a
+    machine without the browser runs ``playwright install chromium``
+    (~150 MB) into the developer's REAL ``~/.dld-agent/browsers`` — locally
+    that pushed integration/test_agent_phase3_end_to_end.py past the 60s
+    timeout. Stub it to the "download unavailable → fall back to system
+    Chrome" result, point ``browsers_dir()`` at tmp_path, and make
+    ``_install`` refuse outright as a backstop. Tests of agent/chromium.py
+    itself opt out with ``@pytest.mark.real_chromium`` (they isolate HOME
+    and stub ``_install`` on their own). ``prepare_env()`` writes two env
+    vars straight into os.environ, so snapshot + restore them too.
+    Mirrored in agent/tests/conftest.py.
+    """
+    from agent import chromium
+
+    def _refuse_install(*_a, **_k):
+        raise RuntimeError("tests must not download Chromium")
+
+    def _tmp_browsers_dir():
+        d = tmp_path / "dld-agent-browsers"
+        d.mkdir(exist_ok=True)
+        return str(d)
+
+    monkeypatch.setattr(chromium, "_install", _refuse_install)
+    if request.node.get_closest_marker("real_chromium") is None:
+        monkeypatch.setattr(chromium, "browsers_dir", _tmp_browsers_dir)
+        monkeypatch.setattr(chromium, "ensure_chromium", lambda progress=None: False)
+    env_vars = ("PLAYWRIGHT_BROWSERS_PATH", "DLD_USE_BUNDLED_CHROMIUM")
+    saved = {k: os.environ.get(k) for k in env_vars}
+    yield
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+@pytest.fixture(autouse=True)
 def _reset_circuit_breakers():
     """Clear the process-wide circuit-breaker registry around every test.
 

@@ -6,6 +6,11 @@ import pytest
 
 from core import auth, media_session as ms
 
+# Every scan here asserts years parsed from literal filenames; pin the
+# scanner's "today" so MMDD inference and the 5-year plausibility window
+# don't rot with the real calendar (see conftest.SCANNER_TODAY).
+pytestmark = pytest.mark.usefixtures("frozen_scanner_today")
+
 
 @pytest.fixture()
 def client(temp_db, monkeypatch, tmp_path):

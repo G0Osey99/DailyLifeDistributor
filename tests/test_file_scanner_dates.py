@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import pytest
 
 from core.file_scanner import (
     _parse_date_entry_from_stem,
@@ -17,6 +18,10 @@ from core.file_scanner import (
     _try_yyyymmdd,
     _try_mmdd,
 )
+
+# Plausibility (5-year window) and MMDD year inference read the clock; pin it
+# so the year assertions below hold on any real date (conftest.SCANNER_TODAY).
+pytestmark = pytest.mark.usefixtures("frozen_scanner_today")
 
 
 def test_yymmdd_unambiguous():
@@ -81,9 +86,11 @@ def test_no_digits_returns_none():
     assert ambiguous is False
 
 
-def test_mmdd_uses_current_year_when_recent():
+def test_mmdd_uses_current_year_when_recent(frozen_scanner_today):
     """4-digit MMDD anchors to the current calendar year."""
-    today = datetime.today()
+    # Pinned, not the real clock: from Dec 22 on, today+10 crosses New Year
+    # and the 60-days-past rule (correctly) resolves it to next year.
+    today = frozen_scanner_today
     # Pick a date 10 days in the future so it's clearly current-year-eligible.
     future = today + timedelta(days=10)
     digits = future.strftime("%m%d")

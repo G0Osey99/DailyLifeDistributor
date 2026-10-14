@@ -1,5 +1,7 @@
 """Shared pytest fixtures."""
 import os
+from datetime import datetime
+
 import pytest
 
 # Browser-driven tests (Playwright / x11vnc / streamed remote-login) need a
@@ -328,3 +330,27 @@ def db():
     """
     from core import db as _db
     return _db
+
+
+# A fixed "today" for core.file_scanner. Its year inference reads the real
+# clock — MMDD / MDD stems resolve to this year (next year once > 60 days
+# past) and 6-digit dates older than 5 years are dropped as implausible — so
+# any test asserting a parsed year from a literal filename rots as the
+# calendar moves (e.g. 0601.jpg → 2027-06-01 once October 2026 arrives).
+SCANNER_TODAY = datetime(2026, 5, 26)
+
+
+@pytest.fixture
+def frozen_scanner_today(monkeypatch):
+    """Pin ``datetime.today()`` as core.file_scanner sees it to
+    ``SCANNER_TODAY`` and return it. Only the scanner module is patched, so
+    Flask session / cookie timestamps in the same test keep the real clock."""
+    import core.file_scanner as fs
+
+    class _FrozenDT(datetime):
+        @classmethod
+        def today(cls):
+            return SCANNER_TODAY
+
+    monkeypatch.setattr(fs, "datetime", _FrozenDT)
+    return SCANNER_TODAY

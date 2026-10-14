@@ -5,7 +5,12 @@ name-list API the browser uses (it sends filenames, no filesystem access).
 """
 from __future__ import annotations
 
+import pytest
+
 from core.file_scanner import parse_names
+
+# Year inference reads the clock; pin it (see conftest.SCANNER_TODAY).
+pytestmark = pytest.mark.usefixtures("frozen_scanner_today")
 
 
 def test_parse_names_groups_by_iso_date():
@@ -40,20 +45,12 @@ def test_parse_names_thumbnail_and_audio_extensions_allowed():
     assert sorted(out["2025-05-21"]) == ["episode_250521.mp3", "thumb_250521.png"]
 
 
-def test_parse_names_three_digit_mdd_handles_missing_leading_zero(monkeypatch):
+def test_parse_names_three_digit_mdd_handles_missing_leading_zero():
     """Operators occasionally drop the leading zero on the month for
     single-digit months: ``602.jpg`` instead of ``0602.jpg`` for
     June 2. Previously these 3-digit stems were silently dropped
     (the parser only knew 4/6/8-digit formats). Now they parse as
     M-DD with the same current-year inference as MMDD."""
-    from datetime import datetime
-    import core.file_scanner as fs
-    # Pin "today" so the year-inference math is deterministic.
-    class _FakeDT(datetime):
-        @classmethod
-        def today(cls):
-            return datetime(2026, 5, 26)
-    monkeypatch.setattr(fs, "datetime", _FakeDT)
     out = parse_names(["602.jpg", "615.png", "1231.jpg"])
     # 602 → June 2 of the current year (2026); not >60d in the past
     # since "today" is May 26.

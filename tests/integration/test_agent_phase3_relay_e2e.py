@@ -37,6 +37,9 @@ import pytest
 
 simple_websocket = pytest.importorskip("simple_websocket")
 requests_lib = pytest.importorskip("requests")
+# Not simple_websocket.Client: its handshake can strand the first frame
+# the server sends after the upgrade (see _ws_helpers).
+from tests.integration._ws_helpers import HandshakeSafeClient  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -108,15 +111,15 @@ def _pair_agent(server_url: str, devices_mod) -> str:
 
 
 def _open_agent_ws(server_url: str, port: int, token: str):
-    """Connect a simple_websocket.Client to /agent/socket as the agent."""
+    """Connect a HandshakeSafeClient to /agent/socket as the agent."""
     ws_url = f"ws://127.0.0.1:{port}/agent/socket?token={token}"
-    return simple_websocket.Client(ws_url)
+    return HandshakeSafeClient(ws_url)
 
 
 def _open_browser_ws(server_url: str, port: int, cookie: str):
-    """Connect a simple_websocket.Client to /agent/ws as the browser."""
+    """Connect a HandshakeSafeClient to /agent/ws as the browser."""
     ws_url = f"ws://127.0.0.1:{port}/agent/ws"
-    return simple_websocket.Client(ws_url, headers={"Cookie": cookie})
+    return HandshakeSafeClient(ws_url, headers={"Cookie": cookie})
 
 
 def _drain_browser_until(browser_ws, predicate, timeout: float = 5.0):

@@ -6,6 +6,9 @@ import time
 import pytest
 
 simple_websocket = pytest.importorskip("simple_websocket")
+# Not simple_websocket.Client: its handshake can strand the first frame
+# the server sends after the upgrade (see _ws_helpers).
+from tests.integration._ws_helpers import HandshakeSafeClient  # noqa: E402
 
 
 @pytest.fixture()
@@ -75,7 +78,7 @@ def test_agent_main_pong(live, monkeypatch):
     import requests
     s = requests.Session(); s.post(f"{server_url}/login", data={"password": "pw"})
     cookie = "; ".join(f"{k}={v}" for k, v in s.cookies.get_dict().items())
-    browser = simple_websocket.Client(f"ws://127.0.0.1:{port}/agent/ws",
+    browser = HandshakeSafeClient(f"ws://127.0.0.1:{port}/agent/ws",
                                       headers={"Cookie": cookie})
     try:
         # Read presence messages until we see online=True (tolerate
@@ -106,9 +109,18 @@ def test_agent_main_pong(live, monkeypatch):
         else:
             pytest.fail("agent never reported presence=online within 5 messages")
         browser.send(json.dumps({"v": 1, "type": "ping", "payload": {"n": 42}}))
-        raw = browser.receive(timeout=5)
-        assert raw is not None, "no pong frame received within 5s"
-        pong = json.loads(raw)
-        assert pong["type"] == "pong" and pong["payload"]["n"] == 42
+        # The relay forwards the agent's own frames to browsers too, so the
+        # agent's connect-time "hello" can land here if it reached the relay
+        # after the browser registered (relay registration precedes hello).
+        # Skip anything that isn't the pong.
+        for _ in range(5):
+            raw = browser.receive(timeout=5)
+            assert raw is not None, "no pong frame received within 5s"
+            pong = json.loads(raw)
+            if pong.get("type") == "pong":
+                break
+        else:
+            pytest.fail(f"pong never received within 5 messages; last: {pong}")
+        assert pong["payload"]["n"] == 42
     finally:
         browser.close()

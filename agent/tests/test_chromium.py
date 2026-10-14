@@ -12,6 +12,11 @@ import pytest
 
 from agent import chromium
 
+# Opt out of conftest's ensure_chromium/browsers_dir stubs — this module tests
+# the real logic. conftest's _install guard still applies until a test here
+# replaces it with its own fake.
+pytestmark = pytest.mark.real_chromium
+
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch, tmp_path):
